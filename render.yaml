@@ -2,7 +2,7 @@
 # This configuration tells Render how to build and run the services.
 services:
   # A PostgreSQL database for storing users, campaigns, etc.
-  - type: postgres
+  - type: psql
     name: paris-sender-db
     plan: free # Use a paid plan for production apps
 
@@ -20,11 +20,11 @@ services:
     buildCommand: |
       pip install -r requirements.txt
       flask db upgrade
-    startCommand: gunicorn wsgi:app
+    startCommand: gunicorn "app:create_app()"
     envVars:
       - key: DATABASE_URL
         fromService:
-          type: postgres
+          type: psql
           name: paris-sender-db
           property: connectionString
       - key: REDIS_URL
@@ -34,10 +34,10 @@ services:
           property: connectionString
       - key: SECRET_KEY
         generateValue: true # Let Render generate a random secret key
-      - key: BASE_URL
-        value: "https://your-app-name.onrender.com" # IMPORTANT: Change this to your web service's URL
-      - key: OPENAI_API_KEY # Optional: set this in the Render dashboard
-        sync: false
+      - key: FLASK_APP
+        value: wsgi.py
+      - key: FLASK_DEBUG
+        value: "0"
 
   # The Celery background worker for sending emails
   - type: worker
@@ -45,11 +45,11 @@ services:
     env: python
     plan: free # Use a paid plan for production
     buildCommand: pip install -r requirements.txt
-    startCommand: celery -A wsgi.celery worker --loglevel=info
+    startCommand: celery -A app.celery worker --loglevel=info
     envVars:
       - key: DATABASE_URL
         fromService:
-          type: postgres
+          type: psql
           name: paris-sender-db
           property: connectionString
       - key: REDIS_URL
@@ -57,3 +57,5 @@ services:
           type: redis
           name: paris-sender-redis
           property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
