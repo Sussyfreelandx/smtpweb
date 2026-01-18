@@ -1,8 +1,10 @@
-from datetime import datetime
+import json
+from datetime import datetime, timedelta
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_login import UserMixin
+from flask import current_app
+from itsdangerous import URLSafeTimedSerializer
 from app import db, login
-import json
 
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -32,11 +34,10 @@ class Campaign(db.Model):
     created_at = db.Column(db.DateTime, index=True, default=datetime.utcnow)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
     
-    # SMTP Settings stored with the campaign
     smtp_server = db.Column(db.String(120))
     smtp_port = db.Column(db.Integer)
     smtp_username = db.Column(db.String(120))
-    smtp_password = db.Column(db.String(256)) # Encrypt this in a real app!
+    smtp_password = db.Column(db.String(200)) # Encrypt this in a real high-security app!
     smtp_sender_name = db.Column(db.String(120))
     smtp_sender_email = db.Column(db.String(120))
     
@@ -49,26 +50,45 @@ class Recipient(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(120), index=True)
     campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'))
-    status = db.Column(db.String(50), default='Queued') # e.g., Queued, Sending, Sent, Failed, Opened, Clicked, Unsubscribed
-    status_message = db.Column(db.String(200)) # For failure reasons
-    
-    # Store personalized data as JSON
-    data = db.Column(db.Text)
-
-    # Tracking timestamps
-    added_at = db.Column(db.DateTime, default=datetime.utcnow)
+    status = db.Column(db.String(50), default='Queued')
+    status_message = db.Column(db.String(250))
     sent_at = db.Column(db.DateTime, nullable=True)
     opened_at = db.Column(db.DateTime, nullable=True)
     clicked_at = db.Column(db.DateTime, nullable=True)
-    unsubscribed_at = db.Column(db.DateTime, nullable=True)
-
-    def set_data(self, data_dict):
-        self.data = json.dumps(data_dict)
+    
+    data = db.Column(db.Text) 
 
     def get_data(self):
-        if self.data:
-            return json.loads(self.data)
-        return {}
+        return json.loads(self.data) if self.data else {}
+
+    def get_tracking_token(self, action, payload=None):
+        serializer = URLSafeTimedSerializer(current_app.config['SECRET_KEY'])
+        data_to_sign = {'recipient_id': self.id, 'action': action}
+        if payload:
+            data_to_sign.update(payload)
+        return serializer.dumps(data_to_sign, salt=current_app.config['SECURITY_PASSWORD_SALT'])
+    
+    @staticmethod
+    def verify_tracking_token(token, max_age_days=30):
+        serializer = URLSafeTimedSerializer(current_app.config['SECRET_KEY'])
+        try:
+            data = serializer.loads(
+                token,
+                salt=current_app.config['SECURITY_PASSWORD_SALT'],
+                max_age=timedelta(days=max_age_days).total_seconds()
+            )
+            return data
+        except:
+            return None
 
     def __repr__(self):
         return f'<Recipient {self.email}>'
+
+class Suppression(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    email = db.Column(db.String(120), index=True, unique=True)
+    reason = db.Column(db.String(100)) # 'unsubscribe', 'bounce', 'manual'
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def __repr__(self):
+        return f'<Suppression {self.email}>'
