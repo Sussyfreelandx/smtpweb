@@ -38,12 +38,29 @@ class SMTPServer(db.Model):
 
     def set_password(self, password):
         key = current_app.config['SECRET_KEY'].encode()
-        f = Fernet(key)
+        # Ensure key is valid Fernet key (32 url-safe base64-encoded bytes)
+        # If your SECRET_KEY is simple string, we might need to hash it to get 32 bytes
+        # For simplicity here, assuming valid key or handling securely in prod
+        try:
+            f = Fernet(key)
+        except:
+            # Fallback if key is not valid Fernet key (common in dev)
+            import base64
+            import hashlib
+            key = base64.urlsafe_b64encode(hashlib.sha256(key).digest())
+            f = Fernet(key)
+            
         self.password_encrypted = f.encrypt(password.encode()).decode()
 
     def get_password(self):
         key = current_app.config['SECRET_KEY'].encode()
-        f = Fernet(key)
+        try:
+            f = Fernet(key)
+        except:
+            import base64
+            import hashlib
+            key = base64.urlsafe_b64encode(hashlib.sha256(key).digest())
+            f = Fernet(key)
         return f.decrypt(self.password_encrypted.encode()).decode()
     
     def to_dict(self):
@@ -64,36 +81,24 @@ class Campaign(db.Model):
     subject = db.Column(db.String(140))
     body = db.Column(db.Text)
     timestamp = db.Column(db.DateTime, index=True, default=datetime.utcnow)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    status = db.Column(db.String(20), default='Draft') # Draft, Sending, Completed, Paused
     
-    # Relationships
+    # Advanced Settings
+    parallel_workers = db.Column(db.Integer, default=1)
+    throttle_amount = db.Column(db.Integer, default=0) # 0 means disabled
+    throttle_delay = db.Column(db.Integer, default=0)  # in seconds
+    
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
     smtp_profile_id = db.Column(db.Integer, db.ForeignKey('smtp_server.id'))
     smtp_profile = db.relationship('SMTPServer', backref='campaigns')
     recipients = db.relationship('Recipient', backref='campaign', lazy='dynamic', cascade="all, delete-orphan")
-    attachments = db.relationship('Attachment', backref='campaign', lazy='dynamic', cascade="all, delete-orphan")
-
-    # Status & Control
-    # Status options: 'Draft', 'Queued', 'Running', 'Paused', 'Stopped', 'Completed'
-    status = db.Column(db.String(20), default='Draft') 
-    
-    # Throttling & Performance Settings
-    parallel_workers = db.Column(db.Integer, default=1) # Standard Threading
-    throttle_amount = db.Column(db.Integer, default=0) # Emails per batch
-    throttle_interval = db.Column(db.Integer, default=0) # Seconds to wait
-
-class Attachment(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    filename = db.Column(db.String(255), nullable=False)
-    file_path = db.Column(db.String(512), nullable=False) # Server path
-    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'))
 
 class Recipient(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(120), index=True)
-    # Status options: 'Queued', 'Sending', 'Sent', 'Failed', 'Opened', 'Clicked', 'Unsubscribed'
+    data = db.Column(db.Text) # JSON string for extra fields (firstname, company, etc.)
     status = db.Column(db.String(20), default='Queued')
     status_message = db.Column(db.String(200))
-    data = db.Column(db.Text) # JSON string for personalization data (firstname, company, etc.)
     campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'))
     sent_at = db.Column(db.DateTime, nullable=True)
     opened_at = db.Column(db.DateTime, nullable=True)
@@ -102,10 +107,10 @@ class Recipient(db.Model):
 
     def get_tracking_token(self, action, payload=None):
         s = Serializer(current_app.config['SECRET_KEY'])
-        data = {'action': action, 'recipient_id': self.id}
+        data = {'action': action, 'rid': self.id}
         if payload:
             data.update(payload)
-        return s.dumps(data, salt=action)
+        return s.dumps(data)
 
 class Suppression(db.Model):
     id = db.Column(db.Integer, primary_key=True)
