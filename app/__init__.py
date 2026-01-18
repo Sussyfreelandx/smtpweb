@@ -9,7 +9,7 @@ from app.config import Config
 db = SQLAlchemy()
 migrate = Migrate()
 login = LoginManager()
-login.login_view = 'main.routes.login' # Point to the login function
+login.login_view = 'main.login' # Point to the blueprint's login function
 login.login_message = "Please log in to access this page."
 
 celery = Celery(__name__, broker=Config.CELERY_BROKER_URL)
@@ -25,8 +25,14 @@ def create_app(config_class=Config):
     login.init_app(app)
     celery.conf.update(app.config)
 
-    # Import and register the blueprint AFTER the app is configured
+    # --- THIS IS THE FIX ---
+    # Import the blueprint from the routes file where it was created.
     from app.main.routes import bp as main_blueprint
+    # Now register it. It already has all the routes attached.
     app.register_blueprint(main_blueprint)
+
+    # It's good practice to import models within the app context
+    with app.app_context():
+        from . import models
 
     return app
