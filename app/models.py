@@ -1,16 +1,13 @@
-import json
-from datetime import datetime, timedelta
+from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_login import UserMixin
-from flask import current_app
-from itsdangerous import URLSafeTimedSerializer
 from app import db, login
 
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(64), index=True, unique=True)
-    email = db.Column(db.String(120), index=True, unique=True)
-    password_hash = db.Column(db.String(256))
+    username = db.Column(db.String(64), index=True, unique=True, nullable=False)
+    email = db.Column(db.String(120), index=True, unique=True, nullable=False)
+    password_hash = db.Column(db.String(128))
     campaigns = db.relationship('Campaign', backref='author', lazy='dynamic')
 
     def set_password(self, password):
@@ -28,16 +25,17 @@ def load_user(id):
 
 class Campaign(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(140))
-    subject = db.Column(db.String(200))
-    body_html = db.Column(db.Text)
+    name = db.Column(db.String(140), nullable=False)
+    subject = db.Column(db.String(200), nullable=False)
+    body_html = db.Column(db.Text, nullable=False)
     created_at = db.Column(db.DateTime, index=True, default=datetime.utcnow)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     
+    # SMTP Settings are stored with each campaign for simplicity
     smtp_server = db.Column(db.String(120))
     smtp_port = db.Column(db.Integer)
     smtp_username = db.Column(db.String(120))
-    smtp_password = db.Column(db.String(200)) # Encrypt this in a real high-security app!
+    smtp_password = db.Column(db.String(120)) # IMPORTANT: Encrypt this in a real production app
     smtp_sender_name = db.Column(db.String(120))
     smtp_sender_email = db.Column(db.String(120))
     
@@ -48,47 +46,19 @@ class Campaign(db.Model):
 
 class Recipient(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    email = db.Column(db.String(120), index=True)
-    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'))
-    status = db.Column(db.String(50), default='Queued')
-    status_message = db.Column(db.String(250))
+    email = db.Column(db.String(120), index=True, nullable=False)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'), nullable=False)
+    
+    # Status tracking
+    status = db.Column(db.String(50), default='Queued') # e.g., Queued, Sending, Sent, Failed, Opened, Clicked, Unsubscribed
+    status_message = db.Column(db.String(200)) # For failure reasons or other notes
     sent_at = db.Column(db.DateTime, nullable=True)
     opened_at = db.Column(db.DateTime, nullable=True)
     clicked_at = db.Column(db.DateTime, nullable=True)
+    unsubscribed_at = db.Column(db.DateTime, nullable=True)
     
+    # Store personalized data from CSV as a JSON string
     data = db.Column(db.Text) 
-
-    def get_data(self):
-        return json.loads(self.data) if self.data else {}
-
-    def get_tracking_token(self, action, payload=None):
-        serializer = URLSafeTimedSerializer(current_app.config['SECRET_KEY'])
-        data_to_sign = {'recipient_id': self.id, 'action': action}
-        if payload:
-            data_to_sign.update(payload)
-        return serializer.dumps(data_to_sign, salt=current_app.config['SECURITY_PASSWORD_SALT'])
-    
-    @staticmethod
-    def verify_tracking_token(token, max_age_days=30):
-        serializer = URLSafeTimedSerializer(current_app.config['SECRET_KEY'])
-        try:
-            data = serializer.loads(
-                token,
-                salt=current_app.config['SECURITY_PASSWORD_SALT'],
-                max_age=timedelta(days=max_age_days).total_seconds()
-            )
-            return data
-        except:
-            return None
 
     def __repr__(self):
         return f'<Recipient {self.email}>'
-
-class Suppression(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    email = db.Column(db.String(120), index=True, unique=True)
-    reason = db.Column(db.String(100)) # 'unsubscribe', 'bounce', 'manual'
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-
-    def __repr__(self):
-        return f'<Suppression {self.email}>'
