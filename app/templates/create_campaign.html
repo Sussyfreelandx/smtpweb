@@ -2,156 +2,143 @@
 
 {% block content %}
 <div class="container py-4">
-    <h1 class="mb-4">Create New Campaign</h1>
+    <h1 class="mb-4"><i class="fas fa-envelope-open-text me-2"></i>Create New Campaign</h1>
     
-    <form method="post" enctype="multipart/form-data" class="needs-validation" novalidate>
-        <!-- Campaign Basics -->
-        <div class="card mb-4 shadow-sm">
-            <div class="card-header bg-dark text-white fw-bold">1. Campaign Details</div>
-            <div class="card-body">
-                <div class="mb-3">
-                    <label for="campaign_name" class="form-label">Campaign Name</label>
-                    <input type="text" class="form-control" id="campaign_name" name="campaign_name" required>
-                </div>
-                <div class="mb-3">
-                    <label for="subject" class="form-label">Subject</label>
-                    <input type="text" class="form-control" id="subject" name="subject" required placeholder="Spintax supported: {Hello|Hi|Hey}">
-                </div>
-            </div>
-        </div>
-
-        <!-- Editor with Buttons -->
-        <div class="card mb-4 shadow-sm">
-            <div class="card-header bg-dark text-white fw-bold">2. Message Content</div>
-            <div class="card-body">
-                <!-- Toolbar Buttons -->
-                <div class="mb-3 d-flex gap-2 flex-wrap">
-                    <button type="button" class="btn btn-sm btn-purple text-white" style="background-color: #9b59b6;" onclick="document.getElementById('body_html').value = '<h1>Loaded HTML</h1><p>Mock content...</p>'">
-                        <i class="fas fa-folder-open"></i> Load HTML
-                    </button>
-                    <button type="button" class="btn btn-sm btn-teal text-white" style="background-color: #1abc9c;" onclick="loadTemplate()">
-                        <i class="fas fa-file-alt"></i> Template
-                    </button>
-                    <button type="button" class="btn btn-sm btn-warning text-white" onclick="alert('Attachment upload would happen here')">
-                        <i class="fas fa-paperclip"></i> Attach
-                    </button>
-                    <button type="button" class="btn btn-sm btn-danger text-white" onclick="document.getElementById('body_html').value = ''">
-                        <i class="fas fa-trash"></i> Clear
-                    </button>
-                </div>
-
-                <div class="mb-3">
-                    <label for="body_html" class="form-label">HTML Body (Jinja2 & Autograb Supported)</label>
-                    <textarea class="form-control font-monospace" id="body_html" name="body_html" rows="12" 
-                    placeholder="Hello {{ firstname }},&#10;&#10;We at {{ company }} have a great offer for you!"></textarea>
-                    <div class="form-text">
-                        Supported placeholders: <code>{{ firstname }}</code>, <code>{{ company }}</code>, <code>{{ greetings }}</code>, <code>{{ unsubscribe_link }}</code>
+    <form method="post" enctype="multipart/form-data" class="needs-validation" novalidate id="campaignForm">
+        
+        <div class="row">
+            <!-- Left Column: Config -->
+            <div class="col-lg-4 mb-4">
+                
+                <!-- 1. General Config -->
+                <div class="card mb-3 shadow-sm">
+                    <div class="card-header bg-dark text-white fw-bold">⚙️ Configuration</div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label class="form-label">Campaign Name</label>
+                            <input type="text" class="form-control" name="campaign_name" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">SMTP Profile</label>
+                            <select class="form-select" name="smtp_profile_id" required>
+                                {% for p in profiles %}
+                                <option value="{{ p.id }}">{{ p.profile_name }} ({{ p.username }})</option>
+                                {% else %}
+                                <option disabled>No profiles found. Create one first.</option>
+                                {% endfor %}
+                            </select>
+                            <div class="mt-2 text-end">
+                                <a href="{{ url_for('main.smtp_profiles') }}" class="small">Manage Profiles</a>
+                            </div>
+                        </div>
                     </div>
                 </div>
-            </div>
-        </div>
 
-        <!-- Recipients & Throttling -->
-        <div class="card mb-4 shadow-sm">
-            <div class="card-header bg-dark text-white fw-bold">3. Recipients & Sending Speed</div>
-            <div class="card-body">
-                <div class="row">
-                    <div class="col-md-6 mb-3">
-                        <label for="recipients_file" class="form-label">Upload CSV List</label>
-                        <input class="form-control" type="file" id="recipients_file" name="recipients_file" accept=".csv" required>
-                        <div class="form-text">CSV must contain an 'email' header.</div>
-                    </div>
-                    
-                    <div class="col-md-6 mb-3">
-                        <label class="form-label">Throttling (Speed Control)</label>
-                        <div class="input-group">
+                <!-- 2. Performance Settings (Parallel/Throttle) -->
+                <div class="card mb-3 shadow-sm">
+                    <div class="card-header bg-secondary text-white fw-bold">🚀 Performance</div>
+                    <div class="card-body">
+                        <div class="row g-2 align-items-center mb-2">
+                            <div class="col-8"><label class="form-label mb-0">Parallel Workers</label></div>
+                            <div class="col-4"><input type="number" class="form-control form-control-sm" name="parallel_workers" value="1" min="1" max="10"></div>
+                        </div>
+                        <hr class="my-2">
+                        <label class="form-label small text-muted">Throttling Rules</label>
+                        <div class="input-group input-group-sm mb-2">
                             <span class="input-group-text">Send</span>
-                            <input type="number" class="form-control" name="throttle_amount" value="0" min="0">
-                            <span class="input-group-text">emails every</span>
-                            <input type="number" class="form-control" name="throttle_delay" value="0" min="0">
+                            <input type="number" class="form-control" name="throttle_amount" value="20">
+                            <span class="input-group-text">emails</span>
+                        </div>
+                        <div class="input-group input-group-sm">
+                            <span class="input-group-text">Wait</span>
+                            <input type="number" class="form-control" name="throttle_delay" value="60">
                             <span class="input-group-text">seconds</span>
                         </div>
-                        <div class="form-text">Set to 0 to disable throttling (fastest speed).</div>
                     </div>
                 </div>
-            </div>
-        </div>
 
-        <!-- SMTP Selection -->
-        <div class="card mb-4 shadow-sm">
-            <div class="card-header bg-dark text-white fw-bold">4. SMTP Configuration</div>
-            <div class="card-body">
-                <label for="smtp_profile_id" class="form-label">Select Saved Profile</label>
-                <select class="form-select mb-3" id="smtp_profile_id" name="smtp_profile_id" onchange="toggleManualSMTP(this)">
-                    <option value="">-- Use Manual Configuration Below --</option>
-                    {% for profile in smtp_profiles %}
-                    <option value="{{ profile.id }}">{{ profile.profile_name }} ({{ profile.username }})</option>
-                    {% endfor %}
-                </select>
-
-                <div id="manual_smtp_section">
-                    <hr>
-                    <h6>Manual Configuration</h6>
-                    <div class="row g-3">
-                        <div class="col-md-6">
-                            <label class="form-label">SMTP Server</label>
-                            <input type="text" class="form-control" name="smtp_server" placeholder="smtp.gmail.com">
-                        </div>
-                        <div class="col-md-6">
-                            <label class="form-label">Port</label>
-                            <input type="number" class="form-control" name="smtp_port" value="587">
-                        </div>
-                        <div class="col-md-6">
-                            <label class="form-label">Username</label>
-                            <input type="email" class="form-control" name="smtp_username">
-                        </div>
-                        <div class="col-md-6">
-                            <label class="form-label">Password</label>
-                            <input type="password" class="form-control" name="smtp_password">
-                        </div>
-                        <div class="col-md-6">
-                            <label class="form-label">Sender Name</label>
-                            <input type="text" class="form-control" name="smtp_sender_name">
-                        </div>
-                        <div class="col-md-6">
-                            <label class="form-label">Sender Email</label>
-                            <input type="email" class="form-control" name="smtp_sender_email">
+                <!-- 3. Recipients -->
+                <div class="card shadow-sm">
+                    <div class="card-header bg-success text-white fw-bold">👥 Recipients</div>
+                    <div class="card-body">
+                        <ul class="nav nav-tabs mb-3" id="recipientTabs" role="tablist">
+                            <li class="nav-item"><button class="nav-link active" data-bs-target="#tab-file" data-bs-toggle="tab" type="button">Upload</button></li>
+                            <li class="nav-item"><button class="nav-link" data-bs-target="#tab-paste" data-bs-toggle="tab" type="button">Paste</button></li>
+                        </ul>
+                        
+                        <div class="tab-content">
+                            <div class="tab-pane fade show active" id="tab-file">
+                                <label class="form-label small">CSV File (Must have 'email' header)</label>
+                                <input class="form-control form-control-sm" type="file" name="recipients_file" accept=".csv">
+                            </div>
+                            <div class="tab-pane fade" id="tab-paste">
+                                <label class="form-label small">Paste Emails (One per line)</label>
+                                <textarea class="form-control form-control-sm" name="pasted_emails" rows="5" placeholder="user@example.com"></textarea>
+                            </div>
                         </div>
                     </div>
                 </div>
             </div>
-        </div>
 
-        <div class="d-grid gap-2">
-            <button type="submit" class="btn btn-success btn-lg">
-                <i class="fas fa-rocket"></i> Create & Prepare Campaign
-            </button>
+            <!-- Right Column: Editor -->
+            <div class="col-lg-8">
+                <div class="card h-100 shadow-sm">
+                    <div class="card-header bg-white p-2">
+                        <!-- Simulated Toolbar from screenshot -->
+                        <div class="btn-group w-100" role="group">
+                            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="loadSampleTemplate()"><i class="fas fa-file-code me-1"></i> Template</button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="document.getElementById('body_html').value=''"><i class="fas fa-trash me-1"></i> Clear</button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="insertPlaceholder('{{ firstname }}')">[Firstname]</button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="insertPlaceholder('{{ company }}')">[Company]</button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Subject Line</label>
+                            <input type="text" class="form-control" name="subject" placeholder="Hello {{ firstname|default('there') }}!" required>
+                            <div class="form-text small">Supports spintax: {Hi|Hello} and placeholders: {{ firstname }}</div>
+                        </div>
+                        
+                        <div class="mb-3 h-100 d-flex flex-column">
+                            <label class="form-label fw-bold">Message Body (HTML)</label>
+                            <textarea class="form-control flex-grow-1 font-monospace" id="body_html" name="body_html" rows="15" required style="font-size: 0.9rem;"></textarea>
+                        </div>
+                    </div>
+                    <div class="card-footer bg-light text-end">
+                        <a href="{{ url_for('main.index') }}" class="btn btn-outline-secondary me-2">Cancel</a>
+                        <button type="submit" class="btn btn-primary px-4"><i class="fas fa-save me-2"></i>Create Campaign</button>
+                    </div>
+                </div>
+            </div>
         </div>
     </form>
 </div>
 
 <script>
-function toggleManualSMTP(select) {
-    const manualSection = document.getElementById('manual_smtp_section');
-    if (select.value) {
-        manualSection.style.display = 'none';
-        // Remove required attributes from manual inputs so form can submit
-        manualSection.querySelectorAll('input').forEach(i => i.required = false);
-    } else {
-        manualSection.style.display = 'block';
-        manualSection.querySelectorAll('input').forEach(i => i.required = true);
-    }
+function loadSampleTemplate() {
+    const template = `<!DOCTYPE html>
+<html>
+<body style="font-family: Arial, sans-serif;">
+    <p>{{ greetings }},</p>
+    
+    <p>This is a message for {{ company }}.</p>
+    
+    <p>Regards,<br>{{ sender_name }}</p>
+    
+    <hr>
+    <p><small><a href="{{ unsubscribe_link }}">Unsubscribe</a></small></p>
+</body>
+</html>`;
+    document.getElementById('body_html').value = template;
 }
 
-function loadTemplate() {
-    fetch('/api/load_template', {method: 'POST'})
-    .then(r => r.json())
-    .then(data => {
-        document.getElementById('body_html').value = data.content;
-    });
+function insertPlaceholder(text) {
+    const textarea = document.getElementById('body_html');
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const val = textarea.value;
+    textarea.value = val.substring(0, start) + text + val.substring(end);
+    textarea.focus();
 }
-
-// Initial state
-toggleManualSMTP(document.getElementById('smtp_profile_id'));
 </script>
 {% endblock %}
