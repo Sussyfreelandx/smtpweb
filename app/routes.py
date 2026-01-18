@@ -4,14 +4,13 @@ from werkzeug.security import generate_password_hash
 from app import db
 from app.models import User, Campaign, Recipient
 from app.tasks import send_campaign_task
-from core_logic.ai_handler import AIHandler, LocalAIHandler
-from core_logic.deliverability import DeliverabilityHelper
+# from core_logic.ai_handler import AIHandler, LocalAIHandler  <- Commented out as they are not used and may not exist
+# from core_logic.deliverability import DeliverabilityHelper <- Commented out as they are not used and may not exist
 import csv
 import io
 import json
 
-# --- THIS IS THE FIX ---
-# Create the Blueprint object here, in the same file as the routes.
+# --- CREATE THE BLUEPRINT OBJECT HERE ---
 bp = Blueprint('main', __name__)
 
 # --- Main Dashboard and Campaign Routes ---
@@ -41,7 +40,6 @@ def view_campaign(campaign_id):
 def new_campaign():
     """Page to create a new campaign, including SMTP settings and recipient upload."""
     if request.method == 'POST':
-        # Create a new campaign from the form data
         campaign = Campaign(
             name=request.form['campaign_name'],
             subject=request.form['subject'],
@@ -49,38 +47,30 @@ def new_campaign():
             smtp_server=request.form['smtp_server'],
             smtp_port=int(request.form['smtp_port']),
             smtp_username=request.form['smtp_username'],
-            smtp_password=request.form['smtp_password'], # Handle secrets securely in production!
+            smtp_password=request.form['smtp_password'],
             smtp_sender_name=request.form['smtp_sender_name'],
             smtp_sender_email=request.form['smtp_sender_email'],
             author=current_user
         )
         db.session.add(campaign)
-        db.session.flush() # Flush to get the campaign ID for recipients
+        db.session.flush()
         
-        # Process uploaded recipient file
         file = request.files['recipients_file']
         if file:
             try:
                 stream = io.StringIO(file.stream.read().decode("UTF-8"), newline=None)
-                csv_reader = csv.reader(stream)
-                headers = [h.strip().lower() for h in next(csv_reader)]
+                csv_reader = csv.DictReader(stream)
                 
-                if 'email' not in headers:
-                    flash('CSV file must have an "email" column.', 'danger')
-                    return redirect(url_for('main.new_campaign'))
-
-                for row_data in csv.DictReader(io.StringIO(file.stream.read().decode("UTF-8"))):
-                    recipient_email = row_data.get('email', '').strip()
+                for row in csv_reader:
+                    recipient_email = row.get('email', '').strip()
                     if recipient_email:
-                        # Store all other columns as a JSON string in the 'data' field
-                        personal_data = {k: v for k, v in row_data.items() if k != 'email'}
+                        personal_data = {k: v for k, v in row.items() if k != 'email'}
                         recipient = Recipient(
                             email=recipient_email, 
                             campaign_id=campaign.id,
                             data=json.dumps(personal_data)
                         )
                         db.session.add(recipient)
-
             except Exception as e:
                 db.session.rollback()
                 flash(f'Error processing CSV file: {e}', 'danger')
@@ -101,30 +91,23 @@ def send_campaign(campaign_id):
         flash("You do not have permission to send this campaign.", "danger")
         return redirect(url_for('main.index'))
         
-    # This is non-blocking. It starts the background task and returns immediately.
     send_campaign_task.delay(campaign_id)
-    flash('Your campaign is being sent in the background! Statuses will update automatically.', 'info')
-    return redirect(url_for('main.view_campaign', campaign_id=campaign.id))
+    flash('Your campaign is being sent in the background!', 'info')
+    return redirect(url_for('main.view_campaign', campaign_id=campaign_id))
 
-# --- Tracking Routes ---
+# --- Tracking and Auth Routes ---
 
 @bp.route('/track/open/<int:recipient_id>')
 def track_open(recipient_id):
-    # This is where the logic from the desktop app's TrackingServer is implemented
-    # It finds the recipient, updates their status, and returns a 1x1 pixel image.
-    pass # TODO: Implement open tracking logic
+    pass 
 
 @bp.route('/track/click/<int:recipient_id>')
 def track_click(recipient_id):
-    # This tracks the click and redirects the user to the final destination.
-    pass # TODO: Implement click tracking logic
+    pass
 
 @bp.route('/unsubscribe/<int:recipient_id>')
 def unsubscribe(recipient_id):
-    # Marks a recipient as unsubscribed.
-    pass # TODO: Implement unsubscribe logic
-
-# --- Authentication Routes ---
+    pass
 
 @bp.route('/login', methods=['GET', 'POST'])
 def login():
@@ -136,14 +119,12 @@ def login():
             flash('Invalid username or password', 'danger')
             return redirect(url_for('main.login'))
         login_user(user, remember=True)
-        next_page = request.args.get('next')
-        return redirect(next_page or url_for('main.index'))
+        return redirect(url_for('main.index'))
     return render_template('login.html', title='Sign In')
 
 @bp.route('/logout')
 def logout():
     logout_user()
-    flash('You have been logged out.', 'success')
     return redirect(url_for('main.index'))
 
 @bp.route('/register', methods=['GET', 'POST'])
