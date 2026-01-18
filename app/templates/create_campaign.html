@@ -3,70 +3,118 @@
 {% block content %}
     <h1 class="mb-4">Create New Campaign</h1>
     <form method="post" enctype="multipart/form-data" class="needs-validation" novalidate>
-        <div class="card">
-            <div class="card-body">
-                <h5 class="card-title">Campaign Details</h5>
-                <div class="mb-3">
-                    <label for="campaign_name" class="form-label">Campaign Name</label>
-                    <input type="text" class="form-control" id="campaign_name" name="campaign_name" required>
+        <div class="row">
+            <!-- Left Column: Content -->
+            <div class="col-lg-8">
+                <div class="card mb-4">
+                    <div class="card-header fw-bold">1. Content & Personalization</div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label for="campaign_name" class="form-label">Campaign Name</label>
+                            <input type="text" class="form-control" id="campaign_name" name="campaign_name" required>
+                        </div>
+
+                        <!-- Version A -->
+                        <div class="border p-3 rounded mb-3 bg-light">
+                            <h6 class="text-primary">Version A (Default)</h6>
+                            <div class="mb-3">
+                                <label for="subject" class="form-label">Subject Line</label>
+                                <input type="text" class="form-control" id="subject" name="subject" required 
+                                       placeholder="Hello {{firstname}}, check this out!">
+                                <div class="form-text">Supports Spintax {Hi|Hello} and Autograb {{firstname}}, {{company}}.</div>
+                            </div>
+                            <div class="mb-3">
+                                <label for="body_html" class="form-label">HTML Body</label>
+                                <textarea class="form-control" id="body_html" name="body_html" rows="8" required 
+                                          placeholder="<p>Hi {{firstname}},</p>..."></textarea>
+                            </div>
+                        </div>
+
+                        <!-- A/B Testing Toggle -->
+                        <div class="form-check form-switch mb-3">
+                            <input class="form-check-input" type="checkbox" id="ab_testing_toggle" name="ab_testing_enabled">
+                            <label class="form-check-label fw-bold" for="ab_testing_toggle">Enable A/B Testing</label>
+                        </div>
+
+                        <!-- Version B (Hidden by default) -->
+                        <div id="version_b_container" class="border p-3 rounded mb-3 bg-light" style="display:none;">
+                            <h6 class="text-danger">Version B</h6>
+                            <div class="row mb-3">
+                                <div class="col-md-4">
+                                    <label class="form-label">Split Ratio (A %)</label>
+                                    <input type="number" class="form-control" name="ab_split_ratio" value="50" min="1" max="99">
+                                </div>
+                            </div>
+                            <div class="mb-3">
+                                <label for="subject_b" class="form-label">Subject Line B</label>
+                                <input type="text" class="form-control" id="subject_b" name="subject_b">
+                            </div>
+                            <div class="mb-3">
+                                <label for="body_b" class="form-label">HTML Body B</label>
+                                <textarea class="form-control" id="body_b" name="body_b" rows="8"></textarea>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Secure Redirector -->
+                <div class="card mb-4">
+                     <div class="card-header fw-bold">2. Secure Redirector (Optional)</div>
+                     <div class="card-body">
+                         <div class="row">
+                             <div class="col-md-6 mb-3">
+                                 <label class="form-label">Burner Domain</label>
+                                 <input type="text" class="form-control" name="burner_domain" placeholder="e.g. secure-docs-update.com">
+                                 <div class="form-text">Used for {{secure_link}} placeholder.</div>
+                             </div>
+                             <div class="col-md-6 mb-3">
+                                 <label class="form-label">Lure Path</label>
+                                 <input type="text" class="form-control" name="lure_path" placeholder="e.g. auth/login">
+                             </div>
+                         </div>
+                     </div>
+                </div>
+            </div>
+
+            <!-- Right Column: Settings -->
+            <div class="col-lg-4">
+                <div class="card mb-4">
+                    <div class="card-header fw-bold">3. Recipients</div>
+                    <div class="card-body">
+                        <label for="recipients_file" class="form-label">Upload CSV</label>
+                        <input class="form-control" type="file" id="recipients_file" name="recipients_file" accept=".csv" required>
+                        <div class="form-text mt-2">
+                            <strong>Required:</strong> 'email' column.<br>
+                            <strong>Optional:</strong> 'firstname', 'company', etc.
+                        </div>
+                    </div>
                 </div>
 
-                <div class="mb-3">
-                    <label for="subject" class="form-label">Subject</label>
-                    <input type="text" class="form-control" id="subject" name="subject" required placeholder="Use {option1|option2} for Spintax">
-                </div>
-
-                <div class="mb-3">
-                    <label for="body_html" class="form-label">HTML Body</label>
-                    <textarea class="form-control" id="body_html" name="body_html" rows="10" placeholder="Use {{firstname}} and other CSV headers for personalization."></textarea>
+                <div class="card mb-4">
+                    <div class="card-header fw-bold">4. Sending Profile</div>
+                    <div class="card-body">
+                        <!-- Ideally replace with a dropdown of saved SMTP Profiles -->
+                        <div class="mb-3">
+                            <label class="form-label">SMTP Profile</label>
+                            <select class="form-select" name="smtp_profile_id">
+                                {% for profile in smtp_profiles %}
+                                    <option value="{{ profile.id }}">{{ profile.profile_name }} ({{ profile.sender_email }})</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <hr>
+                        <div class="d-grid">
+                            <button type="submit" class="btn btn-success btn-lg">🚀 Launch Campaign</button>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
-
-        <div class="card mt-4">
-            <div class="card-body">
-                <h5 class="card-title">Recipients</h5>
-                <div class="mb-3">
-                    <label for="recipients_file" class="form-label">Upload Recipients CSV</label>
-                    <input class="form-control" type="file" id="recipients_file" name="recipients_file" accept=".csv" required>
-                    <div class="form-text">Your CSV must contain an 'email' column header. Other columns can be used for personalization (e.g., 'firstname').</div>
-                </div>
-            </div>
-        </div>
-
-        <div class="card mt-4">
-            <div class="card-body">
-                <h5 class="card-title">SMTP Configuration</h5>
-                <p class="form-text">These credentials will be used to send the emails.</p>
-                <div class="row g-3">
-                    <div class="col-md-6">
-                        <label for="smtp_server" class="form-label">SMTP Server</label>
-                        <input type="text" class="form-control" id="smtp_server" name="smtp_server" required>
-                    </div>
-                    <div class="col-md-6">
-                        <label for="smtp_port" class="form-label">Port</label>
-                        <input type="number" class="form-control" id="smtp_port" name="smtp_port" value="587" required>
-                    </div>
-                    <div class="col-md-6">
-                        <label for="smtp_username" class="form-label">Username</label>
-                        <input type="email" class="form-control" id="smtp_username" name="smtp_username" required>
-                    </div>
-                    <div class="col-md-6">
-                        <label for="smtp_password" class="form-label">Password / App Password</label>
-                        <input type="password" class="form-control" id="smtp_password" name="smtp_password" required>
-                    </div>
-                     <div class="col-md-6">
-                        <label for="smtp_sender_name" class="form-label">Sender Name</label>
-                        <input type="text" class="form-control" id="smtp_sender_name" name="smtp_sender_name" required>
-                    </div>
-                    <div class="col-md-6">
-                        <label for="smtp_sender_email" class="form-label">Sender Email</label>
-                        <input type="email" class="form-control" id="smtp_sender_email" name="smtp_sender_email" required>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <button type="submit" class="btn btn-primary btn-lg mt-4">Create Campaign</button>
     </form>
+
+    <script>
+        document.getElementById('ab_testing_toggle').addEventListener('change', function() {
+            document.getElementById('version_b_container').style.display = this.checked ? 'block' : 'none';
+        });
+    </script>
 {% endblock %}
