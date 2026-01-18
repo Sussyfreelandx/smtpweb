@@ -34,7 +34,10 @@
                         <i class="fas fa-user-circle"></i> {{ current_user.username }}
                     </a>
                     <ul class="dropdown-menu dropdown-menu-end">
-                        <li><a class="dropdown-item" href="#">Settings</a></li>
+                        <!-- FIXED: Pointing to SMTP settings as the main settings area for now -->
+                        <li><a class="dropdown-item" href="{{ url_for('main.smtp_profiles') }}">SMTP Settings</a></li>
+                         <!-- FIXED: Added link to Suppression List -->
+                        <li><a class="dropdown-item" href="{{ url_for('main.suppression_list') }}">Suppression List</a></li>
                         <li><hr class="dropdown-divider"></li>
                         <li><a class="dropdown-item" href="{{ url_for('main.logout') }}">Logout</a></li>
                     </ul>
