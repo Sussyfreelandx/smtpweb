@@ -7,7 +7,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
-from email.utils import formataddr
+from email.utils import formataddr, formatdate, make_msgid
 from email.header import Header
 
 try:
@@ -45,8 +45,8 @@ class SMTPHandler:
         context.minimum_version = ssl.TLSVersion.TLSv1_2
         return context
 
-    def test_connection(self):
-        """Tests the SMTP connection with the configured credentials."""
+    def test_connection_sync(self):
+        """Tests the SMTP connection synchronously with the configured credentials."""
         if not all([self.smtp_server, self.username, self.password]):
             return False, "SMTP configuration is incomplete."
         
@@ -106,13 +106,14 @@ class SMTPHandler:
         use_tls_starttls = self.use_tls and not use_ssl
 
         try:
-            async with aiosmtp.SMTP(
+            smtp_client = aiosmtp.SMTP(
                 hostname=self.smtp_server,
                 port=self.smtp_port,
                 use_tls=use_ssl,
                 tls_context=context,
                 timeout=30
-            ) as smtp_client:
+            )
+            async with smtp_client:
                 if use_tls_starttls:
                     await smtp_client.starttls(tls_context=context)
                 await smtp_client.login(self.username, self.password)
