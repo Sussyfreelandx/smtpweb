@@ -1,6 +1,5 @@
 # Blueprint for deploying the Paris Sender Web App on Render
 
-# The 'databases' block is a top-level key, separate from 'services'.
 databases:
   - name: paris-sender-db
     plan: free # Use a paid plan for production to prevent data loss.
@@ -25,8 +24,7 @@ services:
     startCommand: gunicorn wsgi:app
     envVars:
       - key: DATABASE_URL
-        fromService:
-          type: database # CORRECTED: Use 'database' when referencing a DB from the top-level 'databases' block.
+        fromDatabase: # CORRECTED: Use 'fromDatabase' key for top-level databases
           name: paris-sender-db
           property: connectionString
       - key: REDIS_URL
@@ -48,8 +46,7 @@ services:
     startCommand: celery -A wsgi.celery worker --loglevel=info
     envVars:
       - key: DATABASE_URL
-        fromService:
-          type: database # CORRECTED: Use 'database' here as well.
+        fromDatabase: # CORRECTED: Use 'fromDatabase' key here as well
           name: paris-sender-db
           property: connectionString
       - key: REDIS_URL
