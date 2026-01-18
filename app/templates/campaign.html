@@ -1,158 +1,186 @@
 {% extends "base.html" %}
 
 {% block content %}
+<div class="container-fluid py-3">
+    <!-- Header -->
     <div class="d-flex justify-content-between align-items-center mb-3">
         <div>
-            <h1 class="h3">{{ campaign.name }} <span class="badge bg-secondary">{{ campaign.status }}</span></h1>
-            <p class="text-muted mb-0">Subject: {{ campaign.subject }}</p>
+            <h2 class="fw-bold">{{ campaign.name }}</h2>
+            <p class="text-muted mb-0">Subject: {{ campaign.subject }} | Status: <span class="badge {% if campaign.status=='Running' %}bg-success{% elif campaign.status=='Paused' %}bg-warning{% elif campaign.status=='Stopped' %}bg-danger{% else %}bg-secondary{% endif %}">{{ campaign.status }}</span></p>
         </div>
-        
-        <!-- Campaign Controls -->
         <div class="btn-group">
-            {% if campaign.status == 'Draft' or campaign.status == 'Paused' %}
-                <a href="{{ url_for('main.campaign_action', campaign_id=campaign.id, action='start' if campaign.status == 'Draft' else 'resume') }}" class="btn btn-success">
-                    <i class="fas fa-play"></i> {{ 'Start' if campaign.status == 'Draft' else 'Resume' }}
-                </a>
-            {% endif %}
-            
-            {% if campaign.status == 'Running' %}
-                <a href="{{ url_for('main.campaign_action', campaign_id=campaign.id, action='pause') }}" class="btn btn-warning text-white">
-                    <i class="fas fa-pause"></i> Pause
-                </a>
-            {% endif %}
-            
-            {% if campaign.status in ['Running', 'Paused'] %}
-                <a href="{{ url_for('main.campaign_action', campaign_id=campaign.id, action='stop') }}" class="btn btn-danger" onclick="return confirm('Stop campaign? This cannot be undone automatically.')">
-                    <i class="fas fa-stop"></i> Stop
-                </a>
-            {% endif %}
+            <a href="{{ url_for('main.index') }}" class="btn btn-outline-secondary">Back to Dashboard</a>
         </div>
     </div>
 
-    <!-- Recipient Management Toolbar -->
-    <div class="card mt-4 mb-3">
-        <div class="card-header bg-light d-flex align-items-center">
-            <i class="fas fa-users me-2"></i> Recipients ({{ recipients.total }})
-        </div>
+    <!-- Message Controls (Visual Only - Content is set on creation, but could represent edit capability) -->
+    <div class="card mb-3 shadow-sm">
         <div class="card-body py-2">
-            <div class="d-flex flex-wrap gap-2">
-                <!-- Add Single -->
-                <form action="{{ url_for('main.add_recipient', campaign_id=campaign.id) }}" method="POST" class="d-flex gap-2">
-                    <input type="email" name="email" class="form-control form-control-sm" placeholder="user@example.com" required style="width: 200px;">
-                    <button type="submit" class="btn btn-sm btn-success"><i class="fas fa-plus"></i></button>
-                </form>
-                
-                <div class="vr mx-2"></div>
-
-                <!-- Bulk Actions -->
-                <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#pasteModal"><i class="fas fa-paste"></i> Paste</button>
-                
-                <form action="{{ url_for('main.validate_list', campaign_id=campaign.id) }}" method="POST" class="d-inline">
-                    <button type="submit" class="btn btn-sm btn-warning text-white"><i class="fas fa-check"></i> Validate List</button>
-                </form>
-                
-                <form action="{{ url_for('main.retry_failed', campaign_id=campaign.id) }}" method="POST" class="d-inline">
-                    <button type="submit" class="btn btn-sm btn-info text-white"><i class="fas fa-sync"></i> Retry Failed</button>
-                </form>
-                
-                <form action="{{ url_for('main.clear_recipients', campaign_id=campaign.id) }}" method="POST" class="d-inline" onsubmit="return confirm('Delete ALL recipients?');">
-                    <button type="submit" class="btn btn-sm btn-danger"><i class="fas fa-trash"></i> Clear List</button>
-                </form>
+            <div class="row align-items-center">
+                <div class="col-md-12">
+                    <h6 class="text-uppercase text-muted small mb-2">Message Actions</h6>
+                    <button class="btn btn-sm btn-purple" disabled><i class="fas fa-folder-open"></i> Load HTML</button>
+                    <button class="btn btn-sm btn-teal" disabled><i class="fas fa-file-alt"></i> Template</button>
+                    <button class="btn btn-sm btn-orange" disabled><i class="fas fa-paperclip"></i> Attach</button>
+                    <button class="btn btn-sm btn-red" disabled><i class="fas fa-trash"></i> Clear</button>
+                    <span class="text-muted small ms-2">(Editing active only in Draft mode)</span>
+                </div>
             </div>
         </div>
     </div>
 
-    <form id="bulkActionForm" method="POST" action="{{ url_for('main.remove_selected', campaign_id=campaign.id) }}">
-    <div class="card">
-        <div class="card-body p-0">
-            <div class="table-responsive">
-                <table class="table table-striped table-hover mb-0">
-                    <thead class="table-light">
-                        <tr>
-                            <th style="width: 40px;"><input type="checkbox" onclick="toggleAll(this)"></th>
-                            <th>Email</th>
-                            <th>Status</th>
-                            <th>Sent</th>
-                            <th>Opened</th>
-                            <th>Clicked</th>
-                            <th>Info</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for recipient in recipients.items %}
-                        <tr>
-                            <td><input type="checkbox" name="recipient_ids" value="{{ recipient.id }}"></td>
-                            <td>{{ recipient.email }}</td>
-                            <td>
-                                <span class="badge 
-                                    {% if recipient.status == 'Sent' %}bg-success
-                                    {% elif recipient.status == 'Failed' %}bg-danger
-                                    {% elif recipient.status == 'Sending' %}bg-warning text-dark
-                                    {% elif recipient.status == 'Unsubscribed' %}bg-dark
-                                    {% else %}bg-secondary
-                                    {% endif %}">
-                                    {{ recipient.status }}
-                                </span>
-                            </td>
-                            <td>{{ recipient.sent_at.strftime('%m-%d %H:%M') if recipient.sent_at else '-' }}</td>
-                            <td>{{ '✅' if recipient.opened_at else '-' }}</td>
-                            <td>{{ '✅' if recipient.clicked_at else '-' }}</td>
-                            <td class="text-truncate small" style="max-width: 200px;" title="{{ recipient.status_message }}">{{ recipient.status_message or '' }}</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
+    <!-- Campaign Controls (Start, Pause, Stop, Schedule, Export) -->
+    <div class="card mb-3 border-0 bg-light">
+        <div class="card-body py-2">
+            <div class="d-flex justify-content-between">
+                <form action="{{ url_for('main.control_campaign', campaign_id=campaign.id) }}" method="POST" class="d-flex gap-2 w-100">
+                    <button type="submit" name="action" value="start" class="btn btn-success flex-fill fw-bold" {% if campaign.status == 'Running' %}disabled{% endif %}>
+                        <i class="fas fa-play"></i> START
+                    </button>
+                    {% if campaign.status == 'Paused' %}
+                    <button type="submit" name="action" value="resume" class="btn btn-warning flex-fill fw-bold text-white">
+                        <i class="fas fa-play"></i> RESUME
+                    </button>
+                    {% else %}
+                    <button type="submit" name="action" value="pause" class="btn btn-warning flex-fill fw-bold text-white" {% if campaign.status != 'Running' %}disabled{% endif %}>
+                        <i class="fas fa-pause"></i> PAUSE
+                    </button>
+                    {% endif %}
+                    <button type="submit" name="action" value="stop" class="btn btn-danger flex-fill fw-bold" {% if campaign.status == 'Stopped' or campaign.status == 'Draft' or campaign.status == 'Completed' %}disabled{% endif %}>
+                        <i class="fas fa-stop"></i> STOP
+                    </button>
+                </form>
+                
+                <div class="d-flex gap-2 ms-3 w-50">
+                    <button class="btn btn-teal flex-fill fw-bold text-white" disabled><i class="fas fa-calendar-alt"></i> SCHEDULE</button>
+                    <a href="{{ url_for('main.export_csv', campaign_id=campaign.id) }}" class="btn btn-purple flex-fill fw-bold text-white"><i class="fas fa-file-export"></i> EXPORT</a>
+                </div>
             </div>
         </div>
-        <div class="card-footer d-flex justify-content-between align-items-center">
-            <button type="submit" class="btn btn-sm btn-outline-danger">Remove Selected</button>
+    </div>
+
+    <!-- Recipient Management Controls -->
+    <div class="card mb-3 shadow-sm">
+        <div class="card-header bg-white fw-bold">
+            <i class="fas fa-users"></i> Recipients ({{ recipients.total }})
+        </div>
+        <div class="card-body">
+            <!-- Row 1: Add/Import/Validate -->
+            <div class="row g-2 mb-3">
+                <div class="col-auto">
+                    <form action="{{ url_for('main.import_csv', campaign_id=campaign.id) }}" method="POST" enctype="multipart/form-data" class="d-inline">
+                        <label class="btn btn-success btn-sm text-white" style="cursor: pointer;">
+                            <i class="fas fa-folder-open"></i> Load List
+                            <input type="file" name="file" hidden onchange="this.form.submit()">
+                        </label>
+                    </form>
+                </div>
+                <div class="col-auto">
+                    <button class="btn btn-primary btn-sm" disabled><i class="fas fa-paste"></i> Paste</button>
+                </div>
+                <div class="col-auto">
+                    <form action="{{ url_for('main.validate_list', campaign_id=campaign.id) }}" method="POST" class="d-inline">
+                        <button type="submit" class="btn btn-warning btn-sm text-white"><i class="fas fa-check"></i> Validate List</button>
+                    </form>
+                </div>
+                <div class="col-auto">
+                    <form action="{{ url_for('main.clear_recipients', campaign_id=campaign.id) }}" method="POST" class="d-inline" onsubmit="return confirm('Clear all recipients?');">
+                        <button type="submit" class="btn btn-danger btn-sm"><i class="fas fa-trash"></i> Clear List</button>
+                    </form>
+                </div>
+                
+                <!-- Single Add Input -->
+                <div class="col">
+                    <form action="{{ url_for('main.add_recipient', campaign_id=campaign.id) }}" method="POST" class="input-group input-group-sm">
+                        <input type="email" name="email" class="form-control" placeholder="Add single email..." required>
+                        <button class="btn btn-success" type="submit"><i class="fas fa-plus"></i></button>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Row 2: Bulk Actions (Retry/Remove) -->
+            <form id="bulkForm" method="POST">
+                <div class="row g-2 mb-2">
+                    <div class="col-auto">
+                        <button type="submit" formaction="{{ url_for('main.retry_failed', campaign_id=campaign.id) }}" class="btn btn-warning btn-sm text-white">
+                            <i class="fas fa-sync"></i> Retry Failed
+                        </button>
+                    </div>
+                    <div class="col-auto">
+                        <button type="submit" formaction="{{ url_for('main.remove_selected', campaign_id=campaign.id) }}" class="btn btn-danger btn-sm">
+                            <i class="fas fa-trash-alt"></i> Remove Sel.
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Recipient Table -->
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover align-middle">
+                        <thead class="table-light">
+                            <tr>
+                                <th style="width: 30px;"><input type="checkbox" id="selectAll"></th>
+                                <th>Email</th>
+                                <th>Status</th>
+                                <th>Sent</th>
+                                <th>Open</th>
+                                <th>Click</th>
+                                <th>Info</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for r in recipients.items %}
+                            <tr>
+                                <td><input type="checkbox" name="recipient_ids" value="{{ r.id }}"></td>
+                                <td>{{ r.email }}</td>
+                                <td>
+                                    <span class="badge {% if r.status == 'Sent' %}bg-success{% elif r.status == 'Failed' %}bg-danger{% elif r.status == 'Sending' %}bg-warning text-dark{% else %}bg-light text-dark border{% endif %}">
+                                        {{ r.status }}
+                                    </span>
+                                </td>
+                                <td>{{ r.sent_at.strftime('%H:%M') if r.sent_at else '-' }}</td>
+                                <td>{{ '✅' if r.opened_at else '-' }}</td>
+                                <td>{{ '✅' if r.clicked_at else '-' }}</td>
+                                <td class="text-truncate" style="max-width: 150px;" title="{{ r.status_message }}">{{ r.status_message or '' }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </form>
             
+            <!-- Pagination -->
             <nav>
-                <ul class="pagination justify-content-end mb-0">
-                    <li class="page-item {% if not recipients.has_prev %}disabled{% endif %}">
-                        <a class="page-link" href="{{ url_for('main.view_campaign', campaign_id=campaign.id, page=recipients.prev_num) }}">Previous</a>
-                    </li>
+                <ul class="pagination pagination-sm justify-content-center">
                     {% for page_num in recipients.iter_pages() %}
                         <li class="page-item {% if page_num == recipients.page %}active{% endif %}">
                             <a class="page-link" href="{{ url_for('main.view_campaign', campaign_id=campaign.id, page=page_num) }}">{{ page_num }}</a>
                         </li>
                     {% endfor %}
-                    <li class="page-item {% if not recipients.has_next %}disabled{% endif %}">
-                        <a class="page-link" href="{{ url_for('main.view_campaign', campaign_id=campaign.id, page=recipients.next_num) }}">Next</a>
-                    </li>
                 </ul>
             </nav>
         </div>
     </div>
-    </form>
+</div>
 
-    <!-- Paste Modal -->
-    <div class="modal fade" id="pasteModal" tabindex="-1">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <form action="{{ url_for('main.paste_recipients', campaign_id=campaign.id) }}" method="POST">
-                    <div class="modal-header">
-                        <h5 class="modal-title">Paste Emails</h5>
-                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                    </div>
-                    <div class="modal-body">
-                        <textarea name="pasted_text" class="form-control" rows="10" placeholder="Paste text containing emails here..."></textarea>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                        <button type="submit" class="btn btn-primary">Import Emails</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
+<style>
+    /* Custom Button Colors from Screenshot */
+    .btn-purple { background-color: #9b59b6; color: white; border: none; }
+    .btn-purple:hover { background-color: #8e44ad; color: white; }
+    
+    .btn-teal { background-color: #1abc9c; color: white; border: none; }
+    .btn-teal:hover { background-color: #16a085; color: white; }
+    
+    .btn-orange { background-color: #e67e22; color: white; border: none; }
+    .btn-orange:hover { background-color: #d35400; color: white; }
+    
+    .btn-red { background-color: #e74c3c; color: white; border: none; }
+    .btn-red:hover { background-color: #c0392b; color: white; }
+</style>
 
-    <script>
-        function toggleAll(source) {
-            checkboxes = document.getElementsByName('recipient_ids');
-            for(var i=0, n=checkboxes.length;i<n;i++) {
-                checkboxes[i].checked = source.checked;
-            }
-        }
-    </script>
+<script>
+    document.getElementById('selectAll').addEventListener('change', function() {
+        const checkboxes = document.querySelectorAll('input[name="recipient_ids"]');
+        checkboxes.forEach(cb => cb.checked = this.checked);
+    });
+</script>
 {% endblock %}
