@@ -26,7 +26,7 @@ services:
     envVars:
       - key: DATABASE_URL
         fromService:
-          type: postgres # CORRECTED: The type is 'postgres'
+          type: database # CORRECTED: Use 'database' when referencing a DB from the top-level 'databases' block.
           name: paris-sender-db
           property: connectionString
       - key: REDIS_URL
@@ -49,7 +49,7 @@ services:
     envVars:
       - key: DATABASE_URL
         fromService:
-          type: postgres # CORRECTED: The type is 'postgres'
+          type: database # CORRECTED: Use 'database' here as well.
           name: paris-sender-db
           property: connectionString
       - key: REDIS_URL
