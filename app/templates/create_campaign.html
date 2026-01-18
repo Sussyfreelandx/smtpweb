@@ -1,84 +1,67 @@
 {% extends "base.html" %}
 
 {% block content %}
-<style>
-    .ab-fields {
-        display: none;
-        padding-left: 20px;
-        border-left: 3px solid #0d6efd;
-        margin-top: 15px;
-    }
-</style>
-
-<h1>Create New Campaign</h1>
-<form method="post" enctype="multipart/form-data">
-    <div class="mb-3">
-        <label for="campaign_name" class="form-label">Campaign Name</label>
-        <input type="text" class="form-control" id="campaign_name" name="campaign_name" required>
-    </div>
-
-    <hr>
-    
-    <h4>Content (Version A)</h4>
-    <div class="mb-3">
-        <label for="subject_a" class="form-label">Subject A</label>
-        <input type="text" class="form-control" id="subject_a" name="subject_a" required>
-    </div>
-
-    <div class="mb-3">
-        <label for="body_html_a" class="form-label">HTML Body A</label>
-        <textarea class="form-control" id="body_html_a" name="body_html_a" rows="10" placeholder="Use {{firstname}}, {{company}}, etc. for personalization."></textarea>
-    </div>
-
-    <div class="form-check form-switch mb-3">
-        <input class="form-check-input" type="checkbox" role="switch" id="is_ab_test" name="is_ab_test">
-        <label class="form-check-label" for="is_ab_test">Enable A/B Test (Subject and/or Body)</label>
-    </div>
-
-    <div class="ab-fields" id="ab_test_fields">
-        <h4>Content (Version B)</h4>
-        <div class="mb-3">
-            <label for="subject_b" class="form-label">Subject B</label>
-            <input type="text" class="form-control" id="subject_b" name="subject_b">
+    <h1 class="mb-4">Create New Campaign</h1>
+    <form method="post" enctype="multipart/form-data" class="needs-validation" novalidate>
+        <div class="card mb-4">
+            <div class="card-header">1. Campaign Details</div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <label for="campaign_name" class="form-label">Campaign Name</label>
+                    <input type="text" class="form-control" id="campaign_name" name="campaign_name" placeholder="e.g., Q4 Product Launch" required>
+                </div>
+                <div class="mb-3">
+                    <label for="subject" class="form-label">Subject Line</label>
+                    <input type="text" class="form-control" id="subject" name="subject" placeholder="An important message for you" required>
+                </div>
+                <div class="mb-3">
+                    <label for="body_html" class="form-label">HTML Body</label>
+                    <textarea class="form-control" id="body_html" name="body_html" rows="12" placeholder="Use {{ firstname }} for personalization. Full HTML is supported." required></textarea>
+                </div>
+            </div>
         </div>
-        <div class="mb-3">
-            <label for="body_html_b" class="form-label">HTML Body B</label>
-            <textarea class="form-control" id="body_html_b" name="body_html_b" rows="10"></textarea>
+
+        <div class="card mb-4">
+            <div class="card-header">2. Recipients</div>
+            <div class="card-body">
+                <label for="recipients_file" class="form-label">Upload Recipients CSV</label>
+                <input class="form-control" type="file" id="recipients_file" name="recipients_file" accept=".csv" required>
+                <div class="form-text">Your CSV must have an 'email' column header. Other columns like 'firstname' will be used for personalization.</div>
+            </div>
         </div>
-        <div class="mb-3">
-            <label for="ab_split_ratio" class="form-label">Version A/B Split Ratio (%)</label>
-            <input type="range" class="form-range" min="0" max="100" step="5" value="50" id="ab_split_ratio" name="ab_split_ratio" oninput="updateRatioLabel(this.value)">
-            <div id="ratio_label" class="form-text">Send 50% Version A / 50% Version B</div>
+
+        <div class="card mb-4">
+            <div class="card-header">3. SMTP Configuration</div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label for="smtp_server" class="form-label">SMTP Server</label>
+                        <input type="text" class="form-control" id="smtp_server" name="smtp_server" placeholder="smtp.example.com" required>
+                    </div>
+                    <div class="col-md-6">
+                        <label for="smtp_port" class="form-label">Port</label>
+                        <input type="number" class="form-control" id="smtp_port" name="smtp_port" value="587" required>
+                    </div>
+                    <div class="col-md-6">
+                        <label for="smtp_sender_name" class="form-label">Sender Name</label>
+                        <input type="text" class="form-control" id="smtp_sender_name" name="smtp_sender_name" placeholder="John Doe" required>
+                    </div>
+                    <div class="col-md-6">
+                        <label for="smtp_sender_email" class="form-label">Sender Email</label>
+                        <input type="email" class="form-control" id="smtp_sender_email" name="smtp_sender_email" placeholder="john.doe@example.com" required>
+                    </div>
+                    <div class="col-md-6">
+                        <label for="smtp_username" class="form-label">Username</label>
+                        <input type="email" class="form-control" id="smtp_username" name="smtp_username" placeholder="Usually the same as sender email" required>
+                    </div>
+                    <div class="col-md-6">
+                        <label for="smtp_password" class="form-label">Password / App Password</label>
+                        <input type="password" class="form-control" id="smtp_password" name="smtp_password" required>
+                    </div>
+                </div>
+            </div>
         </div>
-    </div>
-    
-    <hr>
-    
-    <div class="mb-3">
-        <label for="smtp_profiles" class="form-label">SMTP Sending Profiles (select one or more for rotation)</label>
-        <select class="form-select" id="smtp_profiles" name="smtp_profiles" multiple required size="5">
-            {% for profile in smtp_profiles %}
-                <option value="{{ profile.id }}">{{ profile.name }} ({{ profile.username }})</option>
-            {% endfor %}
-        </select>
-        <div class="form-text">Hold Ctrl/Cmd to select multiple profiles for sending rotation.</div>
-    </div>
 
-    <div class="mb-3">
-        <label for="recipients_file" class="form-label">Recipients (CSV file)</label>
-        <input class="form-control" type="file" id="recipients_file" name="recipients_file" accept=".csv" required>
-        <div class="form-text">Your CSV must contain an 'email' column header. Other columns can be used for personalization (e.g., 'firstname').</div>
-    </div>
-
-    <button type="submit" class="btn btn-primary mt-4">Create Campaign</button>
-</form>
-
-<script>
-    document.getElementById('is_ab_test').addEventListener('change', function() {
-        document.getElementById('ab_test_fields').style.display = this.checked ? 'block' : 'none';
-    });
-    function updateRatioLabel(value) {
-        document.getElementById('ratio_label').innerText = `Send ${value}% Version A / ${100-value}% Version B`;
-    }
-</script>
+        <button type="submit" class="btn btn-primary btn-lg w-100">Create & Save Campaign</button>
+    </form>
 {% endblock %}
