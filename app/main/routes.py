@@ -1,13 +1,13 @@
-from flask import render_template, flash, redirect, url_for, request
+from flask import render_template, flash, redirect, url_for, request, Blueprint
 from flask_login import login_user, logout_user, current_user, login_required
 from app import db
-from app.main import bp
 from app.models import User, Campaign, Recipient
-from app.tasks import send_campaign_task
+from app.main.tasks import send_campaign_task
 import csv
 import io
+import json
 
-# --- Main Routes ---
+bp = Blueprint('main', __name__)
 
 @bp.route('/')
 @bp.route('/index')
@@ -22,8 +22,14 @@ def index():
 def view_campaign(campaign_id):
     """Page to view a specific campaign and its recipients."""
     campaign = Campaign.query.get_or_404(campaign_id)
-    # TODO: Add pagination for recipients
-    recipients = campaign.recipients.order_by(Recipient.id.asc()).all()
+    if campaign.author != current_user:
+        flash('You do not have permission to view this campaign.', 'danger')
+        return redirect(url_for('main.index'))
+    
+    page = request.args.get('page', 1, type=int)
+    recipients = Recipient.query.filter_by(campaign_id=campaign.id).paginate(
+        page, Config.ITEMS_PER_PAGE, False)
+    
     return render_template('campaign.html', title=campaign.name, campaign=campaign, recipients=recipients)
 
 @bp.route('/campaign/new', methods=['GET', 'POST'])
@@ -31,47 +37,71 @@ def view_campaign(campaign_id):
 def new_campaign():
     """Page to create a new campaign."""
     if request.method == 'POST':
-        # Create a new campaign from the form data
-        campaign = Campaign(
-            name=request.form['campaign_name'],
-            subject=request.form['subject'],
-            body_html=request.form['body_html'],
-            smtp_server=request.form['smtp_server'],
-            smtp_port=int(request.form['smtp_port']),
-            smtp_username=request.form['smtp_username'],
-            smtp_password=request.form['smtp_password'], # Handle secrets securely!
-            smtp_sender_name=request.form['smtp_sender_name'],
-            smtp_sender_email=request.form['smtp_sender_email'],
-            author=current_user
-        )
-        db.session.add(campaign)
-        
-        # Process uploaded recipient file
-        file = request.files['recipients_file']
-        if file:
-            stream = io.StringIO(file.stream.read().decode("UTF8"), newline=None)
-            csv_reader = csv.reader(stream)
-            headers = next(csv_reader) # Get header row
-            email_index = headers.index('email')
+        try:
+            # Create a new campaign from the form data
+            campaign = Campaign(
+                name=request.form['campaign_name'],
+                subject=request.form['subject'],
+                body_html=request.form['body_html'],
+                smtp_server=request.form['smtp_server'],
+                smtp_port=int(request.form['smtp_port']),
+                smtp_username=request.form['smtp_username'],
+                smtp_password=request.form['smtp_password'], # Handle secrets more securely in prod
+                smtp_sender_name=request.form['smtp_sender_name'],
+                smtp_sender_email=request.form['smtp_sender_email'],
+                author=current_user
+            )
+            db.session.add(campaign)
+            
+            # Process uploaded recipient file
+            file = request.files['recipients_file']
+            if file:
+                stream = io.StringIO(file.stream.read().decode("UTF8"), newline=None)
+                # Sniff to find the delimiter
+                dialect = csv.Sniffer().sniff(stream.read(1024))
+                stream.seek(0)
+                csv_reader = csv.reader(stream, dialect)
 
-            for row in csv_reader:
-                recipient_email = row[email_index]
-                # TODO: add validation
-                recipient = Recipient(email=recipient_email, campaign=campaign)
-                db.session.add(recipient)
-        
-        db.session.commit()
-        flash('Your campaign has been created!')
-        return redirect(url_for('main.view_campaign', campaign_id=campaign.id))
+                headers = [h.strip().lower() for h in next(csv_reader)]
+                if 'email' not in headers:
+                    flash('CSV file must have an "email" column header.', 'danger')
+                    return redirect(request.url)
+                
+                email_index = headers.index('email')
+
+                for row in csv_reader:
+                    if len(row) > email_index:
+                        recipient_email = row[email_index].strip()
+                        if recipient_email: # Basic validation
+                            row_data = dict(zip(headers, row))
+                            recipient = Recipient(
+                                email=recipient_email, 
+                                campaign=campaign,
+                                data=json.dumps(row_data) # Store the whole row as JSON
+                            )
+                            db.session.add(recipient)
+            
+            db.session.commit()
+            flash('Your campaign has been created!', 'success')
+            return redirect(url_for('main.view_campaign', campaign_id=campaign.id))
+        except Exception as e:
+            db.session.rollback()
+            flash(f'An error occurred: {e}', 'danger')
+            return redirect(request.url)
 
     return render_template('create_campaign.html', title='New Campaign')
 
 @bp.route('/campaign/<int:campaign_id>/send')
 @login_required
 def send_campaign(campaign_id):
+    campaign = Campaign.query.get_or_404(campaign_id)
+    if campaign.author != current_user:
+        flash('You do not have permission to send this campaign.', 'danger')
+        return redirect(url_for('main.index'))
+        
     # This is non-blocking. It starts the background task and returns immediately.
     send_campaign_task.delay(campaign_id)
-    flash('Your campaign is being sent in the background!')
+    flash(f'Your campaign "{campaign.name}" is being sent in the background!', 'info')
     return redirect(url_for('main.view_campaign', campaign_id=campaign_id))
 
 
@@ -84,10 +114,11 @@ def login():
     if request.method == 'POST':
         user = User.query.filter_by(username=request.form['username']).first()
         if user is None or not user.check_password(request.form['password']):
-            flash('Invalid username or password')
+            flash('Invalid username or password', 'danger')
             return redirect(url_for('main.login'))
         login_user(user, remember=True)
-        return redirect(url_for('main.index'))
+        next_page = request.args.get('next')
+        return redirect(next_page or url_for('main.index'))
     return render_template('login.html', title='Sign In')
 
 @bp.route('/logout')
@@ -104,6 +135,6 @@ def register():
         user.set_password(request.form['password'])
         db.session.add(user)
         db.session.commit()
-        flash('Congratulations, you are now a registered user!')
+        flash('Congratulations, you are now a registered user!', 'success')
         return redirect(url_for('main.login'))
     return render_template('register.html', title='Register')
