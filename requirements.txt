@@ -1,14 +1,14 @@
 # Flask and Web Server
-Flask>=2.0
+Flask
 gunicorn
 Flask-SQLAlchemy
 Flask-Migrate
 Flask-Login
 python-dotenv
-Werkzeug # Explicitly add for version control
+psycopg2-binary
 
 # Core Logic & Email
-aiosmtp>=0.8
+aiosmtp
 css_inline
 dnspython
 Jinja2
@@ -16,5 +16,5 @@ pypdf2
 requests
 
 # Background Jobs
-celery[redis]>=5.0
+Celery
 redis
