@@ -3,9 +3,9 @@ import json
 from datetime import datetime
 from flask import url_for
 from app import celery, db, create_app
-from app.models import Campaign, Recipient
-from core_logic.smtp_handler import SMTPHandler
-from core_logic.personalize import personalize_content
+from app.models import Campaign, Recipient, SMTPServer
+from app.core_logic.smtp_handler import SMTPHandler
+from app.core_logic.personalization import PersonalizationEngine
 
 # Create a Flask app context for the celery worker
 app = create_app()
@@ -40,49 +40,43 @@ def send_single_email_task(self, recipient_id):
         return # Skip if recipient doesn't exist or is not in the queue
 
     campaign = recipient.campaign
+    smtp_profile = campaign.smtp_profile
     
+    if not smtp_profile:
+        recipient.status = 'Failed'
+        recipient.status_message = 'No SMTP Profile associated with campaign.'
+        db.session.commit()
+        return
+
     # Update status to 'Sending' in the database
     recipient.status = 'Sending'
     db.session.commit()
 
-    # Create SMTP configuration from the campaign's stored settings
+    # Create SMTP configuration from the associated profile
     smtp_config = {
-        'server': campaign.smtp_server,
-        'port': campaign.smtp_port,
-        'username': campaign.smtp_username,
-        'password': campaign.smtp_password, # Remember to handle secrets better in production
-        'sender_name': campaign.smtp_sender_name,
-        'sender_email': campaign.smtp_sender_email,
-        'use_tls': True,
-        'use_ssl': False,
+        'server': smtp_profile.server,
+        'port': smtp_profile.port,
+        'username': smtp_profile.username,
+        'password': smtp_profile.get_password(), # Decrypts the password
+        'sender_name': smtp_profile.sender_name,
+        'sender_email': smtp_profile.sender_email,
+        'use_tls': smtp_profile.use_tls,
+        'use_ssl': smtp_profile.use_ssl,
     }
     
     smtp_handler = SMTPHandler(smtp_config)
     
     # --- Personalization ---
-    # Load recipient data and generate tracking/unsubscribe URLs
-    recipient_data = json.loads(recipient.data) if recipient.data else {}
-    unsubscribe_url = url_for('main.unsubscribe', recipient_id=recipient.id, _external=True)
-    tracking_pixel_url = url_for('main.track_open', recipient_id=recipient.id, _external=True)
+    personalizer = PersonalizationEngine(campaign, recipient)
+    p_subject, p_body = personalizer.personalize()
 
-    # Use the dedicated personalization module
-    p_subject, p_body = personalize_content(
-        subject=campaign.subject,
-        content=campaign.body_html,
-        recipient_data=recipient_data,
-        sender_name=campaign.smtp_sender_name,
-        unsubscribe_url=unsubscribe_url,
-        tracking_pixel_url=tracking_pixel_url,
-        # The click tracking URL would be injected here as well
-    )
-
-    # Use asyncio.run to execute the async sending function within the synchronous Celery worker
-    success, message = asyncio.run(smtp_handler.send_email_async(
+    # --- Sending (Now a direct synchronous call) ---
+    success, message = smtp_handler.send_email_sync(
         to_email=recipient.email,
         subject=p_subject,
         html_content=p_body,
-        unsubscribe_url=unsubscribe_url,
-    ))
+        unsubscribe_url=url_for('main.unsubscribe', token=recipient.get_tracking_token('unsubscribe'), _external=True)
+    )
 
     # Update recipient status based on the result
     if success:
