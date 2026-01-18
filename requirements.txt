@@ -8,7 +8,7 @@ python-dotenv
 Werkzeug
 
 # Core Logic & Email
-# aiosmtp has been removed
+# aiosmtp has been removed to ensure build compatibility
 css_inline
 dnspython
 Jinja2
