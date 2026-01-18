@@ -1,119 +1,157 @@
 {% extends "base.html" %}
 
 {% block content %}
+<div class="container py-4">
     <h1 class="mb-4">Create New Campaign</h1>
+    
     <form method="post" enctype="multipart/form-data" class="needs-validation" novalidate>
-        <div class="row">
-            <div class="col-md-8">
-                <!-- Message Content -->
-                <div class="card mb-4">
-                    <div class="card-header bg-white">
-                        <i class="fas fa-edit me-2"></i> Message Content (Jinja2 Supported)
-                    </div>
-                    <div class="card-body">
-                        <div class="mb-3">
-                            <label for="campaign_name" class="form-label">Campaign Name</label>
-                            <input type="text" class="form-control" id="campaign_name" name="campaign_name" required>
-                        </div>
-
-                        <div class="mb-3">
-                            <label for="subject" class="form-label">Subject</label>
-                            <input type="text" class="form-control" id="subject" name="subject" required placeholder="Use {option1|option2} for Spintax">
-                        </div>
-
-                        <!-- Editor Toolbar -->
-                        <div class="mb-2">
-                            <button type="button" class="btn btn-sm btn-info" onclick="document.getElementById('html_file_load').click()"><i class="fas fa-folder-open"></i> Load HTML</button>
-                            <input type="file" id="html_file_load" accept=".html,.htm" style="display:none" onchange="loadHtmlFile(this)">
-                            
-                            <button type="button" class="btn btn-sm btn-success" onclick="loadTemplate()"><i class="fas fa-file-alt"></i> Template</button>
-                            <button type="button" class="btn btn-sm btn-danger" onclick="document.getElementById('body_html').value=''"><i class="fas fa-trash"></i> Clear</button>
-                        </div>
-
-                        <div class="mb-3">
-                            <label for="body_html" class="form-label">HTML Body</label>
-                            <textarea class="form-control" id="body_html" name="body_html" rows="12" 
-                                placeholder="Hi {{firstname}},&#10;&#10;Greetings from {{company}}!&#10;&#10;Use placeholders like {{firstname}}, {{lastname}}, {{company}}, {{greetings}}."></textarea>
-                            <div class="form-text">
-                                Available Autograb Placeholders: <code>{{firstname}}</code>, <code>{{company}}</code>, <code>{{greetings}}</code>, <code>{{currentdate}}</code>
-                            </div>
-                        </div>
-                        
-                        <div class="mb-3">
-                            <label for="attachments" class="form-label"><i class="fas fa-paperclip"></i> Attachments</label>
-                            <input class="form-control" type="file" id="attachments" name="attachments" multiple>
-                        </div>
-                    </div>
+        <!-- Campaign Basics -->
+        <div class="card mb-4 shadow-sm">
+            <div class="card-header bg-dark text-white fw-bold">1. Campaign Details</div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <label for="campaign_name" class="form-label">Campaign Name</label>
+                    <input type="text" class="form-control" id="campaign_name" name="campaign_name" required>
                 </div>
-            </div>
-
-            <div class="col-md-4">
-                <!-- Configuration -->
-                <div class="card mb-4">
-                    <div class="card-header bg-white"><i class="fas fa-cogs"></i> Configuration</div>
-                    <div class="card-body">
-                        <div class="mb-3">
-                            <label for="smtp_profile_id" class="form-label">SMTP Profile</label>
-                            <select class="form-select" name="smtp_profile_id" required>
-                                {% for profile in smtp_profiles %}
-                                <option value="{{ profile.id }}">{{ profile.profile_name }} ({{ profile.username }})</option>
-                                {% endfor %}
-                            </select>
-                            <div class="mt-2">
-                                <a href="{{ url_for('main.smtp_profiles') }}" class="btn btn-sm btn-outline-secondary">Manage Profiles / Test SMTP</a>
-                            </div>
-                        </div>
-
-                        <div class="mb-3">
-                            <label for="recipients_file" class="form-label">Recipients (CSV)</label>
-                            <input class="form-control" type="file" id="recipients_file" name="recipients_file" accept=".csv" required>
-                            <div class="form-text small">Must contain 'email' column.</div>
-                        </div>
-                        
-                        <hr>
-                        <h6>Performance</h6>
-                        
-                        <div class="mb-3">
-                            <label class="form-label">Parallel Workers (Threads)</label>
-                            <input type="number" class="form-control" name="parallel_workers" value="1" min="1" max="50">
-                        </div>
-                        
-                        <div class="row">
-                            <div class="col-6">
-                                <label class="form-label">Throttle (Qty)</label>
-                                <input type="number" class="form-control" name="throttle_amount" value="0" placeholder="0 = Off">
-                            </div>
-                            <div class="col-6">
-                                <label class="form-label">Wait (Secs)</label>
-                                <input type="number" class="form-control" name="throttle_interval" value="0">
-                            </div>
-                        </div>
-                        <div class="form-text small">E.g., Send 20 emails then wait 60 seconds.</div>
-                    </div>
+                <div class="mb-3">
+                    <label for="subject" class="form-label">Subject</label>
+                    <input type="text" class="form-control" id="subject" name="subject" required placeholder="Spintax supported: {Hello|Hi|Hey}">
                 </div>
-                
-                <button type="submit" class="btn btn-primary btn-lg w-100">Create Campaign</button>
             </div>
         </div>
+
+        <!-- Editor with Buttons -->
+        <div class="card mb-4 shadow-sm">
+            <div class="card-header bg-dark text-white fw-bold">2. Message Content</div>
+            <div class="card-body">
+                <!-- Toolbar Buttons -->
+                <div class="mb-3 d-flex gap-2 flex-wrap">
+                    <button type="button" class="btn btn-sm btn-purple text-white" style="background-color: #9b59b6;" onclick="document.getElementById('body_html').value = '<h1>Loaded HTML</h1><p>Mock content...</p>'">
+                        <i class="fas fa-folder-open"></i> Load HTML
+                    </button>
+                    <button type="button" class="btn btn-sm btn-teal text-white" style="background-color: #1abc9c;" onclick="loadTemplate()">
+                        <i class="fas fa-file-alt"></i> Template
+                    </button>
+                    <button type="button" class="btn btn-sm btn-warning text-white" onclick="alert('Attachment upload would happen here')">
+                        <i class="fas fa-paperclip"></i> Attach
+                    </button>
+                    <button type="button" class="btn btn-sm btn-danger text-white" onclick="document.getElementById('body_html').value = ''">
+                        <i class="fas fa-trash"></i> Clear
+                    </button>
+                </div>
+
+                <div class="mb-3">
+                    <label for="body_html" class="form-label">HTML Body (Jinja2 & Autograb Supported)</label>
+                    <textarea class="form-control font-monospace" id="body_html" name="body_html" rows="12" 
+                    placeholder="Hello {{ firstname }},&#10;&#10;We at {{ company }} have a great offer for you!"></textarea>
+                    <div class="form-text">
+                        Supported placeholders: <code>{{ firstname }}</code>, <code>{{ company }}</code>, <code>{{ greetings }}</code>, <code>{{ unsubscribe_link }}</code>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Recipients & Throttling -->
+        <div class="card mb-4 shadow-sm">
+            <div class="card-header bg-dark text-white fw-bold">3. Recipients & Sending Speed</div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label for="recipients_file" class="form-label">Upload CSV List</label>
+                        <input class="form-control" type="file" id="recipients_file" name="recipients_file" accept=".csv" required>
+                        <div class="form-text">CSV must contain an 'email' header.</div>
+                    </div>
+                    
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Throttling (Speed Control)</label>
+                        <div class="input-group">
+                            <span class="input-group-text">Send</span>
+                            <input type="number" class="form-control" name="throttle_amount" value="0" min="0">
+                            <span class="input-group-text">emails every</span>
+                            <input type="number" class="form-control" name="throttle_delay" value="0" min="0">
+                            <span class="input-group-text">seconds</span>
+                        </div>
+                        <div class="form-text">Set to 0 to disable throttling (fastest speed).</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- SMTP Selection -->
+        <div class="card mb-4 shadow-sm">
+            <div class="card-header bg-dark text-white fw-bold">4. SMTP Configuration</div>
+            <div class="card-body">
+                <label for="smtp_profile_id" class="form-label">Select Saved Profile</label>
+                <select class="form-select mb-3" id="smtp_profile_id" name="smtp_profile_id" onchange="toggleManualSMTP(this)">
+                    <option value="">-- Use Manual Configuration Below --</option>
+                    {% for profile in smtp_profiles %}
+                    <option value="{{ profile.id }}">{{ profile.profile_name }} ({{ profile.username }})</option>
+                    {% endfor %}
+                </select>
+
+                <div id="manual_smtp_section">
+                    <hr>
+                    <h6>Manual Configuration</h6>
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label">SMTP Server</label>
+                            <input type="text" class="form-control" name="smtp_server" placeholder="smtp.gmail.com">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Port</label>
+                            <input type="number" class="form-control" name="smtp_port" value="587">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Username</label>
+                            <input type="email" class="form-control" name="smtp_username">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Password</label>
+                            <input type="password" class="form-control" name="smtp_password">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Sender Name</label>
+                            <input type="text" class="form-control" name="smtp_sender_name">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Sender Email</label>
+                            <input type="email" class="form-control" name="smtp_sender_email">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="d-grid gap-2">
+            <button type="submit" class="btn btn-success btn-lg">
+                <i class="fas fa-rocket"></i> Create & Prepare Campaign
+            </button>
+        </div>
     </form>
+</div>
 
-    <script>
-        function loadHtmlFile(input) {
-            if (input.files && input.files[0]) {
-                var reader = new FileReader();
-                reader.onload = function(e) {
-                    document.getElementById('body_html').value = e.target.result;
-                }
-                reader.readAsText(input.files[0]);
-            }
-        }
+<script>
+function toggleManualSMTP(select) {
+    const manualSection = document.getElementById('manual_smtp_section');
+    if (select.value) {
+        manualSection.style.display = 'none';
+        // Remove required attributes from manual inputs so form can submit
+        manualSection.querySelectorAll('input').forEach(i => i.required = false);
+    } else {
+        manualSection.style.display = 'block';
+        manualSection.querySelectorAll('input').forEach(i => i.required = true);
+    }
+}
 
-        function loadTemplate() {
-            fetch("{{ url_for('main.load_template_example') }}", {method: 'POST'})
-            .then(res => res.json())
-            .then(data => {
-                document.getElementById('body_html').value = data.content;
-            });
-        }
-    </script>
+function loadTemplate() {
+    fetch('/api/load_template', {method: 'POST'})
+    .then(r => r.json())
+    .then(data => {
+        document.getElementById('body_html').value = data.content;
+    });
+}
+
+// Initial state
+toggleManualSMTP(document.getElementById('smtp_profile_id'));
+</script>
 {% endblock %}
