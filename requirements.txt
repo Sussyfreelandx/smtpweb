@@ -22,3 +22,7 @@ redis
 # Database Driver & Encryption
 psycopg2-binary
 cryptography
+
+# Forms & Validation (NEW - Required for Settings pages)
+Flask-WTF
+email-validator
