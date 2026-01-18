@@ -1,3 +1,4 @@
+# This configuration tells Render how to build and run your services.
 databases:
   - name: paris-sender-db
     databaseName: paris_sender_db
