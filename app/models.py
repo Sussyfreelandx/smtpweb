@@ -34,13 +34,6 @@ class SMTPServer(db.Model):
     password_encrypted = db.Column(db.String(512), nullable=False)
     sender_name = db.Column(db.String(100))
     sender_email = db.Column(db.String(100))
-    
-    # --- NEW: IMAP Support for Reply Tracking ---
-    imap_server = db.Column(db.String(100))
-    imap_port = db.Column(db.Integer, default=993)
-    imap_username = db.Column(db.String(100))
-    imap_password_encrypted = db.Column(db.String(512))
-    
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
 
     def set_password(self, password):
@@ -52,17 +45,6 @@ class SMTPServer(db.Model):
         key = current_app.config['SECRET_KEY'].encode()
         f = Fernet(key)
         return f.decrypt(self.password_encrypted.encode()).decode()
-    
-    def set_imap_password(self, password):
-        key = current_app.config['SECRET_KEY'].encode()
-        f = Fernet(key)
-        self.imap_password_encrypted = f.encrypt(password.encode()).decode()
-
-    def get_imap_password(self):
-        if not self.imap_password_encrypted: return None
-        key = current_app.config['SECRET_KEY'].encode()
-        f = Fernet(key)
-        return f.decrypt(self.imap_password_encrypted.encode()).decode()
     
     def to_dict(self):
         return {
@@ -79,47 +61,46 @@ class SMTPServer(db.Model):
 class Campaign(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(140))
-    
-    # --- Standard Content ---
     subject = db.Column(db.String(140))
     body = db.Column(db.Text)
-    
-    # --- NEW: A/B Testing Fields ---
-    ab_testing_enabled = db.Column(db.Boolean, default=False)
-    subject_b = db.Column(db.String(140))
-    body_b = db.Column(db.Text) # Optional Body B
-    ab_split_ratio = db.Column(db.Integer, default=50) # Percentage for Version A
-    
-    # --- NEW: Secure Redirector Fields ---
-    burner_domain = db.Column(db.String(100)) # e.g. "secure-updates.com"
-    lure_path = db.Column(db.String(100)) # e.g. "auth/login"
-    
     timestamp = db.Column(db.DateTime, index=True, default=datetime.utcnow)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    
+    # Relationships
     smtp_profile_id = db.Column(db.Integer, db.ForeignKey('smtp_server.id'))
     smtp_profile = db.relationship('SMTPServer', backref='campaigns')
     recipients = db.relationship('Recipient', backref='campaign', lazy='dynamic', cascade="all, delete-orphan")
+    attachments = db.relationship('Attachment', backref='campaign', lazy='dynamic', cascade="all, delete-orphan")
+
+    # Status & Control
+    # Status options: 'Draft', 'Queued', 'Running', 'Paused', 'Stopped', 'Completed'
+    status = db.Column(db.String(20), default='Draft') 
+    
+    # Throttling & Performance Settings
+    parallel_workers = db.Column(db.Integer, default=1) # Standard Threading
+    throttle_amount = db.Column(db.Integer, default=0) # Emails per batch
+    throttle_interval = db.Column(db.Integer, default=0) # Seconds to wait
+
+class Attachment(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    filename = db.Column(db.String(255), nullable=False)
+    file_path = db.Column(db.String(512), nullable=False) # Server path
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'))
 
 class Recipient(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(120), index=True)
-    
-    # --- Personalization Data (JSON) ---
-    # Store CSV data here to be used by Autograb
-    data = db.Column(db.Text) 
-    
+    # Status options: 'Queued', 'Sending', 'Sent', 'Failed', 'Opened', 'Clicked', 'Unsubscribed'
     status = db.Column(db.String(20), default='Queued')
     status_message = db.Column(db.String(200))
+    data = db.Column(db.Text) # JSON string for personalization data (firstname, company, etc.)
     campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'))
     sent_at = db.Column(db.DateTime, nullable=True)
     opened_at = db.Column(db.DateTime, nullable=True)
     clicked_at = db.Column(db.DateTime, nullable=True)
+    unsubscribed_at = db.Column(db.DateTime, nullable=True)
 
-    def get_tracking_token(self, action, expires_in=None, payload=None):
-        """
-        Generates a secure token for tracking.
-        :param payload: Optional dict of extra data (e.g. original URL for clicks)
-        """
+    def get_tracking_token(self, action, payload=None):
         s = Serializer(current_app.config['SECRET_KEY'])
         data = {'action': action, 'recipient_id': self.id}
         if payload:
