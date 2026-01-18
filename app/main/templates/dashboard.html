@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block content %}
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1 class="h3">Dashboard</h1>
+        <a href="{{ url_for('main.new_campaign') }}" class="btn btn-success">
+            <i class="bi bi-plus-circle"></i> New Campaign
+        </a>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            Your Campaigns
+        </div>
+        <div class="list-group list-group-flush">
+            {% for campaign in campaigns %}
+            <a href="{{ url_for('main.view_campaign', campaign_id=campaign.id) }}" class="list-group-item list-group-item-action">
+                <div class="d-flex w-100 justify-content-between">
+                    <h5 class="mb-1">{{ campaign.name }}</h5>
+                    <small class="text-muted">{{ campaign.created_at.strftime('%Y-%m-%d') }}</small>
+                </div>
+                <p class="mb-1 text-muted">Subject: {{ campaign.subject }}</p>
+                <small><i class="bi bi-people-fill"></i> {{ campaign.recipients.count() }} recipients</small>
+            </a>
+            {% else %}
+            <div class="list-group-item text-center p-4">
+                <p class="mb-0">You have no campaigns yet.</p>
+                <a href="{{ url_for('main.new_campaign') }}">Create your first one!</a>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+{% endblock %}
