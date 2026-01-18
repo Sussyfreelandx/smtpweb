@@ -1,151 +1,118 @@
-import time
-import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
-from flask import url_for
 from app import celery, db, create_app
-from app.models import Campaign, Recipient, Attachment
+from app.models import Campaign, Recipient
 from app.core_logic.smtp_handler import SMTPHandler
 from app.core_logic.personalization import PersonalizationEngine
+from flask import url_for
+import time
+import logging
 
-# Create a standalone app context for workers
-app = create_app()
-app.app_context().push()
+# We do NOT create the app globally here to avoid circular imports during startup.
+# Celery will use the app factory pattern via the worker command.
 
-def check_campaign_status(campaign_id):
-    """Refreshes campaign status from DB."""
-    # We use a new session to ensure we get the latest data committed by the web UI
-    with app.app_context():
-        c = Campaign.query.get(campaign_id)
-        return c.status if c else 'Stopped'
-
-def process_single_recipient(recipient_id, smtp_config, subject_template, body_template, attachment_paths):
-    """
-    Worker function for ThreadPoolExecutor. 
-    Handles personalization and sending for one recipient.
-    """
-    with app.app_context():
-        recipient = Recipient.query.get(recipient_id)
-        if not recipient or recipient.status != 'Queued':
-            return
-
-        recipient.status = 'Sending'
-        db.session.commit()
-
-        try:
-            # Re-fetch campaign to get sender details specific to personalization
-            campaign = recipient.campaign
-            
-            # Initialize Helpers
-            smtp_handler = SMTPHandler(smtp_config)
-            personalizer = PersonalizationEngine(campaign, recipient)
-            
-            # Personalize
-            p_subject, p_body = personalizer.personalize()
-
-            # Send
-            unsubscribe_url = url_for('core_logic.unsubscribe', campaign_id=campaign.id, recipient_id=recipient.id, _external=True)
-            
-            success, message = smtp_handler.send_email_sync(
-                to_email=recipient.email,
-                subject=p_subject,
-                html_content=p_body,
-                unsubscribe_url=unsubscribe_url,
-                attachments=attachment_paths
-            )
-
-            if success:
-                recipient.status = 'Sent'
-                recipient.sent_at = datetime.utcnow()
-            else:
-                recipient.status = 'Failed'
-                recipient.status_message = message
-
-        except Exception as e:
-            recipient.status = 'Failed'
-            recipient.status_message = str(e)
-        
-        db.session.commit()
+logger = logging.getLogger(__name__)
 
 @celery.task(bind=True)
 def send_campaign_task(self, campaign_id):
-    """
-    Main background task. Manages the list, threads, throttling, and status checks.
-    """
+    # Create an app context manually for the task execution
+    app = create_app()
     with app.app_context():
         campaign = Campaign.query.get(campaign_id)
         if not campaign:
             return "Campaign not found"
-
-        # Set status to Running
-        campaign.status = 'Running'
-        db.session.commit()
-
-        # Gather Config
-        smtp_config = campaign.smtp_profile.to_dict()
-        attachment_paths = [a.file_path for a in campaign.attachments.all()]
         
-        # Parallel & Throttle Settings
-        max_workers = campaign.parallel_workers or 1
-        throttle_amount = campaign.throttle_amount or 0
-        throttle_interval = campaign.throttle_interval or 0
-
-        # Get Queued Recipients
+        logger.info(f"Starting campaign {campaign_id}: {campaign.name}")
+        
+        # Get pending recipients
         recipients = campaign.recipients.filter_by(status='Queued').all()
-        total_recipients = len(recipients)
-        processed_count = 0
-
-        # Create Thread Pool
-        # Note: We use threads here because SMTP is I/O bound.
-        executor = ThreadPoolExecutor(max_workers=max_workers)
-        futures = []
-
-        for recipient in recipients:
-            # 1. Check for Pause/Stop signals
-            current_status = check_campaign_status(campaign.id)
+        total = len(recipients)
+        
+        # Throttling logic
+        throttle_amount = campaign.throttle_amount
+        throttle_delay = campaign.throttle_delay
+        
+        count = 0
+        
+        for r in recipients:
+            # Check if campaign was paused/stopped
+            db.session.refresh(campaign)
+            if campaign.status == 'Paused':
+                logger.info(f"Campaign {campaign_id} paused.")
+                break
+                
+            # Send the email
+            send_single_email_task.apply(args=(r.id,))
+            count += 1
             
-            if current_status == 'Stopped':
-                # Cancel pending futures if possible and exit
-                executor.shutdown(wait=False)
-                return "Campaign Stopped by User"
-            
-            while current_status == 'Paused':
-                time.sleep(2) # Wait loop
-                current_status = check_campaign_status(campaign.id)
-                if current_status == 'Stopped':
-                    executor.shutdown(wait=False)
-                    return "Campaign Stopped during Pause"
-
-            # 2. Throttling Logic
-            if throttle_amount > 0 and processed_count > 0:
-                if processed_count % throttle_amount == 0:
-                    # Wait for interval
-                    time.sleep(throttle_interval)
-
-            # 3. Submit Task to Thread Pool
-            # We pass simple IDs and data structs to avoid threading issues with SQLAlchmey objects
-            f = executor.submit(
-                process_single_recipient, 
-                recipient.id, 
-                smtp_config, 
-                campaign.subject, 
-                campaign.body, 
-                attachment_paths
-            )
-            futures.append(f)
-            processed_count += 1
-
-        # Wait for all emails to finish
-        for future in as_completed(futures):
-            pass # We can collect results here if needed
-
-        executor.shutdown(wait=True)
-
-        # Final Status Update
-        # Re-fetch campaign to ensure we don't overwrite if user stopped it at the very end
-        c_final = Campaign.query.get(campaign_id)
-        if c_final.status == 'Running':
-            c_final.status = 'Completed'
+            # Handle Throttling
+            if throttle_amount > 0 and throttle_delay > 0:
+                if count % throttle_amount == 0:
+                    logger.info(f"Throttling: Pausing for {throttle_delay} seconds...")
+                    time.sleep(throttle_delay)
+        
+        # Check if done
+        remaining = campaign.recipients.filter_by(status='Queued').count()
+        if remaining == 0 and campaign.status != 'Paused':
+            campaign.status = 'Completed'
             db.session.commit()
 
-    return f"Campaign {campaign_id} processing finished."
+@celery.task(bind=True)
+def send_single_email_task(self, recipient_id):
+    # This task might be called individually or by the group task
+    # If called by group task within the same process/worker, app context might persist,
+    # but strictly for Celery, it's safer to ensure context.
+    
+    # Note: If using 'apply' synchronously above, we are already in context.
+    # If using 'delay' (async), we need context.
+    # To be safe, we check if current_app is available.
+    from flask import current_app
+    if not current_app:
+        app = create_app()
+        ctx = app.app_context()
+        ctx.push()
+    
+    recipient = Recipient.query.get(recipient_id)
+    if not recipient or recipient.status != 'Queued':
+        return
+        
+    recipient.status = 'Sending'
+    db.session.commit()
+    
+    try:
+        campaign = recipient.campaign
+        smtp_profile = campaign.smtp_profile
+        
+        if not smtp_profile:
+            raise Exception("No SMTP Profile linked")
+            
+        smtp_handler = SMTPHandler(smtp_profile.to_dict())
+        
+        # Personalization
+        engine = PersonalizationEngine(campaign, recipient)
+        subject, body = engine.personalize()
+        
+        # Unsubscribe Link
+        # Note: _external=True needs SERVER_NAME config in some Flask setups, 
+        # or it relies on Request context which might be missing in Celery.
+        # Fallback to a hardcoded base URL if needed.
+        unsub_link = url_for('main.unsubscribe', recipient_id=recipient.id, campaign_id=campaign.id, _external=True)
+        
+        success, msg = smtp_handler.send_email_sync(
+            to_email=recipient.email,
+            subject=subject,
+            html_content=body,
+            unsubscribe_url=unsub_link
+        )
+        
+        if success:
+            recipient.status = 'Sent'
+            recipient.sent_at = datetime.utcnow()
+        else:
+            recipient.status = 'Failed'
+            recipient.status_message = msg
+            
+    except Exception as e:
+        recipient.status = 'Failed'
+        recipient.status_message = str(e)
+        logger.error(f"Error sending to {recipient.email}: {e}")
+        
+    db.session.commit()
