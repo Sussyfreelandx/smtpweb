@@ -1,20 +1,18 @@
 {% extends "base.html" %}
 
 {% block content %}
-    <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap">
+    <div class="d-flex justify-content-between align-items-center mb-3">
         <div>
-            <h1>{{ campaign.name }}</h1>
-            <p class="text-muted">Subject: {{ campaign.subject }}</p>
+            <h1 class="h3">Campaign: {{ campaign.name }}</h1>
+            <p class="text-muted mb-0">Subject: {{ campaign.subject }}</p>
         </div>
         <a href="{{ url_for('main.send_campaign', campaign_id=campaign.id) }}" class="btn btn-primary btn-lg">
             <i class="bi bi-send"></i> Send Campaign
         </a>
     </div>
 
-    <div class="card">
-        <div class="card-header">
-            Recipients ({{ campaign.recipients.count() }})
-        </div>
+    <div class="card mt-4">
+        <div class="card-header">Recipients ({{ recipients.total }})</div>
         <div class="card-body">
             <div class="table-responsive">
                 <table class="table table-striped table-hover">
@@ -22,46 +20,53 @@
                         <tr>
                             <th>Email</th>
                             <th>Status</th>
-                            <th>Sent At (UTC)</th>
-                            <th>Status Message</th>
+                            <th>Sent</th>
+                            <th>Opened</th>
+                            <th>Clicked</th>
+                            <th>Info</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {% for recipient in recipients %}
+                        {% for recipient in recipients.items %}
                         <tr>
                             <td>{{ recipient.email }}</td>
                             <td>
                                 <span class="badge 
-                                    {% if recipient.status == 'Sent' %}text-bg-success
-                                    {% elif recipient.status == 'Opened' %}text-bg-info
-                                    {% elif recipient.status == 'Clicked' %}text-bg-primary
-                                    {% elif recipient.status == 'Failed' %}text-bg-danger
-                                    {% elif recipient.status == 'Sending' %}text-bg-warning
-                                    {% elif recipient.status == 'Unsubscribed' %}text-bg-dark
-                                    {% else %}text-bg-secondary
+                                    {% if recipient.status == 'Sent' %}bg-success
+                                    {% elif recipient.status == 'Failed' %}bg-danger
+                                    {% elif recipient.status == 'Sending' %}bg-warning
+                                    {% elif recipient.status == 'Unsubscribed' %}bg-dark
+                                    {% else %}bg-secondary
                                     {% endif %}">
                                     {{ recipient.status }}
                                 </span>
                             </td>
                             <td>{{ recipient.sent_at.strftime('%Y-%m-%d %H:%M') if recipient.sent_at else 'N/A' }}</td>
-                            <td><small class="text-muted">{{ recipient.status_message or '' }}</small></td>
+                            <td>{{ '✅' if recipient.opened_at else '❌' }}</td>
+                            <td>{{ '✅' if recipient.clicked_at else '❌' }}</td>
+                            <td class="text-truncate" style="max-width: 200px;">{{ recipient.status_message or '' }}</td>
                         </tr>
                         {% endfor %}
                     </tbody>
                 </table>
             </div>
-
-            <nav aria-label="Recipient navigation">
-                <ul class="pagination justify-content-center">
-                    <li class="page-item {% if not prev_url %}disabled{% endif %}">
-                        <a class="page-link" href="{{ prev_url or '#' }}">Previous</a>
+        </div>
+        <div class="card-footer">
+            <nav>
+                <ul class="pagination justify-content-center mb-0">
+                    <li class="page-item {% if not recipients.has_prev %}disabled{% endif %}">
+                        <a class="page-link" href="{{ url_for('main.view_campaign', campaign_id=campaign.id, page=recipients.prev_num) }}">Previous</a>
                     </li>
-                    <li class="page-item {% if not next_url %}disabled{% endif %}">
-                        <a class="page-link" href="{{ next_url or '#' }}">Next</a>
+                    {% for page_num in recipients.iter_pages() %}
+                        <li class="page-item {% if page_num == recipients.page %}active{% endif %}">
+                            <a class="page-link" href="{{ url_for('main.view_campaign', campaign_id=campaign.id, page=page_num) }}">{{ page_num }}</a>
+                        </li>
+                    {% endfor %}
+                    <li class="page-item {% if not recipients.has_next %}disabled{% endif %}">
+                        <a class="page-link" href="{{ url_for('main.view_campaign', campaign_id=campaign.id, page=recipients.next_num) }}">Next</a>
                     </li>
                 </ul>
             </nav>
-
         </div>
     </div>
 {% endblock %}
