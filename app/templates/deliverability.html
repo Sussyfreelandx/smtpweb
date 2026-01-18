@@ -1,6 +1,12 @@
 {% extends "base.html" %}
 
 {% block content %}
+<div class="mb-3">
+    <a href="{{ url_for('main.index') }}" class="btn btn-outline-secondary">
+        <i class="fas fa-arrow-left"></i> Back to Dashboard
+    </a>
+</div>
+
 <h1>Deliverability Tools</h1>
 <p class="lead">Check domain reputation and analyze content before sending.</p>
 
@@ -19,16 +25,16 @@
                     {{ form.check_auth(class="btn btn-primary") }}
                     {{ form.check_blacklist(class="btn btn-secondary") }}
                 </form>
-                {% if results and (results.type == 'auth' or results.type == 'blacklist') %}
+                {% if results %}
                 <hr>
                 <h5>Results for: <span class="fw-normal">{{ results.target }}</span></h5>
                 <ul class="list-group">
-                    {% if results.auth %}
+                    {% if results.type == 'auth' and results.auth %}
                         <li class="list-group-item d-flex justify-content-between align-items-center"><strong>SPF Record</strong><span>{{ results.auth.spf }}</span></li>
                         <li class="list-group-item d-flex justify-content-between align-items-center"><strong>DMARC Record</strong><span>{{ results.auth.dmarc }}</span></li>
                         <li class="list-group-item d-flex justify-content-between align-items-center"><strong>DKIM (Common)</strong><span>{{ results.auth.dkim }}</span></li>
                     {% endif %}
-                     {% if results.blacklist %}
+                     {% if results.type == 'blacklist' and results.blacklist %}
                         <li class="list-group-item d-flex justify-content-between align-items-center">
                             <strong>Blacklist Status</strong>
                             <span class="badge {% if 'Clean' in results.blacklist %}bg-success{% else %}bg-danger{% endif %}">{{ results.blacklist }}</span>
