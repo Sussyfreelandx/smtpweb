@@ -1,10 +1,11 @@
 import re
 import base64
 import uuid
+import json
 from datetime import datetime
 from jinja2 import Environment, exceptions
 from flask import url_for
-from .deliverability import DeliverabilityHelper
+from app.core_logic.deliverability import DeliverabilityHelper
 
 # These domains are used to determine if the company name should be a fallback.
 COMMON_ISP_DOMAINS = {
@@ -29,7 +30,7 @@ class PersonalizationEngine:
     def _get_context(self):
         """Builds the full context dictionary for Jinja2 rendering."""
         # Start with the recipient's own data (from CSV)
-        context = self.recipient.get_data()
+        context = json.loads(self.recipient.data or '{}')
         
         # --- Autograb Logic ---
         # 1. Firstname
@@ -65,7 +66,6 @@ class PersonalizationEngine:
         context.setdefault('company', 'your team')
 
         # --- Tracking Links (Generated via Flask's url_for) ---
-        # We generate a signed token to securely identify the recipient
         unsubscribe_token = self.recipient.get_tracking_token('unsubscribe')
         open_token = self.recipient.get_tracking_token('open')
         
@@ -95,7 +95,7 @@ class PersonalizationEngine:
         def replace_link(match):
             original_url = match.group(2)
             # Don't track unsubscribe links or mailto links
-            if 'unsubscribe' in original_url or original_url.startswith(('mailto:', '#')):
+            if 'unsubscribe' in original_url or original_url.startswith(('mailto:', '#')) or self.recipient.get_tracking_token('unsubscribe') in original_url:
                 return match.group(0)
             
             # Create a token specific to this link and recipient
