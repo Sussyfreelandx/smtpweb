@@ -1,8 +1,7 @@
-from flask import render_template, flash, redirect, url_for, request, jsonify
+from flask import render_template, flash, redirect, url_for, request, jsonify, Blueprint
 from flask_login import login_user, logout_user, current_user, login_required
 from werkzeug.security import generate_password_hash
 from app import db
-from app.main import bp
 from app.models import User, Campaign, Recipient
 from app.tasks import send_campaign_task
 from core_logic.ai_handler import AIHandler, LocalAIHandler
@@ -10,6 +9,10 @@ from core_logic.deliverability import DeliverabilityHelper
 import csv
 import io
 import json
+
+# --- THIS IS THE FIX ---
+# Create the Blueprint object here, in the same file as the routes.
+bp = Blueprint('main', __name__)
 
 # --- Main Dashboard and Campaign Routes ---
 
@@ -101,7 +104,7 @@ def send_campaign(campaign_id):
     # This is non-blocking. It starts the background task and returns immediately.
     send_campaign_task.delay(campaign_id)
     flash('Your campaign is being sent in the background! Statuses will update automatically.', 'info')
-    return redirect(url_for('main.view_campaign', campaign_id=campaign_id))
+    return redirect(url_for('main.view_campaign', campaign_id=campaign.id))
 
 # --- Tracking Routes ---
 
