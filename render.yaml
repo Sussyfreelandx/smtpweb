@@ -1,14 +1,6 @@
 # This configuration tells Render how to build and run your services.
 # It defines a PostgreSQL database, a Redis instance, a web server, and a worker.
 
-# Define the environment and version at the top level for the entire Blueprint
-env: python
-pythonVersion: "3.11"
-
-# Disable Pull Request Previews, as they are not needed and can cause sync issues.
-previews:
-  enabled: false
-
 databases:
   # A PostgreSQL database for storing users, campaigns, etc.
   - name: paris-sender-db
@@ -24,6 +16,8 @@ services:
   # The main Flask web server
   - type: web
     name: paris-sender-web
+    env: python # Explicitly define environment for this service
+    pythonVersion: "3.11" # Force Python 3.11
     buildCommand: |
       pip install -r requirements.txt
       flask db upgrade
@@ -48,6 +42,8 @@ services:
   # The Celery background worker for sending emails
   - type: worker
     name: paris-sender-worker
+    env: python # Explicitly define environment for this service
+    pythonVersion: "3.11" # Force Python 3.11
     buildCommand: pip install -r requirements.txt
     startCommand: celery -A wsgi.celery worker --loglevel=info
     envVars:
