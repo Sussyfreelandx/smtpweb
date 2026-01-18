@@ -1,13 +1,12 @@
 # Blueprint for deploying the Paris Sender Web App on Render
 
-services:
-  # A PostgreSQL database for our application data
-  - type: psql
-    name: paris-sender-db
-    plan: free # Use a paid plan for production to prevent data loss
-    # The free instance is paused after 90 days of inactivity.
-    # A paid instance is never paused.
+# The 'databases' block is a top-level key, separate from 'services'.
+databases:
+  - name: paris-sender-db
+    plan: free # Use a paid plan for production to prevent data loss.
+    # A free database instance is paused after 90 days of inactivity.
 
+services:
   # A Redis instance for our Celery broker and result backend
   - type: redis
     name: paris-sender-redis
@@ -27,7 +26,7 @@ services:
     envVars:
       - key: DATABASE_URL
         fromService:
-          type: psql
+          type: postgres # CORRECTED: The type is 'postgres'
           name: paris-sender-db
           property: connectionString
       - key: REDIS_URL
@@ -50,7 +49,7 @@ services:
     envVars:
       - key: DATABASE_URL
         fromService:
-          type: psql
+          type: postgres # CORRECTED: The type is 'postgres'
           name: paris-sender-db
           property: connectionString
       - key: REDIS_URL
