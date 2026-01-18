@@ -1,19 +1,19 @@
-# Blueprint for deploying the Paris Sender Web App on Render
-
-databases:
-  - name: paris-sender-db
-    plan: free # Use a paid plan for production to prevent data loss.
-    # A free database instance is paused after 90 days of inactivity.
+# render.yaml
+# This configuration tells Render how to build and run the services.
 
 services:
-  # A Redis instance for our Celery broker and result backend
+  # A PostgreSQL database for storing users, campaigns, etc.
+  - type: psql
+    name: paris-sender-db
+    plan: free # Use a paid plan for production apps
+
+  # A Redis instance for our Celery message broker
   - type: redis
     name: paris-sender-redis
-    ipAllowList: [] # Allow all, or secure by specifying IPs
     plan: free # Use a paid plan for production
-    maxmemoryPolicy: allkeys-lru # Recommended for Celery
+    ipAllowList: [] # Allows connections from anywhere, secure this in production
 
-  # The main web server (Flask/Gunicorn)
+  # The main Flask web server
   - type: web
     name: paris-sender-web
     env: python
@@ -24,7 +24,8 @@ services:
     startCommand: gunicorn wsgi:app
     envVars:
       - key: DATABASE_URL
-        fromDatabase: # CORRECTED: Use 'fromDatabase' key for top-level databases
+        fromService:
+          type: psql
           name: paris-sender-db
           property: connectionString
       - key: REDIS_URL
@@ -34,19 +35,20 @@ services:
           property: connectionString
       - key: SECRET_KEY
         generateValue: true # Let Render generate a random secret key
-      - key: FLASK_APP
-        value: wsgi.py
+      - key: OPENAI_API_KEY # Optional: set this in the Render dashboard
+        value: ""
 
-  # The background worker for sending emails
+  # The Celery background worker for sending emails
   - type: worker
     name: paris-sender-worker
     env: python
     plan: free # Use a paid plan for production
     buildCommand: pip install -r requirements.txt
-    startCommand: celery -A wsgi.celery worker --loglevel=info
+    startCommand: celery -A app.celery worker --loglevel=info
     envVars:
       - key: DATABASE_URL
-        fromDatabase: # CORRECTED: Use 'fromDatabase' key here as well
+        fromService:
+          type: psql
           name: paris-sender-db
           property: connectionString
       - key: REDIS_URL
@@ -54,5 +56,3 @@ services:
           type: redis
           name: paris-sender-redis
           property: connectionString
-      - key: SECRET_KEY
-        generateValue: true
