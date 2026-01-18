@@ -19,5 +19,6 @@ itsdangerous
 Celery
 redis
 
-# Database Driver
+# Database Driver & Encryption
 psycopg2-binary
+cryptography
