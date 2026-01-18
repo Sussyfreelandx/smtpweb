@@ -1,186 +1,131 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="container-fluid py-3">
+<div class="container py-4">
     <!-- Header -->
-    <div class="d-flex justify-content-between align-items-center mb-3">
+    <div class="d-flex justify-content-between align-items-center mb-4">
         <div>
-            <h2 class="fw-bold">{{ campaign.name }}</h2>
-            <p class="text-muted mb-0">Subject: {{ campaign.subject }} | Status: <span class="badge {% if campaign.status=='Running' %}bg-success{% elif campaign.status=='Paused' %}bg-warning{% elif campaign.status=='Stopped' %}bg-danger{% else %}bg-secondary{% endif %}">{{ campaign.status }}</span></p>
+            <h2 class="mb-0">{{ campaign.name }}</h2>
+            <div class="text-muted small">Created: {{ campaign.timestamp.strftime('%Y-%m-%d %H:%M') }}</div>
         </div>
-        <div class="btn-group">
-            <a href="{{ url_for('main.index') }}" class="btn btn-outline-secondary">Back to Dashboard</a>
-        </div>
-    </div>
-
-    <!-- Message Controls (Visual Only - Content is set on creation, but could represent edit capability) -->
-    <div class="card mb-3 shadow-sm">
-        <div class="card-body py-2">
-            <div class="row align-items-center">
-                <div class="col-md-12">
-                    <h6 class="text-uppercase text-muted small mb-2">Message Actions</h6>
-                    <button class="btn btn-sm btn-purple" disabled><i class="fas fa-folder-open"></i> Load HTML</button>
-                    <button class="btn btn-sm btn-teal" disabled><i class="fas fa-file-alt"></i> Template</button>
-                    <button class="btn btn-sm btn-orange" disabled><i class="fas fa-paperclip"></i> Attach</button>
-                    <button class="btn btn-sm btn-red" disabled><i class="fas fa-trash"></i> Clear</button>
-                    <span class="text-muted small ms-2">(Editing active only in Draft mode)</span>
-                </div>
-            </div>
+        <div class="badge fs-5 {% if campaign.status == 'Sending' %}bg-success{% elif campaign.status == 'Completed' %}bg-primary{% else %}bg-secondary{% endif %}">
+            {{ campaign.status }}
         </div>
     </div>
 
-    <!-- Campaign Controls (Start, Pause, Stop, Schedule, Export) -->
-    <div class="card mb-3 border-0 bg-light">
-        <div class="card-body py-2">
+    <!-- Control Toolbar (Matches Screenshot Logic) -->
+    <div class="card mb-4 shadow-sm border-0">
+        <div class="card-body p-2 bg-light rounded">
             <div class="d-flex justify-content-between">
-                <form action="{{ url_for('main.control_campaign', campaign_id=campaign.id) }}" method="POST" class="d-flex gap-2 w-100">
-                    <button type="submit" name="action" value="start" class="btn btn-success flex-fill fw-bold" {% if campaign.status == 'Running' %}disabled{% endif %}>
-                        <i class="fas fa-play"></i> START
-                    </button>
-                    {% if campaign.status == 'Paused' %}
-                    <button type="submit" name="action" value="resume" class="btn btn-warning flex-fill fw-bold text-white">
-                        <i class="fas fa-play"></i> RESUME
-                    </button>
-                    {% else %}
-                    <button type="submit" name="action" value="pause" class="btn btn-warning flex-fill fw-bold text-white" {% if campaign.status != 'Running' %}disabled{% endif %}>
-                        <i class="fas fa-pause"></i> PAUSE
-                    </button>
-                    {% endif %}
-                    <button type="submit" name="action" value="stop" class="btn btn-danger flex-fill fw-bold" {% if campaign.status == 'Stopped' or campaign.status == 'Draft' or campaign.status == 'Completed' %}disabled{% endif %}>
-                        <i class="fas fa-stop"></i> STOP
-                    </button>
-                </form>
-                
-                <div class="d-flex gap-2 ms-3 w-50">
-                    <button class="btn btn-teal flex-fill fw-bold text-white" disabled><i class="fas fa-calendar-alt"></i> SCHEDULE</button>
-                    <a href="{{ url_for('main.export_csv', campaign_id=campaign.id) }}" class="btn btn-purple flex-fill fw-bold text-white"><i class="fas fa-file-export"></i> EXPORT</a>
+                <div class="btn-group">
+                    <a href="{{ url_for('main.campaign_control', campaign_id=campaign.id, action='start') }}" class="btn btn-success fw-bold {% if campaign.status == 'Sending' %}disabled{% endif %}">
+                        <i class="fas fa-play me-1"></i> START
+                    </a>
+                    <a href="{{ url_for('main.campaign_control', campaign_id=campaign.id, action='pause') }}" class="btn btn-warning text-white fw-bold {% if campaign.status != 'Sending' %}disabled{% endif %}">
+                        <i class="fas fa-pause me-1"></i> PAUSE
+                    </a>
+                    <a href="{{ url_for('main.campaign_control', campaign_id=campaign.id, action='stop') }}" class="btn btn-danger fw-bold {% if campaign.status != 'Sending' %}disabled{% endif %}">
+                        <i class="fas fa-stop me-1"></i> STOP
+                    </a>
+                </div>
+
+                <div class="btn-group">
+                    <a href="{{ url_for('main.campaign_control', campaign_id=campaign.id, action='retry') }}" class="btn btn-warning text-dark border-warning">
+                        <i class="fas fa-redo me-1"></i> Retry Failed
+                    </a>
+                    <a href="{{ url_for('main.clear_recipient_list', campaign_id=campaign.id) }}" class="btn btn-danger" onclick="return confirm('Clear entire list? This cannot be undone.')">
+                        <i class="fas fa-trash me-1"></i> Clear List
+                    </a>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Recipient Management Controls -->
-    <div class="card mb-3 shadow-sm">
-        <div class="card-header bg-white fw-bold">
-            <i class="fas fa-users"></i> Recipients ({{ recipients.total }})
-        </div>
-        <div class="card-body">
-            <!-- Row 1: Add/Import/Validate -->
-            <div class="row g-2 mb-3">
-                <div class="col-auto">
-                    <form action="{{ url_for('main.import_csv', campaign_id=campaign.id) }}" method="POST" enctype="multipart/form-data" class="d-inline">
-                        <label class="btn btn-success btn-sm text-white" style="cursor: pointer;">
-                            <i class="fas fa-folder-open"></i> Load List
-                            <input type="file" name="file" hidden onchange="this.form.submit()">
-                        </label>
-                    </form>
-                </div>
-                <div class="col-auto">
-                    <button class="btn btn-primary btn-sm" disabled><i class="fas fa-paste"></i> Paste</button>
-                </div>
-                <div class="col-auto">
-                    <form action="{{ url_for('main.validate_list', campaign_id=campaign.id) }}" method="POST" class="d-inline">
-                        <button type="submit" class="btn btn-warning btn-sm text-white"><i class="fas fa-check"></i> Validate List</button>
-                    </form>
-                </div>
-                <div class="col-auto">
-                    <form action="{{ url_for('main.clear_recipients', campaign_id=campaign.id) }}" method="POST" class="d-inline" onsubmit="return confirm('Clear all recipients?');">
-                        <button type="submit" class="btn btn-danger btn-sm"><i class="fas fa-trash"></i> Clear List</button>
-                    </form>
-                </div>
-                
-                <!-- Single Add Input -->
-                <div class="col">
-                    <form action="{{ url_for('main.add_recipient', campaign_id=campaign.id) }}" method="POST" class="input-group input-group-sm">
-                        <input type="email" name="email" class="form-control" placeholder="Add single email..." required>
-                        <button class="btn btn-success" type="submit"><i class="fas fa-plus"></i></button>
-                    </form>
+    <!-- Stats & Configuration Summary -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card text-center h-100">
+                <div class="card-body">
+                    <h3 class="mb-0">{{ recipients.total }}</h3>
+                    <small class="text-muted">Total Recipients</small>
                 </div>
             </div>
-
-            <!-- Row 2: Bulk Actions (Retry/Remove) -->
-            <form id="bulkForm" method="POST">
-                <div class="row g-2 mb-2">
-                    <div class="col-auto">
-                        <button type="submit" formaction="{{ url_for('main.retry_failed', campaign_id=campaign.id) }}" class="btn btn-warning btn-sm text-white">
-                            <i class="fas fa-sync"></i> Retry Failed
-                        </button>
-                    </div>
-                    <div class="col-auto">
-                        <button type="submit" formaction="{{ url_for('main.remove_selected', campaign_id=campaign.id) }}" class="btn btn-danger btn-sm">
-                            <i class="fas fa-trash-alt"></i> Remove Sel.
-                        </button>
+        </div>
+        <div class="col-md-9">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h6 class="card-title text-uppercase text-muted small fw-bold">Configuration</h6>
+                    <div class="row small">
+                        <div class="col-4"><strong>Subject:</strong> {{ campaign.subject }}</div>
+                        <div class="col-4"><strong>Profile:</strong> {{ campaign.smtp_profile.profile_name }}</div>
+                        <div class="col-4"><strong>Throttling:</strong> {{ campaign.throttle_amount }} / {{ campaign.throttle_delay }}s</div>
                     </div>
                 </div>
+            </div>
+        </div>
+    </div>
 
-                <!-- Recipient Table -->
-                <div class="table-responsive">
-                    <table class="table table-sm table-hover align-middle">
-                        <thead class="table-light">
-                            <tr>
-                                <th style="width: 30px;"><input type="checkbox" id="selectAll"></th>
-                                <th>Email</th>
-                                <th>Status</th>
-                                <th>Sent</th>
-                                <th>Open</th>
-                                <th>Click</th>
-                                <th>Info</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for r in recipients.items %}
-                            <tr>
-                                <td><input type="checkbox" name="recipient_ids" value="{{ r.id }}"></td>
-                                <td>{{ r.email }}</td>
-                                <td>
-                                    <span class="badge {% if r.status == 'Sent' %}bg-success{% elif r.status == 'Failed' %}bg-danger{% elif r.status == 'Sending' %}bg-warning text-dark{% else %}bg-light text-dark border{% endif %}">
-                                        {{ r.status }}
-                                    </span>
-                                </td>
-                                <td>{{ r.sent_at.strftime('%H:%M') if r.sent_at else '-' }}</td>
-                                <td>{{ '✅' if r.opened_at else '-' }}</td>
-                                <td>{{ '✅' if r.clicked_at else '-' }}</td>
-                                <td class="text-truncate" style="max-width: 150px;" title="{{ r.status_message }}">{{ r.status_message or '' }}</td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-            </form>
-            
-            <!-- Pagination -->
+    <!-- Recipients Table -->
+    <div class="card shadow-sm">
+        <div class="card-header bg-white fw-bold">
+            <i class="fas fa-users me-2"></i> Recipient List
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="bg-light">
+                    <tr>
+                        <th class="ps-3">Email</th>
+                        <th>Status</th>
+                        <th>Sent At</th>
+                        <th class="text-center">Opened</th>
+                        <th class="text-center">Clicked</th>
+                        <th>Details</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for r in recipients.items %}
+                    <tr>
+                        <td class="ps-3 fw-bold">{{ r.email }}</td>
+                        <td>
+                            <span class="badge 
+                                {% if r.status == 'Sent' %}bg-success
+                                {% elif r.status == 'Failed' %}bg-danger
+                                {% elif r.status == 'Sending' %}bg-warning text-dark
+                                {% elif r.status == 'Unsubscribed' %}bg-dark
+                                {% else %}bg-secondary{% endif %}">
+                                {{ r.status }}
+                            </span>
+                        </td>
+                        <td class="small">{{ r.sent_at.strftime('%H:%M:%S') if r.sent_at else '-' }}</td>
+                        <td class="text-center">{{ '✅' if r.opened_at else '-' }}</td>
+                        <td class="text-center">{{ '✅' if r.clicked_at else '-' }}</td>
+                        <td class="small text-muted text-truncate" style="max-width: 200px;">{{ r.status_message or '' }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- Pagination -->
+        {% if recipients.pages > 1 %}
+        <div class="card-footer bg-white">
             <nav>
-                <ul class="pagination pagination-sm justify-content-center">
-                    {% for page_num in recipients.iter_pages() %}
-                        <li class="page-item {% if page_num == recipients.page %}active{% endif %}">
-                            <a class="page-link" href="{{ url_for('main.view_campaign', campaign_id=campaign.id, page=page_num) }}">{{ page_num }}</a>
+                <ul class="pagination justify-content-center mb-0">
+                    <li class="page-item {% if not recipients.has_prev %}disabled{% endif %}">
+                        <a class="page-link" href="{{ url_for('main.view_campaign', campaign_id=campaign.id, page=recipients.prev_num) }}">Prev</a>
+                    </li>
+                    {% for p in recipients.iter_pages() %}
+                        <li class="page-item {% if p == recipients.page %}active{% endif %}">
+                            <a class="page-link" href="{{ url_for('main.view_campaign', campaign_id=campaign.id, page=p) }}">{{ p }}</a>
                         </li>
                     {% endfor %}
+                    <li class="page-item {% if not recipients.has_next %}disabled{% endif %}">
+                        <a class="page-link" href="{{ url_for('main.view_campaign', campaign_id=campaign.id, page=recipients.next_num) }}">Next</a>
+                    </li>
                 </ul>
             </nav>
         </div>
+        {% endif %}
     </div>
 </div>
-
-<style>
-    /* Custom Button Colors from Screenshot */
-    .btn-purple { background-color: #9b59b6; color: white; border: none; }
-    .btn-purple:hover { background-color: #8e44ad; color: white; }
-    
-    .btn-teal { background-color: #1abc9c; color: white; border: none; }
-    .btn-teal:hover { background-color: #16a085; color: white; }
-    
-    .btn-orange { background-color: #e67e22; color: white; border: none; }
-    .btn-orange:hover { background-color: #d35400; color: white; }
-    
-    .btn-red { background-color: #e74c3c; color: white; border: none; }
-    .btn-red:hover { background-color: #c0392b; color: white; }
-</style>
-
-<script>
-    document.getElementById('selectAll').addEventListener('change', function() {
-        const checkboxes = document.querySelectorAll('input[name="recipient_ids"]');
-        checkboxes.forEach(cb => cb.checked = this.checked);
-    });
-</script>
 {% endblock %}
