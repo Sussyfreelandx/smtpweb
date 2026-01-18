@@ -6,9 +6,10 @@ Flask-Migrate
 Flask-Login
 python-dotenv
 Werkzeug
+cryptography
 
 # Core Logic & Email
-aiosmtp
+# aiosmtp has been removed
 css_inline
 dnspython
 Jinja2
