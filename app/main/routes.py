@@ -2,12 +2,11 @@ from flask import render_template, flash, redirect, url_for, request, jsonify, B
 from flask_login import login_user, logout_user, current_user, login_required
 from app import db
 from app.models import User, Campaign, Recipient
-from app.tasks import send_campaign_task
 import csv
 import io
 import json
 
-# --- DEFINE BLUEPRINT HERE ---
+# Define the blueprint
 bp = Blueprint('main', __name__)
 
 # --- Routes ---
@@ -36,12 +35,10 @@ def new_campaign():
         campaign = Campaign(
             name=request.form['campaign_name'],
             subject=request.form['subject'],
-            body=request.form['body_html'], # Note: Model uses 'body', form likely sends 'body_html'
-            smtp_profile_id=1, # simplified for now, ensuring model compatibility
+            body=request.form['body_html'],
+            smtp_profile_id=1, # Default or selected profile
             user_id=current_user.id
         )
-        # Note: In a real scenario, you'd handle the SMTP profile selection properly here
-        
         db.session.add(campaign)
         db.session.flush()
         
@@ -65,6 +62,9 @@ def new_campaign():
 @bp.route('/campaign/<int:campaign_id>/send')
 @login_required
 def send_campaign(campaign_id):
+    # --- IMPORT MOVED HERE TO PREVENT CIRCULAR DEPENDENCY ---
+    from app.tasks import send_campaign_task
+    
     send_campaign_task.delay(campaign_id)
     flash('Campaign sending started.', 'success')
     return redirect(url_for('main.view_campaign', campaign_id=campaign_id))
@@ -98,3 +98,15 @@ def register():
         flash('Registered!', 'success')
         return redirect(url_for('main.login'))
     return render_template('register.html', title='Register')
+
+@bp.route('/track/open/<int:recipient_id>')
+def track_open(recipient_id):
+    pass 
+
+@bp.route('/track/click/<int:recipient_id>')
+def track_click(recipient_id):
+    pass
+
+@bp.route('/unsubscribe/<int:recipient_id>')
+def unsubscribe(recipient_id):
+    pass
