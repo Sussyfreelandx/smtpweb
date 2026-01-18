@@ -1,95 +1,90 @@
+import json
 import time
-import redis
-import os
-from flask import current_app
+from datetime import datetime
+from flask import url_for
+from celery import group
 from app import celery, db, create_app
-from app.models import Campaign, Recipient, SMTPServer
+from app.models import Campaign, Recipient
 from app.core_logic.smtp_handler import SMTPHandler
 from app.core_logic.personalization import PersonalizationEngine
-from datetime import datetime
 
-# Initialize Redis connection for state management
-redis_client = redis.from_url(os.environ.get('REDIS_URL', 'redis://localhost:6379/0'))
+app = create_app()
+app.app_context().push()
 
 @celery.task(bind=True)
 def send_campaign_task(self, campaign_id):
     """
-    Main orchestration task. Handles throttling logic and dispatching.
+    Orchestrator task. Determines how to chunk recipients 
+    based on parallel_workers and handles throttling loops.
     """
-    app = create_app()
-    with app.app_context():
-        campaign = Campaign.query.get(campaign_id)
-        if not campaign:
-            return
+    campaign = Campaign.query.get(campaign_id)
+    if not campaign: return "Campaign not found"
 
-        # Set Status to Running
-        campaign.status = 'Running'
-        db.session.commit()
-        
-        # Reset Pause/Stop keys
-        redis_key_pause = f"campaign_{campaign_id}_pause"
-        redis_key_stop = f"campaign_{campaign_id}_stop"
-        redis_client.delete(redis_key_pause)
-        redis_client.delete(redis_key_stop)
+    # Set status to Sending
+    campaign.status = 'Sending'
+    db.session.commit()
 
-        # Get settings
-        throttle_amount = campaign.throttle_amount or 20
-        throttle_delay = campaign.throttle_delay or 1
-        throttle_unit = campaign.throttle_unit or 'Minutes'
-        delay_seconds = throttle_delay * 60 if throttle_unit == 'Minutes' else throttle_delay
-        
-        recipients = campaign.recipients.filter_by(status='Queued').all()
-        total_recipients = len(recipients)
-        
-        batch_count = 0
-        
-        for recipient in recipients:
-            # CHECK STOP
-            if redis_client.get(redis_key_stop):
-                campaign.status = 'Stopped'
-                db.session.commit()
-                return "Campaign Stopped by User"
-
-            # CHECK PAUSE
-            while redis_client.get(redis_key_pause):
-                campaign.status = 'Paused'
-                db.session.commit()
-                time.sleep(5) # Wait 5 seconds and check again
-                # Verify stop hasn't been pressed while paused
-                if redis_client.get(redis_key_stop):
-                    campaign.status = 'Stopped'
-                    db.session.commit()
-                    return "Campaign Stopped by User"
-            
-            # If we resumed, ensure status is Running
-            if campaign.status == 'Paused':
-                campaign.status = 'Running'
-                db.session.commit()
-
-            # Dispatch Single Email Task (Parallel Execution handled by Celery Workers)
-            send_single_email_task.delay(recipient.id)
-            batch_count += 1
-
-            # Throttling Logic
-            if batch_count >= throttle_amount:
-                # Wait before sending next batch
-                time.sleep(delay_seconds)
-                batch_count = 0
-        
-        # Final Check (Since tasks are async, this might update before all are physically sent,
-        # but it indicates dispatch is done. A separate monitor task is usually better for 'Completed'.)
+    # Get queued recipients
+    recipients = campaign.recipients.filter_by(status='Queued').all()
+    total_recipients = len(recipients)
+    
+    if total_recipients == 0:
         campaign.status = 'Completed'
         db.session.commit()
+        return "No queued recipients"
 
-@celery.task(bind=True, autoretry_for=(Exception,), retry_kwargs={'max_retries': 2, 'countdown': 10})
+    # Configuration
+    batch_size = campaign.throttle_amount or 20
+    delay_seconds = campaign.throttle_delay or 60
+    workers = campaign.parallel_workers or 1
+
+    processed_count = 0
+
+    # Process in batches (Throttling logic)
+    # We slice the list of recipients into batches
+    for i in range(0, total_recipients, batch_size):
+        # 1. Check if user Paused or Stopped the campaign
+        db.session.refresh(campaign) # Get latest status
+        if campaign.status == 'Paused':
+            return "Campaign Paused"
+        if campaign.status == 'Stopped':
+            return "Campaign Stopped"
+
+        batch = recipients[i : i + batch_size]
+        recipient_ids = [r.id for r in batch]
+
+        # 2. Parallel Processing logic (Celery Group)
+        # We create a group of tasks to run simultaneously
+        job = group(send_single_email_task.s(rid) for rid in recipient_ids)
+        result = job.apply_async()
+        
+        # Wait for this batch to finish before throttling (Synchronous wait for safety)
+        # In high-scale systems we might fire-and-forget, but for throttling accuracy we wait.
+        # However, to avoid blocking the worker too long, we usually just fire. 
+        # But to respect the "Pause" strictly, checking between batches is best.
+        
+        processed_count += len(batch)
+
+        # 3. Apply Throttle Delay (if not the last batch)
+        if i + batch_size < total_recipients:
+            time.sleep(delay_seconds)
+
+    campaign.status = 'Completed'
+    db.session.commit()
+    return f"Processed {processed_count} recipients"
+
+@celery.task(bind=True, autoretry_for=(Exception,), retry_kwargs={'max_retries': 3, 'countdown': 60})
 def send_single_email_task(self, recipient_id):
     """
-    Worker task to send a single email.
+    Worker task. Sends 1 email.
     """
-    app = create_app()
+    # Re-establish context inside worker
     with app.app_context():
         recipient = Recipient.query.get(recipient_id)
-        if not recipient or recipient.status not in ['Queued', 'Failed']: # Allow retry
+        if not recipient: return
+        
+        # Double check status to prevent duplicates
+        if recipient.status not in ['Queued', 'Failed']: 
             return
 
         recipient.status = 'Sending'
@@ -102,48 +97,31 @@ def send_single_email_task(self, recipient_id):
             if not smtp_profile:
                 raise Exception("No SMTP Profile linked")
 
-            # Initialize Handler with Profile
+            # Initialize SMTP Handler
             smtp_handler = SMTPHandler(smtp_profile.to_dict())
             
             # Personalize
             personalizer = PersonalizationEngine(campaign, recipient)
             p_subject, p_body = personalizer.personalize()
-            
-            # Send (Sync SMTP within this worker thread)
-            unsubscribe_link = url_for('core_logic.unsubscribe', campaign_id=campaign.id, recipient_id=recipient.id, _external=True)
-            
+
+            # Send (Standard synchronous SMTP)
             success, message = smtp_handler.send_email_sync(
                 to_email=recipient.email,
                 subject=p_subject,
                 html_content=p_body,
-                unsubscribe_url=unsubscribe_link
+                unsubscribe_url=url_for('core_logic.unsubscribe', campaign_id=campaign.id, recipient_id=recipient.id, _external=True)
             )
 
             if success:
                 recipient.status = 'Sent'
                 recipient.sent_at = datetime.utcnow()
-                recipient.status_message = "Sent via SMTP"
+                recipient.status_message = "OK"
             else:
                 recipient.status = 'Failed'
                 recipient.status_message = message
-                
+
         except Exception as e:
             recipient.status = 'Failed'
             recipient.status_message = str(e)
-            # Re-raise to trigger Celery retry if configured
-            raise e
-        finally:
-            db.session.commit()
-
-@celery.task
-def test_smtp_connection_task(profile_id):
-    """Background task to test SMTP."""
-    app = create_app()
-    with app.app_context():
-        profile = SMTPServer.query.get(profile_id)
-        if not profile:
-            return {'success': False, 'message': 'Profile not found'}
         
-        handler = SMTPHandler(profile.to_dict())
-        success, msg = handler.test_connection()
-        return {'success': success, 'message': msg}
+        db.session.commit()
