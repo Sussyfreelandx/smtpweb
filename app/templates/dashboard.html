@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+
+{% block content %}
+    <h1>Dashboard</h1>
+    <p>Welcome, {{ current_user.username }}!</p>
+
+    <div class="card">
+        <div class="card-header">
+            Your Campaigns
+        </div>
+        <ul class="list-group list-group-flush">
+            {% for campaign in campaigns %}
+            <a href="{{ url_for('main.view_campaign', campaign_id=campaign.id) }}" class="list-group-item list-group-item-action">
+                <div class="d-flex w-100 justify-content-between">
+                    <h5 class="mb-1">{{ campaign.name }}</h5>
+                    <small>{{ campaign.created_at.strftime('%Y-%m-%d') }}</small>
+                </div>
+                <p class="mb-1">Subject: {{ campaign.subject }}</p>
+                <small>{{ campaign.recipients.count() }} recipients</small>
+            </a>
+            {% else %}
+            <li class="list-group-item">You have no campaigns. <a href="{{ url_for('main.new_campaign') }}">Create one!</a></li>
+            {% endfor %}
+        </ul>
+    </div>
+{% endblock %}

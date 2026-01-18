@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+
+{% block content %}
+    <h1>Create New Campaign</h1>
+    <p class="lead">Configure your campaign, define your SMTP provider, and upload your recipients to get started.</p>
+    <form method="post" enctype="multipart/form-data" class="needs-validation" novalidate>
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0">1. Campaign Details</h5>
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <label for="campaign_name" class="form-label">Campaign Name</label>
+                    <input type="text" class="form-control" id="campaign_name" name="campaign_name" required>
+                </div>
+        
+                <div class="mb-3">
+                    <label for="subject" class="form-label">Subject</label>
+                    <input type="text" class="form-control" id="subject" name="subject" placeholder="A great subject line" required>
+                </div>
+        
+                <div class="mb-3">
+                    <label for="body_html" class="form-label">HTML Body</label>
+                    <textarea class="form-control" id="body_html" name="body_html" rows="10" placeholder="Use {{ firstname }} or other CSV columns for personalization."></textarea>
+                </div>
+        
+                <div class="mb-3">
+                    <label for="recipients_file" class="form-label">Recipients (CSV file)</label>
+                    <input class="form-control" type="file" id="recipients_file" name="recipients_file" accept=".csv" required>
+                    <div class="form-text">Your CSV file must have an "email" column header. Other columns can be used for personalization (e.g., `{{ firstname }}`).</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0">2. SMTP Configuration</h5>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label for="smtp_server" class="form-label">SMTP Server</label>
+                        <input type="text" class="form-control" id="smtp_server" name="smtp_server" placeholder="smtp.example.com" required>
+                    </div>
+                    <div class="col-md-6">
+                        <label for="smtp_port" class="form-label">Port</label>
+                        <input type="number" class="form-control" id="smtp_port" name="smtp_port" value="587" required>
+                    </div>
+                    <div class="col-md-6">
+                        <label for="smtp_username" class="form-label">Username</label>
+                        <input type="email" class="form-control" id="smtp_username" name="smtp_username" placeholder="you@example.com" required>
+                    </div>
+                    <div class="col-md-6">
+                        <label for="smtp_password" class="form-label">Password</label>
+                        <input type="password" class="form-control" id="smtp_password" name="smtp_password" required>
+                    </div>
+                     <div class="col-md-6">
+                        <label for="smtp_sender_name" class="form-label">Sender Name</label>
+                        <input type="text" class="form-control" id="smtp_sender_name" name="smtp_sender_name" placeholder="Your Name" required>
+                    </div>
+                    <div class="col-md-6">
+                        <label for="smtp_sender_email" class="form-label">Sender Email</label>
+                        <input type="email" class="form-control" id="smtp_sender_email" name="smtp_sender_email" placeholder="sender@example.com" required>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary btn-lg w-100">Create Campaign</button>
+    </form>
+{% endblock %}
