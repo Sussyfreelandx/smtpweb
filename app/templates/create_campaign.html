@@ -1,6 +1,12 @@
 {% extends "base.html" %}
 
 {% block content %}
+    <div class="mb-3">
+        <a href="{{ url_for('main.index') }}" class="btn btn-outline-secondary">
+            <i class="fas fa-arrow-left"></i> Back to Dashboard
+        </a>
+    </div>
+
     <h1 class="mb-4">Create New Campaign</h1>
     <form method="post" enctype="multipart/form-data" class="needs-validation" novalidate>
         <div class="row">
@@ -93,7 +99,6 @@
                 <div class="card mb-4">
                     <div class="card-header fw-bold">4. Sending Profile</div>
                     <div class="card-body">
-                        <!-- Ideally replace with a dropdown of saved SMTP Profiles -->
                         <div class="mb-3">
                             <label class="form-label">SMTP Profile</label>
                             <select class="form-select" name="smtp_profile_id">
