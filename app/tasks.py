@@ -1,120 +1,130 @@
 import asyncio
 import json
+import random
 from datetime import datetime
-from celery.utils.log import get_task_logger
+from celery import shared_task
+from app import db
+from app.models import Campaign, Recipient, SmtpProfile
+from app.main.smtp_handler import SMTPHandler
+from app.main.personalization import personalize_content
+from app.main.deliverability import DeliverabilityHelper
 
-from app import celery, db
-from app.models import Campaign, Recipient
-from core_logic.smtp_handler import SMTPHandler
-from core_logic.personalization import build_personalization_context, personalize_content
+# --- Campaign Sending Tasks ---
 
-import css_inline
-
-logger = get_task_logger(__name__)
-
-@celery.task(bind=True)
+@shared_task(bind=True)
 def send_campaign_task(self, campaign_id):
-    """Celery task to queue up sending for a whole campaign."""
-    campaign = db.session.get(Campaign, campaign_id)
+    """
+    Celery task to send a whole campaign by queuing individual email tasks.
+    """
+    campaign = Campaign.query.get(campaign_id)
     if not campaign:
-        logger.warning(f"Campaign {campaign_id} not found.")
-        return 'Campaign not found'
+        return {'status': 'Error', 'message': 'Campaign not found.'}
 
-    recipient_ids = [r.id for r in campaign.recipients.filter(Recipient.status.in_(['Queued', 'Failed']))]
-    logger.info(f"Queuing {len(recipient_ids)} emails for campaign {campaign.name} ({campaign_id}).")
-
-    for recipient_id in recipient_ids:
-        send_single_email_task.delay(recipient_id)
+    # Get all valid SMTP profiles for rotation
+    profile_ids = [int(pid) for pid in campaign.smtp_profile_ids.split(',') if pid]
+    smtp_profiles = SmtpProfile.query.filter(SmtpProfile.id.in_(profile_ids)).all()
+    if not smtp_profiles:
+        # TODO: Mark campaign as failed
+        return {'status': 'Error', 'message': 'No valid SMTP profiles configured for this campaign.'}
     
-    return f'Queued {len(recipient_ids)} emails for campaign {campaign_id}.'
+    # Get recipients that are ready to be sent
+    recipients = campaign.recipients.filter(Recipient.status.in_(['Queued', 'Failed'])).all()
 
-
-@celery.task(bind=True, autoretry_for=(Exception,), retry_kwargs={'max_retries': 3, 'countdown': 60})
-def send_single_email_task(self, recipient_id):
-    """Celery task that sends one email, with full personalization and tracking."""
-    recipient = db.session.get(Recipient, recipient_id)
-    if not recipient:
-        logger.warning(f"Recipient {recipient_id} not found in database.")
-        return f'Recipient {recipient_id} not found.'
+    # Create a rotating list of SMTP profile dicts
+    smtp_configs = [
+        {
+            'id': p.id, 'server': p.server, 'port': p.port, 'username': p.username,
+            'password': p.password, 'sender_name': p.sender_name, 'sender_email': p.sender_email,
+            'use_tls': p.use_tls, 'use_ssl': p.use_ssl
+        } for p in smtp_profiles
+    ]
     
-    if recipient.status == 'Unsubscribed':
-        return f'Skipping unsubscribed recipient {recipient.email}.'
+    for i, recipient in enumerate(recipients):
+        # Rotate through the SMTP configs for each recipient
+        smtp_config_to_use = smtp_configs[i % len(smtp_configs)]
+        
+        # Send each email as its own task for better concurrency
+        send_single_email_task.delay(recipient.id, campaign.id, smtp_config_to_use)
+        
+    return {'status': 'Success', 'message': f'Queued {len(recipients)} emails for sending.'}
 
-    campaign = recipient.campaign
-    
-    recipient.status = 'Sending'
-    db.session.commit()
-
+@shared_task(bind=True, autoretry_for=(Exception,), retry_kwargs={'max_retries': 3, 'countdown': 60})
+def send_single_email_task(self, recipient_id, campaign_id, smtp_config):
+    """
+    Celery task that sends one email, handling A/B testing and personalization.
+    """
+    recipient = Recipient.query.get(recipient_id)
+    campaign = Campaign.query.get(campaign_id)
+    if not recipient or not campaign or recipient.status not in ['Queued', 'Failed', 'Sending']:
+        return
+        
     try:
-        smtp_config = {
-            'server': campaign.smtp_server, 'port': campaign.smtp_port,
-            'username': campaign.smtp_username, 'password': campaign.smtp_password,
-            'sender_name': campaign.smtp_sender_name, 'sender_email': campaign.smtp_sender_email,
-            'use_tls': True, 'use_ssl': (campaign.smtp_port == 465),
-        }
+        # Mark as 'Sending'
+        recipient.status = 'Sending'
+        db.session.commit()
+
+        # --- A/B Testing Logic ---
+        use_version_b = False
+        if campaign.is_ab_test:
+            # Use a simple hash of the email address for consistent A/B splitting
+            if (hash(recipient.email) % 100) >= campaign.ab_split_ratio:
+                use_version_b = True
+
+        subject = campaign.subject_b if use_version_b else campaign.subject_a
+        body_html = campaign.body_html_b if use_version_b else campaign.body_html_a
+        recipient.version_sent = 'B' if use_version_b else 'A'
+        
+        # --- Personalization & Content Processing ---
+        helper = DeliverabilityHelper()
+        spun_subject = helper.spin(subject)
+        spun_body = helper.spin(body_html)
+
+        # Load recipient's data for personalization
+        recipient_data = json.loads(recipient.data) if recipient.data else {}
+
+        # Get personalized content
+        final_subject, final_body, _ = personalize_content(
+            email=recipient.email,
+            subject=spun_subject,
+            content=spun_body,
+            recipient_data=recipient_data,
+            smtp_sender_name=smtp_config['sender_name']
+        )
+        
+        # --- SMTP Sending ---
         smtp_handler = SMTPHandler(smtp_config)
         
-        # --- 1. Build Personalization Context ---
-        recipient_data = json.loads(recipient.data) if recipient.data else {}
-        context = build_personalization_context(recipient.email, recipient_data)
-
-        # --- 2. Add Tracking and Unsubscribe Links to Context ---
-        base_url = "http://your-render-app-url.onrender.com" # IMPORTANT: Change this in production
-        context['tracking_pixel_url'] = url_for('main.track_open', public_id=recipient.public_id, _external=True)
-        context['unsubscribe_url'] = url_for('main.unsubscribe', public_id=recipient.public_id, _external=True)
-        
-        # --- 3. Personalize Content ---
-        rendered_subject, rendered_body = personalize_content(campaign.subject, campaign.body_html, context)
-
-        # --- 4. Add Tracking Links and Pixel to HTML Body ---
-        # Wrap links
-        def wrap_link(match):
-            url = match.group(1)
-            # Avoid wrapping already tracked links or unsubscribe links
-            if 'track/click' in url or 'unsubscribe' in url:
-                return match.group(0)
-            
-            click_track_url = url_for('main.track_click', public_id=recipient.public_id, url=url, _external=True)
-            return f'href="{click_track_url}"'
-
-        final_body = re.sub(r'href=["\'](https?://[^"\']+)["\']', wrap_link, rendered_body, flags=re.IGNORECASE)
-        
-        # Add tracking pixel
-        pixel_img = f'<img src="{context["tracking_pixel_url"]}" width="1" height="1" alt="" style="display:none;"/>'
-        if '</body>' in final_body.lower():
-            final_body = final_body.replace('</body>', f'{pixel_img}</body>')
-        else:
-            final_body += pixel_img
-
-        # --- 5. Inline CSS ---
-        try:
-            inliner = css_inline.CSSInliner()
-            final_body = inliner.inline(final_body)
-        except Exception as e:
-            logger.warning(f"CSS inlining failed for recipient {recipient.id}: {e}")
-
-        # --- 6. Send Email ---
-        loop = asyncio.get_event_loop()
-        success, message = loop.run_until_complete(smtp_handler.send_email_async(
+        # Use asyncio.run to execute the async function in the synchronous Celery worker
+        success, message = asyncio.run(smtp_handler.send_email_async(
             to_email=recipient.email,
-            subject=rendered_subject,
-            html_content=final_body,
-            unsubscribe_url=context['unsubscribe_url']
+            subject=final_subject,
+            html_content=final_body
+            # TODO: Add unsubscribe and tracking URLs
         ))
 
+        # --- Update Recipient Status ---
         if success:
             recipient.status = 'Sent'
             recipient.sent_at = datetime.utcnow()
+            recipient.status_message = None
         else:
             recipient.status = 'Failed'
-            recipient.status_message = message
-
-        db.session.commit()
-        return f"Processed recipient {recipient_id}: {recipient.status}"
+            recipient.status_message = message[:250] # Truncate message if too long
 
     except Exception as e:
-        logger.error(f"Error sending to recipient {recipient.id}: {e}", exc_info=True)
         recipient.status = 'Failed'
-        recipient.status_message = str(e)
+        recipient.status_message = f"Critical Error: {str(e)[:150]}"
+        raise self.retry(exc=e) # Retry the task on failure
+    finally:
         db.session.commit()
-        raise self.retry(exc=e)
+
+
+# --- Utility Tasks ---
+
+@shared_task(bind=True)
+def test_smtp_task(self, smtp_config):
+    """Celery task to test an SMTP connection without blocking the web server."""
+    self.update_state(state='PROGRESS', meta={'status': 'Testing...', 'result': ''})
+    handler = SMTPHandler(smtp_config)
+    success, message = handler.test_connection()
+    return {'status': 'Complete', 'result': 'success' if success else 'failed', 'message': message}
