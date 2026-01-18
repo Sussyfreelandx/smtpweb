@@ -13,12 +13,18 @@
                     <a href="{{ url_for('main.new_campaign') }}" class="btn btn-primary">
                         <i class="fas fa-plus"></i> New Campaign
                     </a>
-                    <button class="btn btn-outline-dark" disabled>
-                        <i class="fas fa-chart-line"></i> Analytics (Coming Soon)
-                    </button>
-                    <button class="btn btn-outline-dark" disabled>
+                    <!-- FIXED: Linked to Deliverability/Analytics tools -->
+                    <a href="{{ url_for('main.deliverability_tools') }}" class="btn btn-outline-dark">
+                        <i class="fas fa-chart-line"></i> Deliverability & Tools
+                    </a>
+                    <!-- FIXED: Linked to SMTP Profiles -->
+                    <a href="{{ url_for('main.smtp_profiles') }}" class="btn btn-outline-dark">
                         <i class="fas fa-cogs"></i> SMTP Settings
-                    </button>
+                    </a>
+                    <!-- NEW: Linked to Suppression List -->
+                    <a href="{{ url_for('main.suppression_list') }}" class="btn btn-outline-danger">
+                        <i class="fas fa-ban"></i> Suppression List
+                    </a>
                 </div>
                 
                 <hr>
@@ -78,7 +84,7 @@
                                         </a>
                                     </td>
                                     <td class="text-muted small">{{ campaign.subject }}</td>
-                                    <td class="text-muted small">{{ campaign.created_at.strftime('%Y-%m-%d') }}</td>
+                                    <td class="text-muted small">{{ campaign.timestamp.strftime('%Y-%m-%d') }}</td>
                                     <td>
                                         <span class="badge bg-info text-dark">
                                             {{ campaign.recipients.count() }}
