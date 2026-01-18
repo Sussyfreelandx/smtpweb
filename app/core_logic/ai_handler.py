@@ -11,29 +11,38 @@ class AIHandler:
         # Configuration will be pulled from the Flask app context
         pass
 
-    def _get_provider(self):
-        # This logic can be expanded to allow users to choose in settings
-        # For now, it prioritizes a local AI if the URL is set.
+    def _get_config(self, provider_override=None):
+        """Determines which AI provider to use based on configuration."""
+        if provider_override:
+            if provider_override == 'local' and current_app.config.get('LOCAL_AI_URL'):
+                return 'local'
+            if provider_override == 'openai' and current_app.config.get('OPENAI_API_KEY'):
+                return 'openai'
+        
+        # Default behavior: prioritize local AI if configured
         if current_app.config.get('LOCAL_AI_URL'):
-            return "local"
-        elif current_app.config.get('OPENAI_API_KEY'):
-            return "openai"
+            return 'local'
+        if current_app.config.get('OPENAI_API_KEY'):
+            return 'openai'
+            
         return None
 
-    def generate(self, prompt, system_msg="You are a helpful email marketing assistant."):
-        provider = self._get_provider()
+    def generate(self, prompt, system_msg="You are a helpful email marketing assistant.", provider_override=None):
+        provider = self._get_config(provider_override)
 
         if provider == "openai":
             return self._generate_openai(prompt, system_msg)
         elif provider == "local":
             return self._generate_local(prompt, system_msg)
         else:
-            return False, "No AI provider is configured. Please set OPENAI_API_KEY or LOCAL_AI_URL."
+            msg = "No AI provider is configured. Please set OPENAI_API_KEY or LOCAL_AI_URL in your .env file."
+            log.warning(msg)
+            return False, msg
 
     def _generate_openai(self, prompt, system_msg):
         api_key = current_app.config.get('OPENAI_API_KEY')
         api_url = "https://api.openai.com/v1/chat/completions"
-        model = "gpt-3.5-turbo" # Could be made configurable
+        model = current_app.config.get('OPENAI_MODEL', 'gpt-3.5-turbo')
 
         headers = {
             "Authorization": f"Bearer {api_key}",
