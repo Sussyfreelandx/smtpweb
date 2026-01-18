@@ -1,33 +1,53 @@
 {% extends "base.html" %}
 
 {% block content %}
+<div class="container mt-4">
     <div class="d-flex justify-content-between align-items-center mb-4">
-        <h1 class="h3">Dashboard</h1>
-        <a href="{{ url_for('main.new_campaign') }}" class="btn btn-success">
-            <i class="bi bi-plus-circle"></i> New Campaign
+        <h1>Dashboard</h1>
+        <a href="{{ url_for('main.new_campaign') }}" class="btn btn-primary">
+            <i class="fas fa-plus"></i> New Campaign
         </a>
     </div>
 
-    <div class="card">
-        <div class="card-header">
-            Your Campaigns
-        </div>
-        <div class="list-group list-group-flush">
-            {% for campaign in campaigns %}
-            <a href="{{ url_for('main.view_campaign', campaign_id=campaign.id) }}" class="list-group-item list-group-item-action">
-                <div class="d-flex w-100 justify-content-between">
-                    <h5 class="mb-1">{{ campaign.name }}</h5>
-                    <small class="text-muted">{{ campaign.created_at.strftime('%Y-%m-%d') }}</small>
-                </div>
-                <p class="mb-1 text-muted">Subject: {{ campaign.subject }}</p>
-                <small><i class="bi bi-people-fill"></i> {{ campaign.recipients.count() }} recipients</small>
-            </a>
-            {% else %}
-            <div class="list-group-item text-center p-4">
-                <p class="mb-0">You have no campaigns yet.</p>
-                <a href="{{ url_for('main.new_campaign') }}">Create your first one!</a>
-            </div>
-            {% endfor %}
+    {% if campaigns.count() == 0 %}
+    <div class="alert alert-info text-center">
+        <h4>Welcome to your dashboard!</h4>
+        <p>You haven't created any campaigns yet.</p>
+        <a href="{{ url_for('main.new_campaign') }}" class="btn btn-primary mt-2">Create your first campaign</a>
+    </div>
+    {% else %}
+    <div class="card shadow">
+        <div class="card-body p-0">
+            <table class="table table-hover mb-0">
+                <thead class="bg-light">
+                    <tr>
+                        <th class="border-top-0">Campaign Name</th>
+                        <th class="border-top-0">Subject</th>
+                        <th class="border-top-0">Created At</th>
+                        <th class="border-top-0 text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for campaign in campaigns %}
+                    <tr>
+                        <td>
+                            <a href="{{ url_for('main.view_campaign', campaign_id=campaign.id) }}" class="fw-bold text-decoration-none">
+                                {{ campaign.name }}
+                            </a>
+                        </td>
+                        <td>{{ campaign.subject }}</td>
+                        <td>{{ campaign.created_at }}</td> <!-- Note: You might want to format this date -->
+                        <td class="text-end">
+                            <a href="{{ url_for('main.view_campaign', campaign_id=campaign.id) }}" class="btn btn-sm btn-outline-primary">
+                                View
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
         </div>
     </div>
+    {% endif %}
+</div>
 {% endblock %}
