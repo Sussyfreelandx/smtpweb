@@ -59,40 +59,41 @@ class DeliverabilityHelper:
         results['dkim'] = "✅ Found (common selector)" if dkim_found else "⚠️ Not Found (common selectors)"
         return results
 
-    def analyze_spam(self, subject, body_html):
-        """Runs both basic and AI spam checks."""
-        report = {
-            'basic_score': 0,
-            'basic_triggers': [],
-            'ai_analysis': "AI analysis skipped or failed.",
-        }
+    def check_blacklist(self, ip_or_domain):
+        if not self.resolver: return "Skipped (dnspython not installed)"
+        is_ip = re.match(r'^\d{1,3}(\.\d{1,3}){3}$', ip_or_domain)
 
-        # Basic Check
-        spam_words = ["free", "guarantee", "credit", "offer", "urgent", "winner", "cash", "bonus", "buy now"]
-        full_text = (subject + " " + body_html).lower()
-        for word in spam_words:
-            if re.search(fr'\b{word}\b', full_text):
-                report['basic_score'] += 1
-                report['basic_triggers'].append(word)
-        if subject.isupper() and len(subject) > 10:
-            report['basic_score'] += 2
-            report['basic_triggers'].append("ALL CAPS SUBJECT")
-        if "!" * 3 in full_text:
-            report['basic_score'] += 1
-            report['basic_triggers'].append("Excessive Exclamation")
-        
-        # AI Check
+        if is_ip:
+            query_target = '.'.join(reversed(ip_or_domain.split('.')))
+        else:
+            query_target = ip_or_domain
+
+        listed_on = []
+        for server in self.blacklist_servers:
+            try:
+                query = f"{query_target}.{server}"
+                self.resolver.resolve(query, 'A')
+                listed_on.append(server)
+            except dns.resolver.NXDOMAIN:
+                continue
+            except Exception:
+                continue
+        return f"Listed on: {', '.join(listed_on)}" if listed_on else "Clean"
+
+
+    def analyze_spam_ai(self, subject, body_html, provider_type='openai'):
+        """Runs AI spam checks."""
         from .ai_handler import AIHandler
-        ai_handler = AIHandler()
+        ai_handler = AIHandler() # AIHandler now reads from app config
+        
         prompt = (f"Analyze the following email for spam triggers, awkward phrasing, or phishing indicators. "
                   f"Provide a spam score from 1 to 10 (1 is best), a one-sentence summary of the risk, "
                   f"and a bulleted list of concrete suggestions for improvement. Format your response clearly.\n\n"
                   f"SUBJECT: {subject}\n\nBODY:\n{body_html}")
-        success, result = ai_handler.generate(prompt, system_msg="You are an expert email deliverability analyst.")
-        if success:
-            report['ai_analysis'] = result
-            
-        return report
+        
+        success, result = ai_handler.generate(prompt, system_msg="You are an expert email deliverability analyst.", provider_override=provider_type)
+        return success, result
+
 
     def spin(self, text):
         """Processes spintax {opt1|opt2} in text."""
