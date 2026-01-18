@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center">
+    <h1>Suppression List</h1>
+</div>
+<p class="text-muted">Emails on this list will be automatically excluded from all future campaigns.</p>
+
+<div class="row">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-body">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Email</th>
+                            <th>Reason</th>
+                            <th>Date Added</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in suppressed_emails %}
+                        <tr>
+                            <td>{{ item.email }}</td>
+                            <td><span class="badge bg-secondary">{{ item.reason }}</span></td>
+                            <td>{{ item.created_at.strftime('%Y-%m-%d') }}</td>
+                            <td>
+                                <form method="POST" action="{{ url_for('main.delete_suppressed_email', suppressed_id=item.id) }}" onsubmit="return confirm('Are you sure?');">
+                                    <button type="submit" class="btn btn-sm btn-danger"><i class="bi bi-trash"></i></button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="4" class="text-center">The suppression list is empty.</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">Add Email to List</div>
+            <div class="card-body">
+                <form method="POST">
+                    <div class="mb-3">
+                        <label for="email" class="form-label">Email Address</label>
+                        <input type="email" class="form-control" id="email" name="email" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="reason" class="form-label">Reason</label>
+                        <input type="text" class="form-control" id="reason" name="reason" value="Manual Add">
+                    </div>
+                    <button type="submit" class="btn btn-primary w-100">Add to Suppression List</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
