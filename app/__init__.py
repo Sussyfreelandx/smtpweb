@@ -4,7 +4,7 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_login import LoginManager
 from celery import Celery
-from .config import Config # Import the base Config
+from .config import Config # This line imports the file you just created
 
 # Initialize extensions, but don't configure them yet
 db = SQLAlchemy()
