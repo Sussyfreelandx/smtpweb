@@ -1,5 +1,5 @@
 from app import create_app, db
-from app.models import User, Campaign, Recipient
+from app.models import User, Campaign, Recipient, SMTPServer, Suppression
 
 # The create_app function is the application factory.
 app = create_app()
@@ -10,7 +10,7 @@ def make_shell_context():
     Makes a dictionary of items available in the 'flask shell' context.
     This is useful for debugging and database management.
     """
-    return {'db': db, 'User': User, 'Campaign': Campaign, 'Recipient': Recipient}
+    return {'db': db, 'User': User, 'Campaign': Campaign, 'Recipient': Recipient, 'SMTPServer': SMTPServer, 'Suppression': Suppression}
 
 if __name__ == '__main__':
     # This block is for local development only.
