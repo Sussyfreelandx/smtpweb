@@ -1,5 +1,5 @@
 # Flask and Web Server
-Flask
+Flask>=2.0
 gunicorn
 Flask-SQLAlchemy
 Flask-Migrate
@@ -14,10 +14,8 @@ dnspython
 Jinja2
 pypdf2
 requests
+itsdangerous
 
 # Background Jobs
 Celery
 redis
-
-# Utilities
-user-agents
