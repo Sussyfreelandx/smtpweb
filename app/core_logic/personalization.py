@@ -13,22 +13,12 @@ COMMON_ISP_DOMAINS = {
     "msn.com", "live.com", "icloud.com", "mail.com", "comcast.net",
     "verizon.net", "att.net", "sbcglobal.net", "cox.net", "yandex.com",
     "protonmail.com", "zoho.com", "gmx.com", "fastmail.com", "hey.com",
-    "tutanota.com", "riseup.net", "disroot.org", "me.com", "mac.com"
-}
-
-GENERIC_WORDS = {
-    'info', 'contact', 'admin', 'support', 'sales', 'mail', 'email', 
-    'hello', 'test', 'demo', 'user', 'customer', 'press', 'jobs', 
-    'careers', 'service', 'team', 'office', 'billing', 'accounts', 
-    'dev', 'webmaster', 'media', 'noreply', 'no-reply', 'marketing', 
-    'newsletter', 'updates', 'general', 'enquiry', 'staff', 'manager', 
-    'hr', 'recruitment', 'inquiries'
 }
 
 class PersonalizationEngine:
     """
     Handles all email personalization, including autograb, Jinja2 rendering,
-    and tracking link insertion. Matches Desktop v8.0.3 logic.
+    and tracking link insertion. Matches logic from paris_sender_complete.py v8.0.3
     """
 
     def __init__(self, campaign, recipient):
@@ -45,40 +35,53 @@ class PersonalizationEngine:
         except:
             context = {}
         
-        # Ensure lowercase keys for consistency
+        # Ensure all keys are lowercase for template consistency
         context = {k.lower(): v for k, v in context.items()}
         
-        # --- Autograb Logic (Matches Desktop v8.0.3) ---
+        # --- Autograb Logic (Matches paris_sender_complete.py) ---
         
         # 1. Firstname Autograb
-        if 'firstname' not in context or not context['firstname']:
+        found_name = context.get('firstname')
+        if not found_name:
             local_part = self.recipient.email.split('@')[0]
-            # Split by common delimiters (dot, underscore, hyphen, plus)
+            # Split by dots, dashes, underscores
             potential_parts = re.split(r'[._\-+]+', local_part)
-            # Filter for alphabetic parts containing > 1 char
+            # Filter for alphabetic parts only
             valid_parts = [p for p in potential_parts if len(p) > 1 and p.isalpha()]
+            
+            generic_words = {
+                'info', 'contact', 'admin', 'support', 'sales', 'mail', 'email', 
+                'hello', 'test', 'demo', 'user', 'customer', 'press', 'jobs', 
+                'careers', 'service', 'team', 'office', 'billing', 'accounts'
+            }
             
             if valid_parts:
                 candidate = valid_parts[0]
-                if candidate.lower() not in GENERIC_WORDS:
-                    context['firstname'] = candidate.capitalize()
-        
-        # Fallback for Firstname
-        if 'firstname' not in context or not context['firstname']:
-            context['firstname'] = 'Hello' # Or empty string depending on preference
+                if candidate.lower() not in generic_words:
+                    found_name = candidate.capitalize()
+                    context['firstname'] = found_name
 
         # 2. Company Autograb
-        if 'company' not in context or not context['company']:
+        found_company = context.get('company')
+        if not found_company:
             try:
                 domain = self.recipient.email.split('@')[1].lower()
                 if domain in COMMON_ISP_DOMAINS:
-                    context['company'] = 'you' # Fallback for ISP domains
+                    # Fallback for ISP domains
+                    found_company = "you" 
                 else:
-                    # Extract company name from non-ISP domain
                     parts = domain.split('.')
-                    # Heuristic: Take the domain part, avoiding TLDs like .co.uk
-                    company_part = parts[-2] if len(parts) > 2 and len(parts[-2]) > 2 and parts[-2] not in ('co', 'com', 'org', 'net', 'ac', 'gov', 'edu') else parts[0]
-                    context['company'] = '-'.join([p.capitalize() for p in company_part.split('-')])
+                    # Basic logic: take the SLD (second level domain)
+                    # e.g., company.com -> company
+                    # e.g., company.co.uk -> company
+                    if len(parts) > 2 and len(parts[-2]) > 2 and parts[-2] not in ('co', 'com', 'org', 'net'):
+                        company_part = parts[-2]
+                    else:
+                        company_part = parts[0]
+                    
+                    found_company = '-'.join([p.capitalize() for p in company_part.split('-')])
+                
+                context['company'] = found_company
             except:
                 context['company'] = 'you'
 
@@ -89,21 +92,26 @@ class PersonalizationEngine:
         elif 12 <= hour < 18: base_greeting = "Good afternoon"
         else: base_greeting = "Good evening"
         
-        # Re-construct greeting based on found name
-        if context.get('firstname') and context['firstname'] != 'Hello':
+        # Logic: If name exists, append it. Else just greeting.
+        if context.get('firstname'):
             context['greetings'] = f"{base_greeting} {context['firstname']}"
         else:
             context['greetings'] = base_greeting
-
+            
         context['sender_name'] = self.campaign.smtp_profile.sender_name if self.campaign.smtp_profile else "Sender"
         context['currentdate'] = now.strftime("%B %d, %Y")
         context['time'] = now.strftime("%I:%M %p")
         
-        # --- Tracking Links ---
+        # --- Fallbacks (to prevent errors if data is missing) ---
+        context.setdefault('firstname', 'Hello')
+        context.setdefault('company', 'you')
+
+        # --- Tracking Links (Generated via Flask's url_for) ---
+        # Note: We need _external=True for absolute URLs
         unsubscribe_token = self.recipient.get_tracking_token('unsubscribe')
         open_token = self.recipient.get_tracking_token('open')
         
-        # Generate URLs
+        # Matches autograb format
         context['unsubscribe_link'] = url_for('core_logic.unsubscribe', campaign_id=self.campaign.id, recipient_id=self.recipient.id, _external=True)
         self.open_pixel_url = url_for('core_logic.track_open', campaign_id=self.campaign.id, recipient_id=self.recipient.id, _external=True)
         
@@ -111,17 +119,17 @@ class PersonalizationEngine:
 
     def _render_with_jinja(self, template_string, context):
         """Safely renders a string using Jinja2."""
-        # Pre-process: Replace legacy [tag] syntax with {{ tag }}
-        processed_string = re.sub(r'\[([a-zA-Z0-9_]+)\]', r'{{ \1 }}', template_string)
-        
+        if not template_string: return ""
         try:
-            template = self.jinja_env.from_string(processed_string)
+            # First, handle the legacy [placeholder] syntax by converting to {{ placeholder }}
+            # This matches the desktop app behavior which supports both.
+            template_string = re.sub(r'\[([a-zA-Z0-9_]+)\]', r'{{ \1 }}', template_string)
+            
+            template = self.jinja_env.from_string(template_string)
             return template.render(context)
-        except exceptions.TemplateError:
-            # Fallback manual replacement if Jinja fails
-            for k, v in context.items():
-                processed_string = processed_string.replace(f"{{{{ {k} }}}}", str(v))
-            return processed_string
+        except exceptions.TemplateError as e:
+            # If rendering fails, return original or a safe fallback
+            return template_string
 
     def _add_tracking_pixel(self, html_content):
         """Injects the 1x1 tracking pixel before the closing </body> tag."""
@@ -135,12 +143,15 @@ class PersonalizationEngine:
         def replace_link(match):
             original_url = match.group(2)
             # Don't track unsubscribe links or mailto links
-            if 'unsubscribe' in original_url or original_url.startswith(('mailto:', '#')) or '/track/' in original_url:
+            if 'unsubscribe' in original_url or original_url.startswith(('mailto:', '#')) or 'track' in original_url:
                 return match.group(0)
             
-            # Create a token specific to this link and recipient
+            # Encode target URL
             encoded_url = base64.urlsafe_b64encode(original_url.encode()).decode()
+            
+            # Generate tracking URL
             tracked_url = url_for('core_logic.track_click', campaign_id=self.campaign.id, recipient_id=self.recipient.id, url=encoded_url, _external=True)
+            
             return f'{match.group(1)}="{tracked_url}"'
 
         return re.sub(r'(href\s*=\s*)(["\'](https?://[^"\']+)["\'])', replace_link, html_content, flags=re.IGNORECASE)
@@ -156,7 +167,7 @@ class PersonalizationEngine:
         spun_subject = self.deliverability_helper.spin(self.campaign.subject)
         spun_body = self.deliverability_helper.spin(self.campaign.body)
 
-        # 2. Render with Jinja2 using the context
+        # 2. Render with Jinja2 using the context (handles autograb)
         final_subject = self._render_with_jinja(spun_subject, context)
         final_body = self._render_with_jinja(spun_body, context)
 
