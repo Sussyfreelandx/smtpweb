@@ -1,4 +1,4 @@
-from flask import render_template, flash, redirect, url_for, request, current_app
+from flask import render_template, flash, redirect, url_for, request, current_app, Response, make_response
 from flask_login import login_user, logout_user, current_user, login_required
 from app import db
 from app.routes import bp
@@ -7,6 +7,9 @@ from app.tasks import send_campaign_task
 import csv
 import io
 import json
+import uuid
+import base64
+from datetime import datetime
 
 # --- Main Routes ---
 
@@ -24,7 +27,7 @@ def view_campaign(campaign_id):
     """Page to view a specific campaign and its recipients."""
     campaign = db.session.get(Campaign, campaign_id)
     if not campaign or campaign.user_id != current_user.id:
-        flash('Campaign not found or you do not have permission to view it.')
+        flash('Campaign not found or you do not have permission to view it.', 'danger')
         return redirect(url_for('main.index'))
         
     page = request.args.get('page', 1, type=int)
@@ -39,7 +42,6 @@ def new_campaign():
     """Page to create a new campaign."""
     if request.method == 'POST':
         try:
-            # Create a new campaign from the form data
             campaign = Campaign(
                 name=request.form['campaign_name'],
                 subject=request.form['subject'],
@@ -47,14 +49,13 @@ def new_campaign():
                 smtp_server=request.form['smtp_server'],
                 smtp_port=int(request.form['smtp_port']),
                 smtp_username=request.form['smtp_username'],
-                smtp_password=request.form['smtp_password'], # TODO: Encrypt this
+                smtp_password=request.form['smtp_password'],
                 smtp_sender_name=request.form['smtp_sender_name'],
                 smtp_sender_email=request.form['smtp_sender_email'],
                 author=current_user
             )
             db.session.add(campaign)
             
-            # Process uploaded recipient file
             file = request.files['recipients_file']
             if file and file.filename != '':
                 stream = io.StringIO(file.stream.read().decode("UTF-8"), newline=None)
@@ -65,12 +66,13 @@ def new_campaign():
                     return redirect(url_for('main.new_campaign'))
 
                 for row in csv_reader:
-                    recipient_email = row.get('email').strip().lower()
+                    recipient_email = row.get('email', '').strip().lower()
                     if recipient_email:
                         recipient = Recipient(
                             email=recipient_email, 
                             campaign=campaign,
-                            data=json.dumps(row) # Store the whole row as JSON
+                            public_id=str(uuid.uuid4()), # Generate a public ID
+                            data=json.dumps(row)
                         )
                         db.session.add(recipient)
             
@@ -92,14 +94,55 @@ def send_campaign_route(campaign_id):
         flash('Campaign not found or you do not have permission to send it.', 'danger')
         return redirect(url_for('main.index'))
         
-    # This is non-blocking. It starts the background task and returns immediately.
     send_campaign_task.delay(campaign_id)
     flash(f'Your campaign "{campaign.name}" is being sent in the background!', 'info')
     return redirect(url_for('main.view_campaign', campaign_id=campaign_id))
 
+# --- Tracking and Unsubscribe Routes ---
 
-# --- Authentication Routes ---
+PIXEL_GIF_DATA = base64.b64decode(b'R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==')
 
+@bp.route('/track/open/<public_id>')
+def track_open(public_id):
+    recipient = Recipient.query.filter_by(public_id=public_id).first()
+    if recipient and not recipient.opened_at:
+        recipient.opened_at = datetime.utcnow()
+        recipient.status = 'Opened'
+        db.session.commit()
+    
+    response = make_response(PIXEL_GIF_DATA)
+    response.headers['Content-Type'] = 'image/gif'
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    return response
+
+@bp.route('/track/click/<public_id>')
+def track_click(public_id):
+    redirect_url = request.args.get('url')
+    if not redirect_url:
+        return "URL parameter is missing.", 400
+    
+    recipient = Recipient.query.filter_by(public_id=public_id).first()
+    if recipient and not recipient.clicked_at:
+        recipient.clicked_at = datetime.utcnow()
+        if recipient.status not in ['Opened', 'Unsubscribed']:
+             recipient.status = 'Clicked'
+        db.session.commit()
+
+    return redirect(redirect_url)
+
+@bp.route('/unsubscribe/<public_id>')
+def unsubscribe(public_id):
+    recipient = Recipient.query.filter_by(public_id=public_id).first()
+    if recipient:
+        if not recipient.unsubscribed_at:
+            recipient.unsubscribed_at = datetime.utcnow()
+            recipient.status = 'Unsubscribed'
+            db.session.commit()
+        return "You have been successfully unsubscribed."
+    return "Recipient not found.", 404
+
+# --- Authentication Routes (unchanged) ---
 @bp.route('/login', methods=['GET', 'POST'])
 def login():
     if current_user.is_authenticated:
