@@ -1,242 +1,21 @@
-from flask import render_template, flash, redirect, url_for, request, jsonify, Blueprint, make_response
+from flask import render_template, flash, redirect, url_for, request, jsonify, Blueprint, current_app
 from flask_login import login_user, logout_user, current_user, login_required
-from app import db, create_app
+from app import db
 from app.models import User, Campaign, Recipient, SMTPServer, Suppression
-from app.tasks import send_campaign_task, test_smtp_connection_task
+from app.core_logic.smtp_handler import SMTPHandler
+from app.core_logic.deliverability import DeliverabilityHelper
 import csv
 import io
 import json
-import redis
-import os
-from werkzeug.utils import secure_filename
-from datetime import datetime
+import re
 
 bp = Blueprint('main', __name__)
-redis_client = redis.from_url(os.environ.get('REDIS_URL', 'redis://localhost:6379/0'))
 
-# --- Campaign Management ---
+# --- Helper for Email Validation ---
+def is_valid_email(email):
+    return re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email)
 
-@bp.route('/campaign/new', methods=['GET', 'POST'])
-@login_required
-def new_campaign():
-    if request.method == 'POST':
-        profile_id = request.form.get('smtp_profile')
-        campaign = Campaign(
-            name=request.form['campaign_name'],
-            subject=request.form['subject'],
-            body=request.form['body_html'],
-            smtp_profile_id=profile_id,
-            user_id=current_user.id,
-            throttle_amount=int(request.form.get('throttle_amount', 20)),
-            throttle_delay=int(request.form.get('throttle_delay', 1)),
-            throttle_unit=request.form.get('throttle_unit', 'Minutes')
-        )
-        db.session.add(campaign)
-        db.session.commit() # Commit ID first
-        
-        flash('Campaign created! Now add recipients.', 'success')
-        return redirect(url_for('main.view_campaign', campaign_id=campaign.id))
-        
-    profiles = SMTPServer.query.filter_by(user_id=current_user.id).all()
-    return render_template('create_campaign.html', title='New Campaign', profiles=profiles)
-
-@bp.route('/campaign/<int:campaign_id>', methods=['GET'])
-@login_required
-def view_campaign(campaign_id):
-    campaign = Campaign.query.get_or_404(campaign_id)
-    if campaign.author != current_user:
-        flash("Permission denied.", "danger")
-        return redirect(url_for('main.index'))
-    
-    page = request.args.get('page', 1, type=int)
-    recipients = campaign.recipients.order_by(Recipient.id.asc()).paginate(page=page, per_page=50)
-    
-    return render_template('campaign.html', campaign=campaign, recipients=recipients, now=datetime.utcnow())
-
-# --- Recipient Management (Load, Add, Clear, Validate) ---
-
-@bp.route('/campaign/<int:campaign_id>/import_csv', methods=['POST'])
-@login_required
-def import_csv(campaign_id):
-    campaign = Campaign.query.get_or_404(campaign_id)
-    file = request.files.get('file')
-    if not file:
-        flash('No file uploaded', 'danger')
-        return redirect(url_for('main.view_campaign', campaign_id=campaign_id))
-
-    try:
-        stream = io.StringIO(file.stream.read().decode("UTF-8"), newline=None)
-        csv_reader = csv.DictReader(stream)
-        
-        # Normalize headers
-        headers = [h.lower() for h in csv_reader.fieldnames]
-        if 'email' not in headers:
-            flash("CSV must have an 'email' column.", "danger")
-            return redirect(url_for('main.view_campaign', campaign_id=campaign_id))
-            
-        count = 0
-        suppressed_count = 0
-        
-        for row in csv_reader:
-            # Case insensitive key lookup
-            row_lower = {k.lower(): v for k, v in row.items()}
-            email = row_lower.get('email', '').strip().lower()
-            
-            if not email: continue
-            
-            # Check Suppression
-            if Suppression.query.filter_by(email=email).first():
-                suppressed_count += 1
-                continue
-                
-            # Check Duplicate in Campaign
-            if Recipient.query.filter_by(campaign_id=campaign.id, email=email).first():
-                continue
-
-            # Store extra data as JSON for personalization
-            recipient = Recipient(
-                email=email,
-                campaign_id=campaign.id,
-                data=json.dumps(row_lower)
-            )
-            db.session.add(recipient)
-            count += 1
-            
-        db.session.commit()
-        flash(f'Imported {count} recipients. {suppressed_count} skipped (suppressed).', 'success')
-    except Exception as e:
-        flash(f'Error importing CSV: {str(e)}', 'danger')
-        
-    return redirect(url_for('main.view_campaign', campaign_id=campaign_id))
-
-@bp.route('/campaign/<int:campaign_id>/add_recipient', methods=['POST'])
-@login_required
-def add_recipient(campaign_id):
-    email = request.form.get('email').strip().lower()
-    if not email: return redirect(url_for('main.view_campaign', campaign_id=campaign_id))
-    
-    if Suppression.query.filter_by(email=email).first():
-        flash(f'{email} is in suppression list.', 'warning')
-        return redirect(url_for('main.view_campaign', campaign_id=campaign_id))
-
-    recipient = Recipient(email=email, campaign_id=campaign_id, data="{}")
-    db.session.add(recipient)
-    db.session.commit()
-    flash('Recipient added.', 'success')
-    return redirect(url_for('main.view_campaign', campaign_id=campaign_id))
-
-@bp.route('/campaign/<int:campaign_id>/clear_recipients', methods=['POST'])
-@login_required
-def clear_recipients(campaign_id):
-    Recipient.query.filter_by(campaign_id=campaign_id).delete()
-    db.session.commit()
-    flash('All recipients cleared.', 'info')
-    return redirect(url_for('main.view_campaign', campaign_id=campaign_id))
-
-@bp.route('/campaign/<int:campaign_id>/validate_list', methods=['POST'])
-@login_required
-def validate_list(campaign_id):
-    # Basic MX validation logic (placeholder for complexity)
-    from app.core_logic.deliverability import DeliverabilityHelper
-    helper = DeliverabilityHelper()
-    
-    recipients = Recipient.query.filter_by(campaign_id=campaign_id).all()
-    invalid_count = 0
-    for r in recipients:
-        domain = r.email.split('@')[-1]
-        mx_status = helper.check_mx_record(domain)
-        if mx_status != "Valid":
-            r.status = f"Invalid ({mx_status})"
-            invalid_count += 1
-    db.session.commit()
-    flash(f'Validation complete. Found {invalid_count} issues.', 'info')
-    return redirect(url_for('main.view_campaign', campaign_id=campaign_id))
-
-@bp.route('/campaign/<int:campaign_id>/retry_failed', methods=['POST'])
-@login_required
-def retry_failed(campaign_id):
-    failed = Recipient.query.filter_by(campaign_id=campaign_id, status='Failed').all()
-    for r in failed:
-        r.status = 'Queued'
-        r.status_message = None
-    db.session.commit()
-    flash(f'Queued {len(failed)} failed recipients for retry.', 'success')
-    return redirect(url_for('main.view_campaign', campaign_id=campaign_id))
-
-@bp.route('/campaign/<int:campaign_id>/remove_selected', methods=['POST'])
-@login_required
-def remove_selected(campaign_id):
-    ids = request.form.getlist('recipient_ids')
-    if ids:
-        Recipient.query.filter(Recipient.id.in_(ids), Recipient.campaign_id==campaign_id).delete(synchronize_session=False)
-        db.session.commit()
-        flash(f'Removed {len(ids)} recipients.', 'success')
-    return redirect(url_for('main.view_campaign', campaign_id=campaign_id))
-
-# --- Campaign Control (Start, Stop, Pause) ---
-
-@bp.route('/campaign/<int:campaign_id>/control', methods=['POST'])
-@login_required
-def control_campaign(campaign_id):
-    action = request.form.get('action')
-    campaign = Campaign.query.get_or_404(campaign_id)
-    
-    redis_key_pause = f"campaign_{campaign_id}_pause"
-    redis_key_stop = f"campaign_{campaign_id}_stop"
-
-    if action == 'start':
-        if campaign.status == 'Running':
-            flash('Campaign is already running.', 'warning')
-        else:
-            send_campaign_task.delay(campaign_id)
-            flash('Campaign started.', 'success')
-            
-    elif action == 'pause':
-        redis_client.set(redis_key_pause, "true")
-        campaign.status = 'Paused'
-        db.session.commit()
-        flash('Campaign paused. It will stop after the current batch.', 'info')
-        
-    elif action == 'resume':
-        redis_client.delete(redis_key_pause)
-        campaign.status = 'Running'
-        db.session.commit()
-        flash('Campaign resumed.', 'success')
-        
-    elif action == 'stop':
-        redis_client.set(redis_key_stop, "true")
-        redis_client.delete(redis_key_pause) # Ensure not stuck in pause loop
-        campaign.status = 'Stopped'
-        db.session.commit()
-        flash('Campaign stopping...', 'danger')
-
-    return redirect(url_for('main.view_campaign', campaign_id=campaign_id))
-
-@bp.route('/campaign/<int:campaign_id>/export_csv')
-@login_required
-def export_csv(campaign_id):
-    recipients = Recipient.query.filter_by(campaign_id=campaign_id).all()
-    
-    si = io.StringIO()
-    cw = csv.writer(si)
-    cw.writerow(['Email', 'Status', 'Sent At', 'Opened', 'Clicked', 'Message'])
-    
-    for r in recipients:
-        cw.writerow([
-            r.email, 
-            r.status, 
-            r.sent_at.strftime('%Y-%m-%d %H:%M:%S') if r.sent_at else '', 
-            'Yes' if r.opened_at else 'No', 
-            'Yes' if r.clicked_at else 'No',
-            r.status_message or ''
-        ])
-        
-    output = make_response(si.getvalue())
-    output.headers["Content-Disposition"] = f"attachment; filename=campaign_{campaign_id}_export.csv"
-    output.headers["Content-type"] = "text/csv"
-    return output
-
-# --- Other Routes ---
+# --- Routes ---
 
 @bp.route('/')
 @bp.route('/index')
@@ -245,25 +24,298 @@ def index():
     campaigns = Campaign.query.filter_by(user_id=current_user.id).order_by(Campaign.id.desc())
     return render_template('dashboard.html', title='Dashboard', campaigns=campaigns)
 
-@bp.route('/test_smtp_connection', methods=['POST'])
+@bp.route('/campaign/<int:campaign_id>')
+@login_required
+def view_campaign(campaign_id):
+    campaign = Campaign.query.get_or_404(campaign_id)
+    if campaign.author != current_user:
+        flash("Permission denied", "danger")
+        return redirect(url_for('main.index'))
+        
+    page = request.args.get('page', 1, type=int)
+    recipients = campaign.recipients.paginate(page=page, per_page=50, error_out=False)
+    
+    return render_template('campaign.html', title=campaign.name, campaign=campaign, recipients=recipients)
+
+@bp.route('/campaign/new', methods=['GET', 'POST'])
+@login_required
+def new_campaign():
+    # Load available profiles for the dropdown
+    profiles = SMTPServer.query.filter_by(user_id=current_user.id).all()
+    
+    if request.method == 'POST':
+        # Create Campaign with advanced settings
+        campaign = Campaign(
+            name=request.form['campaign_name'],
+            subject=request.form['subject'],
+            body=request.form['body_html'],
+            user_id=current_user.id,
+            smtp_profile_id=request.form.get('smtp_profile_id'),
+            throttle_amount=int(request.form.get('throttle_amount', 20)),
+            throttle_delay=int(request.form.get('throttle_delay', 60)),
+            parallel_workers=int(request.form.get('parallel_workers', 1)),
+            status='Draft'
+        )
+        db.session.add(campaign)
+        db.session.flush() # Get ID
+        
+        # Load Recipients
+        file = request.files.get('recipients_file')
+        pasted_emails = request.form.get('pasted_emails', '').strip()
+        
+        added_count = 0
+        
+        # 1. Process File
+        if file and file.filename != '':
+            try:
+                stream = io.StringIO(file.stream.read().decode("UTF-8", errors='ignore'), newline=None)
+                csv_reader = csv.DictReader(stream)
+                # Normalize headers to lowercase
+                csv_reader.fieldnames = [h.lower() for h in csv_reader.fieldnames]
+                
+                if 'email' not in csv_reader.fieldnames:
+                    flash("CSV must contain an 'email' column.", "danger")
+                else:
+                    for row in csv_reader:
+                        email = row.get('email', '').strip()
+                        if email and is_valid_email(email):
+                            # Store extra data as JSON string for personalization
+                            # Remove email from data to save space
+                            row_data = {k: v for k, v in row.items() if k != 'email'}
+                            
+                            # Check suppression
+                            if not Suppression.query.filter_by(email=email).first():
+                                r = Recipient(email=email, data=json.dumps(row_data), campaign_id=campaign.id)
+                                db.session.add(r)
+                                added_count += 1
+            except Exception as e:
+                flash(f'Error processing CSV: {str(e)}', 'danger')
+
+        # 2. Process Pasted Emails (Simple list, no extra data)
+        if pasted_emails:
+            raw_emails = re.findall(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', pasted_emails)
+            for email in set(raw_emails):
+                if not Suppression.query.filter_by(email=email).first():
+                    r = Recipient(email=email, data='{}', campaign_id=campaign.id)
+                    db.session.add(r)
+                    added_count += 1
+
+        db.session.commit()
+        flash(f'Campaign created with {added_count} recipients!', 'success')
+        return redirect(url_for('main.view_campaign', campaign_id=campaign.id))
+        
+    return render_template('create_campaign.html', title='New Campaign', profiles=profiles)
+
+# --- Action Routes ---
+
+@bp.route('/campaign/<int:campaign_id>/control/<action>')
+@login_required
+def campaign_control(campaign_id, action):
+    campaign = Campaign.query.get_or_404(campaign_id)
+    if campaign.author != current_user: return redirect(url_for('main.index'))
+
+    from app.tasks import send_campaign_task
+
+    if action == 'start':
+        if campaign.status not in ['Sending', 'Completed']:
+            send_campaign_task.delay(campaign.id)
+            campaign.status = 'Sending'
+            flash('Campaign started.', 'success')
+            
+    elif action == 'pause':
+        campaign.status = 'Paused'
+        flash('Campaign paused (workers will stop after current batch).', 'warning')
+        
+    elif action == 'stop':
+        campaign.status = 'Stopped'
+        flash('Campaign stopped.', 'danger')
+        
+    elif action == 'retry':
+        # Reset Failed to Queued
+        failed_recipients = campaign.recipients.filter_by(status='Failed').all()
+        count = 0
+        for r in failed_recipients:
+            r.status = 'Queued'
+            r.status_message = None
+            count += 1
+        db.session.commit()
+        flash(f'{count} failed recipients requeued. Click Start to resume.', 'info')
+        return redirect(url_for('main.view_campaign', campaign_id=campaign_id))
+
+    db.session.commit()
+    return redirect(url_for('main.view_campaign', campaign_id=campaign_id))
+
+@bp.route('/campaign/<int:campaign_id>/clear_list')
+@login_required
+def clear_recipient_list(campaign_id):
+    campaign = Campaign.query.get_or_404(campaign_id)
+    if campaign.author != current_user: return redirect(url_for('main.index'))
+    
+    # Efficient bulk delete
+    Recipient.query.filter_by(campaign_id=campaign.id).delete()
+    db.session.commit()
+    
+    flash('Recipient list cleared.', 'info')
+    return redirect(url_for('main.view_campaign', campaign_id=campaign_id))
+
+# --- API / AJAX Routes ---
+
+@bp.route('/api/test_smtp', methods=['POST'])
 @login_required
 def test_smtp_connection():
+    """Tests the SMTP connection for a specific profile ID."""
     data = request.get_json()
     profile_id = data.get('profile_id')
     
-    # Run in background to avoid hanging browser
-    task = test_smtp_connection_task.delay(profile_id)
-    
-    # In a real sync/async web call we might just wait 5s or return task ID
-    # For simplicity, we will assume sync wait here or handle via frontend polling
-    # But since user specifically asked for "Test Connection" functionality:
-    
-    # Synchronous Fallback for immediate feedback
     profile = SMTPServer.query.get(profile_id)
-    from app.core_logic.smtp_handler import SMTPHandler
-    handler = SMTPHandler(profile.to_dict())
-    success, msg = handler.test_connection()
-    
-    return jsonify({'success': success, 'message': msg})
+    if not profile or profile.user_id != current_user.id:
+        return jsonify({'success': False, 'message': 'Invalid Profile'})
 
-# ... Login/Logout/Register routes remain the same ...
+    try:
+        # Use SMTPHandler to test
+        import smtplib
+        server = None
+        handler = SMTPHandler(profile.to_dict()) # Initializes basic config
+        
+        # Manual connection test logic matching desktop script
+        context = handler._create_secure_ssl_context()
+        if handler.use_ssl or handler.smtp_port == 465:
+            server = smtplib.SMTP_SSL(handler.smtp_server, handler.smtp_port, context=context, timeout=10)
+        else:
+            server = smtplib.SMTP(handler.smtp_server, handler.smtp_port, timeout=10)
+        
+        server.ehlo()
+        if not handler.use_ssl and handler.use_tls:
+            server.starttls(context=context)
+            server.ehlo()
+            
+        server.login(handler.username, handler.password)
+        server.quit()
+        
+        return jsonify({'success': True, 'message': f'Connected to {profile.server} successfully!'})
+        
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+
+@bp.route('/api/validate_list', methods=['POST'])
+@login_required
+def validate_email_list():
+    """Checks MX records for a list of emails (simulated for web response)."""
+    data = request.get_json()
+    emails = data.get('emails', [])
+    
+    helper = DeliverabilityHelper()
+    results = {'valid': 0, 'invalid': 0, 'details': []}
+    
+    for email in emails:
+        domain = email.split('@')[1]
+        mx_status = helper.check_mx_record(domain)
+        status = 'Valid' if mx_status == 'Valid' else 'Invalid'
+        
+        if status == 'Valid': results['valid'] += 1
+        else: results['invalid'] += 1
+        
+        results['details'].append({'email': email, 'status': status, 'reason': mx_status})
+        
+    return jsonify(results)
+
+# --- Standard Auth Routes (Login/Register/Logout) ---
+# ... (Keep existing login/register/logout routes from your previous file) ...
+@bp.route('/login', methods=['GET', 'POST'])
+def login():
+    if current_user.is_authenticated: return redirect(url_for('main.index'))
+    if request.method == 'POST':
+        user = User.query.filter_by(username=request.form.get('username')).first()
+        if user and user.check_password(request.form.get('password')):
+            login_user(user, remember=True)
+            return redirect(url_for('main.index'))
+        flash('Invalid credentials', 'danger')
+    return render_template('login.html', title='Sign In')
+
+@bp.route('/logout')
+def logout():
+    logout_user()
+    return redirect(url_for('main.index'))
+
+@bp.route('/register', methods=['GET', 'POST'])
+def register():
+    if current_user.is_authenticated: return redirect(url_for('main.index'))
+    if request.method == 'POST':
+        user = User(username=request.form['username'], email=request.form['email'])
+        user.set_password(request.form['password'])
+        db.session.add(user)
+        db.session.commit()
+        flash('Registered!', 'success')
+        return redirect(url_for('main.login'))
+    return render_template('register.html', title='Register')
+
+@bp.route('/smtp_profiles', methods=['GET', 'POST'])
+@login_required
+def smtp_profiles():
+    if request.method == 'POST':
+        profile_id = request.form.get('profile_id')
+        if profile_id:
+            profile = SMTPServer.query.get(profile_id)
+            if profile.user_id != current_user.id: return redirect(url_for('main.index'))
+        else:
+            profile = SMTPServer(user_id=current_user.id)
+            
+        profile.profile_name = request.form['name']
+        profile.server = request.form['server']
+        profile.port = int(request.form['port'])
+        profile.username = request.form['username']
+        if request.form.get('password'):
+            profile.set_password(request.form['password'])
+        profile.sender_name = request.form['sender_name']
+        profile.sender_email = request.form['sender_email']
+        profile.use_tls = 'use_tls' in request.form
+        profile.use_ssl = 'use_ssl' in request.form
+        
+        db.session.add(profile)
+        db.session.commit()
+        flash('Profile saved.', 'success')
+        return redirect(url_for('main.smtp_profiles'))
+        
+    profiles = SMTPServer.query.filter_by(user_id=current_user.id).all()
+    return render_template('smtp_profiles.html', title='SMTP Profiles', profiles=profiles)
+
+@bp.route('/smtp_profile/delete/<int:profile_id>', methods=['POST'])
+@login_required
+def delete_smtp_profile(profile_id):
+    profile = SMTPServer.query.get_or_404(profile_id)
+    if profile.user_id == current_user.id:
+        db.session.delete(profile)
+        db.session.commit()
+        flash('Profile deleted.', 'info')
+    return redirect(url_for('main.smtp_profiles'))
+
+@bp.route('/suppression', methods=['GET', 'POST'])
+@login_required
+def suppression_list():
+    from app.forms import SuppressionForm # Assuming you have a form class or handle manually
+    # For simplicity, using manual request.form here based on previous structure
+    if request.method == 'POST':
+        email = request.form.get('email')
+        reason = request.form.get('reason')
+        if email:
+            s = Suppression(email=email, reason=reason)
+            try:
+                db.session.add(s)
+                db.session.commit()
+                flash(f'{email} suppressed.', 'success')
+            except:
+                db.session.rollback()
+                flash('Email already suppressed.', 'warning')
+    
+    page = request.args.get('page', 1, type=int)
+    pagination = Suppression.query.paginate(page=page, per_page=20)
+    return render_template('suppression.html', pagination=pagination)
+
+@bp.route('/suppression/delete/<int:suppressed_id>', methods=['POST'])
+@login_required
+def delete_suppressed_email(suppressed_id):
+    s = Suppression.query.get_or_404(suppressed_id)
+    db.session.delete(s)
+    db.session.commit()
+    flash('Removed from suppression list.', 'info')
+    return redirect(url_for('main.suppression_list'))
