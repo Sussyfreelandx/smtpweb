@@ -5,41 +5,41 @@ from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_login import LoginManager
-from celery import Celery, Task
+from celery import Celery
 from config import Config
 
-# Initialize extensions
+# Initialize extensions without an app
 db = SQLAlchemy()
 migrate = Migrate()
 login = LoginManager()
-login.login_view = 'main.login'
+login.login_view = 'main.login' # Tells Flask-Login which view to redirect to for login
 login.login_message = 'Please log in to access this page.'
 
-def celery_init_app(app: Flask) -> Celery:
-    class FlaskTask(Task):
-        def __call__(self, *args: object, **kwargs: object) -> object:
-            with app.app_context():
-                return self.run(*args, **kwargs)
-
-    celery_app = Celery(app.name, task_cls=FlaskTask)
-    celery_app.config_from_object(app.config, namespace="CELERY")
-    celery_app.set_default()
-    app.extensions["celery"] = celery_app
-    return celery_app
+# Initialize Celery
+# The broker and backend are configured in Config, so we don't set them here.
+celery = Celery(__name__, broker=Config.CELERY_BROKER_URL, backend=Config.CELERY_RESULT_BACKEND)
 
 def create_app(config_class=Config):
+    """
+    Application factory function.
+    """
     app = Flask(__name__)
     app.config.from_object(config_class)
 
-    # --- Initialize Flask extensions ---
+    # --- Initialize Flask extensions with the app ---
     db.init_app(app)
     migrate.init_app(app, db)
     login.init_app(app)
-    celery_init_app(app)
+
+    # Update Celery config from the Flask app config
+    celery.conf.update(app.config)
 
     # --- Register Blueprints ---
-    from app.main import bp as main_bp
+    from app.main.routes import bp as main_bp
     app.register_blueprint(main_bp)
+
+    # --- Register Error Handlers & Other App-wide setup ---
+    from app.main import errors
 
     # --- Configure Logging ---
     if not app.debug and not app.testing:
@@ -56,5 +56,5 @@ def create_app(config_class=Config):
 
     return app
 
-# Import models at the bottom to avoid circular dependencies
+# Import models at the end to avoid circular dependencies
 from app import models
