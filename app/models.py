@@ -1,146 +1,114 @@
-import re
-import json
 from datetime import datetime
-from jinja2 import Environment, exceptions
-from flask import url_for
-from app.core_logic.deliverability import DeliverabilityHelper
+from werkzeug.security import generate_password_hash, check_password_hash
+from flask_login import UserMixin
+from itsdangerous import URLSafeTimedSerializer as Serializer
+from flask import current_app
+from app import db, login
+from cryptography.fernet import Fernet
 
-# Common ISP domains to check against for "Company" autograb
-COMMON_ISP_DOMAINS = {
-    "gmail.com", "yahoo.com", "hotmail.com", "aol.com", "outlook.com",
-    "msn.com", "live.com", "icloud.com", "mail.com", "comcast.net",
-    "verizon.net", "att.net", "sbcglobal.net", "cox.net", "yandex.com",
-    "protonmail.com", "zoho.com", "gmx.com", "fastmail.com", "hey.com",
-    "tutanota.com", "riseup.net", "disroot.org"
-}
+@login.user_loader
+def load_user(id):
+    return User.query.get(int(id))
 
-class PersonalizationEngine:
-    def __init__(self, campaign, recipient):
-        self.campaign = campaign
-        self.recipient = recipient
-        self.jinja_env = Environment()
-        self.deliverability_helper = DeliverabilityHelper()
+class User(UserMixin, db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(64), index=True, unique=True)
+    email = db.Column(db.String(120), index=True, unique=True)
+    password_hash = db.Column(db.String(256))
+    campaigns = db.relationship('Campaign', backref='author', lazy='dynamic')
 
-    def _get_context(self):
-        """Builds the full context dictionary for Jinja2 rendering."""
-        # 1. Start with existing recipient data
-        try:
-            context = json.loads(self.recipient.data) if self.recipient.data else {}
-        except:
-            context = {}
-        
-        # Ensure email is in context
-        context['email'] = self.recipient.email
+    def set_password(self, password):
+        self.password_hash = generate_password_hash(password)
 
-        # 2. Autograb Firstname (if missing)
-        if 'firstname' not in context or not context['firstname']:
-            local_part = self.recipient.email.split('@')[0]
-            # Split by common separators
-            potential_parts = re.split(r'[._\-+]+', local_part)
-            # Filter out non-alpha and generic words
-            valid_parts = [p for p in potential_parts if len(p) > 1 and p.isalpha()]
-            generic_words = {'info', 'contact', 'admin', 'support', 'sales', 'mail', 'office', 'hello', 'enquiry'}
-            
-            found_name = None
-            if valid_parts:
-                candidate = valid_parts[0]
-                if candidate.lower() not in generic_words:
-                    found_name = candidate.capitalize()
-            
-            if found_name:
-                context['firstname'] = found_name
-            else:
-                context['firstname'] = "there" # Fallback
+    def check_password(self, password):
+        return check_password_hash(self.password_hash, password)
 
-        # 3. Autograb Company (if missing)
-        if 'company' not in context or not context['company']:
-            domain = self.recipient.email.split('@')[1].lower()
-            if domain in COMMON_ISP_DOMAINS:
-                context['company'] = "you" # Fallback for ISP domains
-            else:
-                # Extract company name from non-ISP domain
-                parts = domain.split('.')
-                # Logic: get second to last part if domain is like .co.uk, else first part
-                company_part = parts[-2] if len(parts) > 2 and len(parts[-2]) > 2 and parts[-2] not in ('co', 'com', 'org', 'net') else parts[0]
-                context['company'] = '-'.join([p.capitalize() for p in company_part.split('-')])
+class SMTPServer(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    profile_name = db.Column(db.String(100), unique=True, nullable=False)
+    server = db.Column(db.String(100), nullable=False)
+    port = db.Column(db.Integer, nullable=False)
+    use_tls = db.Column(db.Boolean, default=True)
+    use_ssl = db.Column(db.Boolean, default=False)
+    username = db.Column(db.String(100), nullable=False)
+    password_encrypted = db.Column(db.String(512), nullable=False)
+    sender_name = db.Column(db.String(100))
+    sender_email = db.Column(db.String(100))
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
 
-        # 4. Dynamic Greetings
-        now = datetime.utcnow() # Web uses UTC typically
-        hour = now.hour
-        if 5 <= hour < 12: base_greeting = "Good morning"
-        elif 12 <= hour < 18: base_greeting = "Good afternoon"
-        else: base_greeting = "Good evening"
-        
-        # Combine greeting with name
-        # If firstname is "there" (fallback), user might prefer just "Good morning" or "Good morning there"
-        # We stick to the script logic:
-        context['greetings'] = f"{base_greeting} {context['firstname']}"
+    def set_password(self, password):
+        key = current_app.config['SECRET_KEY'].encode()
+        f = Fernet(key)
+        self.password_encrypted = f.encrypt(password.encode()).decode()
 
-        # 5. Other fields
-        context['sender_name'] = self.campaign.smtp_profile.sender_name if self.campaign.smtp_profile else "Sender"
-        context['currentdate'] = now.strftime("%B %d, %Y")
-        
-        # 6. Tracking Links
-        # We need external URLs. Note: This requires SERVER_NAME or correct request context in Celery
-        try:
-            unsub_token = self.recipient.get_tracking_token('unsubscribe')
-            context['unsubscribe_link'] = url_for('core_logic.unsubscribe', token=unsub_token, _external=True)
-            
-            open_token = self.recipient.get_tracking_token('open')
-            self.open_pixel_url = url_for('core_logic.track_open', token=open_token, _external=True)
-        except RuntimeError:
-            # Handle cases where app context/URL generation fails in background
-            context['unsubscribe_link'] = "#"
-            self.open_pixel_url = "#"
+    def get_password(self):
+        key = current_app.config['SECRET_KEY'].encode()
+        f = Fernet(key)
+        return f.decrypt(self.password_encrypted.encode()).decode()
+    
+    def to_dict(self):
+        return {
+            'server': self.server,
+            'port': self.port,
+            'username': self.username,
+            'password': self.get_password(),
+            'sender_name': self.sender_name,
+            'sender_email': self.sender_email,
+            'use_tls': self.use_tls,
+            'use_ssl': self.use_ssl
+        }
 
-        return context
+class Campaign(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(140))
+    subject = db.Column(db.String(140))
+    body = db.Column(db.Text)
+    timestamp = db.Column(db.DateTime, index=True, default=datetime.utcnow)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    
+    # Relationships
+    smtp_profile_id = db.Column(db.Integer, db.ForeignKey('smtp_server.id'))
+    smtp_profile = db.relationship('SMTPServer', backref='campaigns')
+    recipients = db.relationship('Recipient', backref='campaign', lazy='dynamic', cascade="all, delete-orphan")
+    attachments = db.relationship('Attachment', backref='campaign', lazy='dynamic', cascade="all, delete-orphan")
 
-    def _replace_links_for_tracking(self, html_content):
-        """Replaces hrefs with tracking redirects."""
-        def replace_link(match):
-            original_url = match.group(2)
-            # Skip unsubscribe, mailto, anchor links, or already tracked links
-            if any(x in original_url for x in ['unsubscribe', 'mailto:', '#', '/track/']):
-                return match.group(0)
-            
-            try:
-                # Payload ensures we know where to redirect even if DB is slow
-                click_token = self.recipient.get_tracking_token('click', payload={'url': original_url})
-                tracked_url = url_for('core_logic.track_click', token=click_token, _external=True)
-                return f'{match.group(1)}="{tracked_url}"'
-            except:
-                return match.group(0)
+    # Status & Control
+    # Status options: 'Draft', 'Queued', 'Running', 'Paused', 'Stopped', 'Completed'
+    status = db.Column(db.String(20), default='Draft') 
+    
+    # Throttling & Performance Settings
+    parallel_workers = db.Column(db.Integer, default=1) # Standard Threading
+    throttle_amount = db.Column(db.Integer, default=0) # Emails per batch
+    throttle_interval = db.Column(db.Integer, default=0) # Seconds to wait
 
-        return re.sub(r'(href\s*=\s*)(["\'](https?://[^"\']+)["\'])', replace_link, html_content, flags=re.IGNORECASE)
+class Attachment(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    filename = db.Column(db.String(255), nullable=False)
+    file_path = db.Column(db.String(512), nullable=False) # Server path
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'))
 
-    def personalize(self):
-        context = self._get_context()
+class Recipient(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    email = db.Column(db.String(120), index=True)
+    # Status options: 'Queued', 'Sending', 'Sent', 'Failed', 'Opened', 'Clicked', 'Unsubscribed'
+    status = db.Column(db.String(20), default='Queued')
+    status_message = db.Column(db.String(200))
+    data = db.Column(db.Text) # JSON string for personalization data (firstname, company, etc.)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'))
+    sent_at = db.Column(db.DateTime, nullable=True)
+    opened_at = db.Column(db.DateTime, nullable=True)
+    clicked_at = db.Column(db.DateTime, nullable=True)
+    unsubscribed_at = db.Column(db.DateTime, nullable=True)
 
-        # 1. Spintax
-        spun_subject = self.deliverability_helper.spin(self.campaign.subject)
-        spun_body = self.deliverability_helper.spin(self.campaign.body)
+    def get_tracking_token(self, action, payload=None):
+        s = Serializer(current_app.config['SECRET_KEY'])
+        data = {'action': action, 'recipient_id': self.id}
+        if payload:
+            data.update(payload)
+        return s.dumps(data, salt=action)
 
-        # 2. Jinja2 Rendering
-        # Replace [tag] style with {{ tag }} style first for compatibility
-        spun_subject = re.sub(r'\[([a-zA-Z0-9_]+)\]', r'{{ \1 }}', spun_subject)
-        spun_body = re.sub(r'\[([a-zA-Z0-9_]+)\]', r'{{ \1 }}', spun_body)
-
-        try:
-            final_subject = self.jinja_env.from_string(spun_subject).render(context)
-            final_body = self.jinja_env.from_string(spun_body).render(context)
-        except exceptions.TemplateError:
-            # Fallback if template syntax is wrong
-            final_subject = spun_subject
-            final_body = spun_body
-
-        # 3. Tracking
-        final_body = self._replace_links_for_tracking(final_body)
-        
-        # Add pixel
-        pixel_img = f'<img src="{self.open_pixel_url}" width="1" height="1" alt="" style="display:none;"/>'
-        if '</body>' in final_body.lower():
-            final_body = final_body.replace('</body>', f'{pixel_img}</body>')
-        else:
-            final_body += pixel_img
-
-        return final_subject, final_body
+class Suppression(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    email = db.Column(db.String(120), unique=True, index=True)
+    reason = db.Column(db.String(100))
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
