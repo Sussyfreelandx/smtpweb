@@ -1,6 +1,9 @@
 from flask import Blueprint
 
-bp = Blueprint('main', __name__, template_folder='templates')
+# Create the blueprint object for the 'main' part of your app.
+bp = Blueprint('main', __name__)
 
-# Import routes at the end to avoid circular dependencies
+# DO NOT IMPORT ROUTES HERE. This is the crucial change.
+# We will import the routes at the bottom of this file.
+
 from app.main import routes
