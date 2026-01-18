@@ -7,21 +7,18 @@ databases:
   - name: paris-sender-db
     databaseName: paris_sender_db
     user: paris_sender_user
-    plan: free # Use a paid plan for production apps
 
 services:
   # A Redis instance for our Celery message broker
   - type: redis
     name: paris-sender-redis
-    plan: free # Use a paid plan for production
     ipAllowList: [] # Allows connections from anywhere, secure this in production
 
   # The main Flask web server
   - type: web
     name: paris-sender-web
     env: python
-    pythonVersion: "3.11" # ADD THIS LINE
-    plan: free
+    pythonVersion: "3.11" # This forces Render to use Python 3.11
     buildCommand: |
       pip install -r requirements.txt
       flask db upgrade
@@ -47,8 +44,7 @@ services:
   - type: worker
     name: paris-sender-worker
     env: python
-    pythonVersion: "3.11" # ADD THIS LINE
-    plan: free
+    pythonVersion: "3.11" # This forces Render to use Python 3.11
     buildCommand: pip install -r requirements.txt
     startCommand: celery -A wsgi.celery worker --loglevel=info
     envVars:
