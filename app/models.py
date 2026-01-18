@@ -34,26 +34,15 @@ class SMTPServer(db.Model):
     password_encrypted = db.Column(db.String(512), nullable=False)
     sender_name = db.Column(db.String(100))
     sender_email = db.Column(db.String(100))
-    # New fields for performance
-    parallel_workers = db.Column(db.Integer, default=1)
-    
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
 
     def set_password(self, password):
         key = current_app.config['SECRET_KEY'].encode()
-        # Ensure key is valid length for Fernet (32 url-safe base64-encoded bytes)
-        if len(key) < 32:
-            # Pad or stretch if necessary for dev, but ideally generated correctly
-            import base64
-            key = base64.urlsafe_b64encode(key.ljust(32, b'x')[:32])
         f = Fernet(key)
         self.password_encrypted = f.encrypt(password.encode()).decode()
 
     def get_password(self):
         key = current_app.config['SECRET_KEY'].encode()
-        if len(key) < 32:
-            import base64
-            key = base64.urlsafe_b64encode(key.ljust(32, b'x')[:32])
         f = Fernet(key)
         return f.decrypt(self.password_encrypted.encode()).decode()
     
@@ -75,12 +64,12 @@ class Campaign(db.Model):
     subject = db.Column(db.String(140))
     body = db.Column(db.Text)
     timestamp = db.Column(db.DateTime, index=True, default=datetime.utcnow)
-    status = db.Column(db.String(20), default='Draft') # Draft, Running, Paused, Completed, Stopped
+    status = db.Column(db.String(20), default='Draft')  # Draft, Sending, Completed, Paused
     
-    # Throttling Settings
-    throttle_amount = db.Column(db.Integer, default=20)
-    throttle_delay = db.Column(db.Integer, default=1) # Value
-    throttle_unit = db.Column(db.String(10), default='Minutes') # Seconds, Minutes
+    # New Configuration Fields matching Paris Sender
+    throttle_amount = db.Column(db.Integer, default=20) # Emails per batch
+    throttle_delay = db.Column(db.Integer, default=60)  # Seconds delay between batches
+    parallel_workers = db.Column(db.Integer, default=1) # Concurrent workers
     
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
     smtp_profile_id = db.Column(db.Integer, db.ForeignKey('smtp_server.id'))
@@ -90,7 +79,7 @@ class Campaign(db.Model):
 class Recipient(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(120), index=True)
-    data = db.Column(db.Text) # JSON string for extra fields (firstname, company, etc.)
+    data = db.Column(db.Text) # JSON string for personalization data (firstname, company, etc)
     status = db.Column(db.String(20), default='Queued')
     status_message = db.Column(db.String(200))
     campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'))
@@ -99,7 +88,7 @@ class Recipient(db.Model):
     clicked_at = db.Column(db.DateTime, nullable=True)
     unsubscribed_at = db.Column(db.DateTime, nullable=True)
 
-    def get_tracking_token(self, action, expires_in=None, payload=None):
+    def get_tracking_token(self, action, payload=None, expires_in=None):
         s = Serializer(current_app.config['SECRET_KEY'])
         data = {'action': action, 'recipient_id': self.id}
         if payload:
