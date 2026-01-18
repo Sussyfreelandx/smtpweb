@@ -1,130 +1,125 @@
 import asyncio
 import json
-import random
+import re
 from datetime import datetime
-from celery import shared_task
-from app import db
-from app.models import Campaign, Recipient, SmtpProfile
+
+from app import celery, db, create_app
+from app.models import Campaign, Recipient
 from app.main.smtp_handler import SMTPHandler
-from app.main.personalization import personalize_content
-from app.main.deliverability import DeliverabilityHelper
+from jinja2 import Environment, exceptions as jinja_exceptions
 
-# --- Campaign Sending Tasks ---
+# This helper function allows tasks to have an application context
+def with_app_context(f):
+    def wrapper(*args, **kwargs):
+        app = create_app()
+        with app.app_context():
+            return f(*args, **kwargs)
+    return wrapper
 
-@shared_task(bind=True)
+@celery.task(bind=True)
+@with_app_context
 def send_campaign_task(self, campaign_id):
-    """
-    Celery task to send a whole campaign by queuing individual email tasks.
-    """
+    """Celery task to send a whole campaign."""
     campaign = Campaign.query.get(campaign_id)
     if not campaign:
-        return {'status': 'Error', 'message': 'Campaign not found.'}
-
-    # Get all valid SMTP profiles for rotation
-    profile_ids = [int(pid) for pid in campaign.smtp_profile_ids.split(',') if pid]
-    smtp_profiles = SmtpProfile.query.filter(SmtpProfile.id.in_(profile_ids)).all()
-    if not smtp_profiles:
-        # TODO: Mark campaign as failed
-        return {'status': 'Error', 'message': 'No valid SMTP profiles configured for this campaign.'}
-    
-    # Get recipients that are ready to be sent
-    recipients = campaign.recipients.filter(Recipient.status.in_(['Queued', 'Failed'])).all()
-
-    # Create a rotating list of SMTP profile dicts
-    smtp_configs = [
-        {
-            'id': p.id, 'server': p.server, 'port': p.port, 'username': p.username,
-            'password': p.password, 'sender_name': p.sender_name, 'sender_email': p.sender_email,
-            'use_tls': p.use_tls, 'use_ssl': p.use_ssl
-        } for p in smtp_profiles
-    ]
-    
-    for i, recipient in enumerate(recipients):
-        # Rotate through the SMTP configs for each recipient
-        smtp_config_to_use = smtp_configs[i % len(smtp_configs)]
-        
-        # Send each email as its own task for better concurrency
-        send_single_email_task.delay(recipient.id, campaign.id, smtp_config_to_use)
-        
-    return {'status': 'Success', 'message': f'Queued {len(recipients)} emails for sending.'}
-
-@shared_task(bind=True, autoretry_for=(Exception,), retry_kwargs={'max_retries': 3, 'countdown': 60})
-def send_single_email_task(self, recipient_id, campaign_id, smtp_config):
-    """
-    Celery task that sends one email, handling A/B testing and personalization.
-    """
-    recipient = Recipient.query.get(recipient_id)
-    campaign = Campaign.query.get(campaign_id)
-    if not recipient or not campaign or recipient.status not in ['Queued', 'Failed', 'Sending']:
         return
+
+    recipient_ids = [r.id for r in campaign.recipients.filter(Recipient.status.in_(['Queued', 'Failed']))]
+
+    for recipient_id in recipient_ids:
+        send_single_email_task.delay(recipient_id)
+
+@celery.task(bind=True, autoretry_for=(Exception,), retry_kwargs={'max_retries': 3, 'countdown': 60})
+@with_app_context
+def send_single_email_task(self, recipient_id):
+    """Celery task that sends one email, with retry logic."""
+    recipient = Recipient.query.get(recipient_id)
+    if not recipient or recipient.status not in ['Queued', 'Failed']:
+        return
+
+    campaign = recipient.campaign
+    
+    recipient.status = 'Sending'
+    db.session.commit()
+
+    smtp_config = {
+        'server': campaign.smtp_server, 'port': campaign.smtp_port,
+        'username': campaign.smtp_username, 'password': campaign.smtp_password,
+        'sender_name': campaign.smtp_sender_name, 'sender_email': campaign.smtp_sender_email,
+        'use_tls': True, 'use_ssl': (campaign.smtp_port == 465)
+    }
+    
+    smtp_handler = SMTPHandler(smtp_config)
+    
+    # --- Personalization Logic (ported from desktop app) ---
+    jinja_env = Environment()
+
+    def personalize_content(email, subject, content, recipient_data):
+        context = {k.lower(): v for k, v in recipient_data.items()}
+        now = datetime.now()
         
-    try:
-        # Mark as 'Sending'
-        recipient.status = 'Sending'
-        db.session.commit()
-
-        # --- A/B Testing Logic ---
-        use_version_b = False
-        if campaign.is_ab_test:
-            # Use a simple hash of the email address for consistent A/B splitting
-            if (hash(recipient.email) % 100) >= campaign.ab_split_ratio:
-                use_version_b = True
-
-        subject = campaign.subject_b if use_version_b else campaign.subject_a
-        body_html = campaign.body_html_b if use_version_b else campaign.body_html_a
-        recipient.version_sent = 'B' if use_version_b else 'A'
+        # Autograb Firstname
+        found_name = context.get('firstname')
+        if not found_name:
+            local_part = email.split('@')[0]
+            potential_parts = re.split(r'[._\-+]+', local_part)
+            valid_parts = [p for p in potential_parts if len(p) > 1 and p.isalpha()]
+            generic_words = {'info', 'contact', 'admin', 'support', 'sales', 'mail'}
+            if valid_parts and valid_parts[0].lower() not in generic_words:
+                found_name = valid_parts[0].capitalize()
+                context['firstname'] = found_name
         
-        # --- Personalization & Content Processing ---
-        helper = DeliverabilityHelper()
-        spun_subject = helper.spin(subject)
-        spun_body = helper.spin(body_html)
-
-        # Load recipient's data for personalization
-        recipient_data = json.loads(recipient.data) if recipient.data else {}
-
-        # Get personalized content
-        final_subject, final_body, _ = personalize_content(
-            email=recipient.email,
-            subject=spun_subject,
-            content=spun_body,
-            recipient_data=recipient_data,
-            smtp_sender_name=smtp_config['sender_name']
-        )
+        # Greetings
+        hour = now.hour
+        if 5 <= hour < 12: base_greeting = "Good morning"
+        elif 12 <= hour < 18: base_greeting = "Good afternoon"
+        else: base_greeting = "Good evening"
+        context['greetings'] = f"{base_greeting} {found_name}" if found_name else base_greeting
+        context.setdefault('firstname', 'there')
         
-        # --- SMTP Sending ---
-        smtp_handler = SMTPHandler(smtp_config)
+        # Autograb Company
+        if 'company' not in context:
+            domain = email.split('@')[1].lower()
+            common_isp_domains = {"gmail.com", "yahoo.com", "hotmail.com", "outlook.com"}
+            if domain in common_isp_domains:
+                context['company'] = "your team"
+            else:
+                company_part = domain.split('.')[0]
+                context['company'] = company_part.capitalize()
         
-        # Use asyncio.run to execute the async function in the synchronous Celery worker
-        success, message = asyncio.run(smtp_handler.send_email_async(
-            to_email=recipient.email,
-            subject=final_subject,
-            html_content=final_body
-            # TODO: Add unsubscribe and tracking URLs
-        ))
+        # Other dynamic fields
+        context['sender_name'] = campaign.smtp_sender_name
+        context['currentdate'] = now.strftime("%B %d, %Y")
+        
+        # TODO: Implement tracking and unsubscribe URLs
+        context['unsubscribe_link'] = "#"
 
-        # --- Update Recipient Status ---
-        if success:
-            recipient.status = 'Sent'
-            recipient.sent_at = datetime.utcnow()
-            recipient.status_message = None
-        else:
-            recipient.status = 'Failed'
-            recipient.status_message = message[:250] # Truncate message if too long
+        try:
+            subject_template = jinja_env.from_string(subject)
+            personalized_subject = subject_template.render(context)
+            content_template = jinja_env.from_string(content)
+            personalized_content = content_template.render(context)
+            return personalized_subject, personalized_content
+        except jinja_exceptions.TemplateError as e:
+            # Fallback if template is invalid
+            return subject, content
+    # --- End Personalization ---
 
-    except Exception as e:
+    recipient_data = recipient.get_data()
+    p_subject, p_body = personalize_content(recipient.email, campaign.subject, campaign.body_html, recipient_data)
+    
+    # Use asyncio.run to execute the async send function
+    success, message = asyncio.run(smtp_handler.send_email_async(
+        to_email=recipient.email,
+        subject=p_subject,
+        html_content=p_body
+    ))
+
+    if success:
+        recipient.status = 'Sent'
+        recipient.sent_at = datetime.utcnow()
+    else:
         recipient.status = 'Failed'
-        recipient.status_message = f"Critical Error: {str(e)[:150]}"
-        raise self.retry(exc=e) # Retry the task on failure
-    finally:
-        db.session.commit()
+        recipient.status_message = message
 
-
-# --- Utility Tasks ---
-
-@shared_task(bind=True)
-def test_smtp_task(self, smtp_config):
-    """Celery task to test an SMTP connection without blocking the web server."""
-    self.update_state(state='PROGRESS', meta={'status': 'Testing...', 'result': ''})
-    handler = SMTPHandler(smtp_config)
-    success, message = handler.test_connection()
-    return {'status': 'Complete', 'result': 'success' if success else 'failed', 'message': message}
+    db.session.commit()
