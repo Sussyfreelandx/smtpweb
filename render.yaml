@@ -18,7 +18,8 @@ services:
   - type: web
     name: paris-sender-web
     env: python
-    pythonVersion: "3.11" # This forces Render to use Python 3.11
+    plan: starter # Or whatever your current paid plan is
+    pythonVersion: '3.11' # Explicitly setting Python version as a string
     buildCommand: |
       pip install -r requirements.txt
       flask db upgrade
@@ -44,7 +45,8 @@ services:
   - type: worker
     name: paris-sender-worker
     env: python
-    pythonVersion: "3.11" # This forces Render to use Python 3.11
+    plan: starter # Or whatever your current paid plan is
+    pythonVersion: '3.11' # Explicitly setting Python version as a string
     buildCommand: pip install -r requirements.txt
     startCommand: celery -A wsgi.celery worker --loglevel=info
     envVars:
