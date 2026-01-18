@@ -34,17 +34,39 @@ class SMTPServer(db.Model):
     password_encrypted = db.Column(db.String(512), nullable=False)
     sender_name = db.Column(db.String(100))
     sender_email = db.Column(db.String(100))
+    # NEW: Parallel workers setting
+    parallel_workers = db.Column(db.Integer, default=1)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
 
     def set_password(self, password):
-        key = current_app.config['SECRET_KEY'].encode()
-        f = Fernet(key)
+        # Ensure we have a string for the key
+        key = current_app.config['SECRET_KEY']
+        if not key:
+            raise ValueError("SECRET_KEY is missing in config.")
+        # Fernet requires a 32-byte base64 encoded key. 
+        # If SECRET_KEY isn't compliant, we hash it to make it safe.
+        import base64
+        import hashlib
+        key_bytes = hashlib.sha256(key.encode()).digest()
+        safe_key = base64.urlsafe_b64encode(key_bytes)
+        
+        f = Fernet(safe_key)
         self.password_encrypted = f.encrypt(password.encode()).decode()
 
     def get_password(self):
-        key = current_app.config['SECRET_KEY'].encode()
-        f = Fernet(key)
-        return f.decrypt(self.password_encrypted.encode()).decode()
+        key = current_app.config['SECRET_KEY']
+        if not key:
+            return None
+        import base64
+        import hashlib
+        key_bytes = hashlib.sha256(key.encode()).digest()
+        safe_key = base64.urlsafe_b64encode(key_bytes)
+        
+        f = Fernet(safe_key)
+        try:
+            return f.decrypt(self.password_encrypted.encode()).decode()
+        except:
+            return None
     
     def to_dict(self):
         return {
@@ -55,7 +77,8 @@ class SMTPServer(db.Model):
             'sender_name': self.sender_name,
             'sender_email': self.sender_email,
             'use_tls': self.use_tls,
-            'use_ssl': self.use_ssl
+            'use_ssl': self.use_ssl,
+            'parallel_workers': self.parallel_workers
         }
 
 class Campaign(db.Model):
@@ -64,36 +87,23 @@ class Campaign(db.Model):
     subject = db.Column(db.String(140))
     body = db.Column(db.Text)
     timestamp = db.Column(db.DateTime, index=True, default=datetime.utcnow)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    status = db.Column(db.String(20), default='Draft') # Draft, Sending, Completed, Paused
     
-    # Relationships
+    # NEW: Throttling settings
+    throttle_amount = db.Column(db.Integer, default=0) # 0 means disabled
+    throttle_delay = db.Column(db.Integer, default=0) # in seconds
+    
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
     smtp_profile_id = db.Column(db.Integer, db.ForeignKey('smtp_server.id'))
     smtp_profile = db.relationship('SMTPServer', backref='campaigns')
     recipients = db.relationship('Recipient', backref='campaign', lazy='dynamic', cascade="all, delete-orphan")
-    attachments = db.relationship('Attachment', backref='campaign', lazy='dynamic', cascade="all, delete-orphan")
-
-    # Status & Control
-    # Status options: 'Draft', 'Queued', 'Running', 'Paused', 'Stopped', 'Completed'
-    status = db.Column(db.String(20), default='Draft') 
-    
-    # Throttling & Performance Settings
-    parallel_workers = db.Column(db.Integer, default=1) # Standard Threading
-    throttle_amount = db.Column(db.Integer, default=0) # Emails per batch
-    throttle_interval = db.Column(db.Integer, default=0) # Seconds to wait
-
-class Attachment(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    filename = db.Column(db.String(255), nullable=False)
-    file_path = db.Column(db.String(512), nullable=False) # Server path
-    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'))
 
 class Recipient(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(120), index=True)
-    # Status options: 'Queued', 'Sending', 'Sent', 'Failed', 'Opened', 'Clicked', 'Unsubscribed'
+    data = db.Column(db.Text) # JSON string for personalization data (firstname, company, etc)
     status = db.Column(db.String(20), default='Queued')
     status_message = db.Column(db.String(200))
-    data = db.Column(db.Text) # JSON string for personalization data (firstname, company, etc.)
     campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'))
     sent_at = db.Column(db.DateTime, nullable=True)
     opened_at = db.Column(db.DateTime, nullable=True)
@@ -105,7 +115,7 @@ class Recipient(db.Model):
         data = {'action': action, 'recipient_id': self.id}
         if payload:
             data.update(payload)
-        return s.dumps(data, salt=action)
+        return s.dumps(data)
 
 class Suppression(db.Model):
     id = db.Column(db.Integer, primary_key=True)
