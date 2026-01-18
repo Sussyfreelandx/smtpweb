@@ -5,18 +5,27 @@ from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_login import LoginManager
-from celery import Celery
+from celery import Celery, Task
 from config import Config
 
 # Initialize extensions
 db = SQLAlchemy()
 migrate = Migrate()
 login = LoginManager()
-login.login_view = 'main.login' # Tells Flask-Login which page to redirect to for login
+login.login_view = 'main.login'
 login.login_message = 'Please log in to access this page.'
 
-# Initialize Celery
-celery = Celery(__name__, broker=Config.CELERY_BROKER_URL)
+def celery_init_app(app: Flask) -> Celery:
+    class FlaskTask(Task):
+        def __call__(self, *args: object, **kwargs: object) -> object:
+            with app.app_context():
+                return self.run(*args, **kwargs)
+
+    celery_app = Celery(app.name, task_cls=FlaskTask)
+    celery_app.config_from_object(app.config, namespace="CELERY")
+    celery_app.set_default()
+    app.extensions["celery"] = celery_app
+    return celery_app
 
 def create_app(config_class=Config):
     app = Flask(__name__)
@@ -26,18 +35,11 @@ def create_app(config_class=Config):
     db.init_app(app)
     migrate.init_app(app, db)
     login.init_app(app)
-
-    # Update Celery config from Flask config
-    celery.conf.update(app.config)
+    celery_init_app(app)
 
     # --- Register Blueprints ---
-    from app.main.routes import bp as main_bp
+    from app.main import bp as main_bp
     app.register_blueprint(main_bp)
-    
-    # A blueprint for core logic that doesn't need a URL prefix
-    from app.core_logic import bp as core_logic_bp
-    app.register_blueprint(core_logic_bp)
-
 
     # --- Configure Logging ---
     if not app.debug and not app.testing:
@@ -53,3 +55,6 @@ def create_app(config_class=Config):
         app.logger.info('Paris Sender Web startup')
 
     return app
+
+# Import models at the bottom to avoid circular dependencies
+from app import models
