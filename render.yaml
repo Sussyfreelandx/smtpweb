@@ -1,11 +1,14 @@
 # render.yaml
 # This configuration tells Render how to build and run the services.
-services:
+
+databases:
   # A PostgreSQL database for storing users, campaigns, etc.
-  - type: psql
-    name: paris-sender-db
+  - name: paris-sender-db
+    databaseName: paris_sender_db
+    user: paris_sender_user
     plan: free # Use a paid plan for production apps
 
+services:
   # A Redis instance for our Celery message broker
   - type: redis
     name: paris-sender-redis
