@@ -1,8 +1,4 @@
-from app import create_app, db, celery
-from app.models import User, Campaign, Recipient
+# This file is used by Gunicorn to run the application.
+from app import create_app, celery
 
 app = create_app()
-
-@app.shell_context_processor
-def make_shell_context():
-    return {'db': db, 'User': User, 'Campaign': Campaign, 'Recipient': Recipient, 'celery': celery}
