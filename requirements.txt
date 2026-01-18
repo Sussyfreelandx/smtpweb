@@ -6,7 +6,6 @@ Flask-Migrate
 Flask-Login
 python-dotenv
 Werkzeug
-cryptography
 
 # Core Logic & Email
 # aiosmtp has been removed
