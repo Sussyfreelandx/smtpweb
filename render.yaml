@@ -1,25 +1,25 @@
 # This configuration tells Render how to build and run your services.
-# It defines a PostgreSQL database, a Redis instance, a web server, and a worker.
-
 databases:
-  # A PostgreSQL database for storing users, campaigns, etc.
   - name: paris-sender-db
     databaseName: paris_sender_db
     user: paris_sender_user
 
 services:
-  # A Redis instance for our Celery message broker
   - type: redis
     name: paris-sender-redis
-    ipAllowList: [] # Allows connections from anywhere, secure this in production
+    ipAllowList: []
 
-  # The main Flask web server
   - type: web
     name: paris-sender-web
-    env: python # Explicitly define environment for this service
-    pythonVersion: "3.11" # Force Python 3.11
+    env: python
+    pythonVersion: "3.11"
     buildCommand: |
       pip install -r requirements.txt
+      # Initialize migrations if folder is missing, then migrate and upgrade
+      if [ ! -d "migrations" ]; then
+        flask db init
+        flask db migrate -m "Initial migration"
+      fi
       flask db upgrade
     startCommand: gunicorn wsgi:app
     envVars:
@@ -39,11 +39,10 @@ services:
       - key: FLASK_DEBUG
         value: "0"
 
-  # The Celery background worker for sending emails
   - type: worker
     name: paris-sender-worker
-    env: python # Explicitly define environment for this service
-    pythonVersion: "3.11" # Force Python 3.11
+    env: python
+    pythonVersion: "3.11"
     buildCommand: pip install -r requirements.txt
     startCommand: celery -A wsgi.celery worker --loglevel=info
     envVars:
