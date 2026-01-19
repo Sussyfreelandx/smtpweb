@@ -1,28 +1,19 @@
-# Flask and Web Server
 Flask>=2.0
 gunicorn
 Flask-SQLAlchemy
 Flask-Migrate
 Flask-Login
+Flask-WTF
 python-dotenv
 Werkzeug
-
-# Core Logic & Email
 css_inline
 dnspython
 Jinja2
 pypdf2
 requests
 itsdangerous
-
-# Background Jobs
 Celery
 redis
-
-# Database Driver & Encryption
 psycopg2-binary
 cryptography
-
-# Forms & Validation (NEW - Required for Settings pages)
-Flask-WTF
 email-validator
