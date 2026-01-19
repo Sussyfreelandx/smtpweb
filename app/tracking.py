@@ -29,7 +29,7 @@ def track_open(campaign_id, recipient_id):
     return response
 
 
-@bp. route('/t/c/<int:campaign_id>/<int: recipient_id>')
+@bp.route('/t/c/<int:campaign_id>/<int:recipient_id>')
 def track_click(campaign_id, recipient_id):
     redirect_url = "#"
     try:
