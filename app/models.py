@@ -8,15 +8,17 @@ from cryptography.fernet import Fernet
 import base64
 import hashlib
 
+
 @login.user_loader
 def load_user(id):
-    return User.query. get(int(id))
+    return User.query.get(int(id))
 
-class User(UserMixin, db. Model):
-    id = db.Column(db.Integer, primary_key=True)
+
+class User(UserMixin, db.Model):
+    id = db.Column(db. Integer, primary_key=True)
     username = db.Column(db.String(64), index=True, unique=True)
     email = db.Column(db.String(120), index=True, unique=True)
-    password_hash = db. Column(db.String(256))
+    password_hash = db.Column(db.String(256))
     campaigns = db.relationship('Campaign', backref='author', lazy='dynamic')
 
     def set_password(self, password):
@@ -24,6 +26,7 @@ class User(UserMixin, db. Model):
 
     def check_password(self, password):
         return check_password_hash(self. password_hash, password)
+
 
 class SMTPServer(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -65,7 +68,7 @@ class SMTPServer(db.Model):
         try: 
             key = self._get_fernet_key()
             f = Fernet(key)
-            return f.decrypt(self.password_encrypted.encode()).decode()
+            return f.decrypt(self.password_encrypted. encode()).decode()
         except Exception: 
             return None
     
@@ -96,19 +99,20 @@ class SMTPServer(db.Model):
             'username': self.username,
             'password': self.get_password(),
             'sender_name': self.sender_name,
-            'sender_email': self.sender_email,
-            'use_tls': self.use_tls,
+            'sender_email':  self.sender_email,
+            'use_tls': self. use_tls,
             'use_ssl': self.use_ssl
         }
 
-class Campaign(db. Model):
+
+class Campaign(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(140))
     subject = db.Column(db.String(255))
     body_html = db.Column(db. Text)
     body_plain = db.Column(db.Text)
     
-    ab_testing_enabled = db.Column(db.Boolean, default=False)
+    ab_testing_enabled = db.Column(db. Boolean, default=False)
     subject_b = db.Column(db.String(255))
     body_b = db.Column(db.Text)
     ab_split_ratio = db.Column(db.Integer, default=50)
@@ -130,6 +134,7 @@ class Campaign(db. Model):
     
     recipients = db.relationship('Recipient', backref='campaign', lazy='dynamic', cascade="all, delete-orphan")
 
+
 class Recipient(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(120), index=True)
@@ -149,14 +154,16 @@ class Recipient(db.Model):
             data.update(payload)
         return s.dumps(data, salt='track')
 
+
 class Suppression(db.Model):
     id = db.Column(db. Integer, primary_key=True)
     email = db.Column(db.String(120), unique=True, index=True)
     reason = db.Column(db.String(100))
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
 
+
 class GlobalSettings(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     burner_domain = db.Column(db.String(150))
     lure_path = db.Column(db.String(100))
-    template_pdf_path = db.Column(db.String(255))
+    template_pdf_path = db.Column(db. String(255))
