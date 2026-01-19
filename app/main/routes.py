@@ -76,26 +76,48 @@ def new_campaign():
             
             file = request.files.get('recipients_file')
             if file:
-                # CRITICAL FIX: Use utf-8-sig to handle Excel BOM
+                # Use utf-8-sig to handle Excel BOM
                 stream = io.StringIO(file.stream.read().decode("utf-8-sig"), newline=None)
                 csv_reader = csv.DictReader(stream)
-                # Normalize headers
-                csv_reader.fieldnames = [f.lower().strip() for f in csv_reader.fieldnames]
                 
                 count = 0
                 for row in csv_reader:
-                    if 'email' in row and row['email']:
-                        email = row['email'].strip().lower()
+                    # --- SMART CSV NORMALIZATION START ---
+                    # This ensures 'Autograb' works even if the CSV has weird headers like "F. Name" or "Company Name"
+                    clean_row = {}
+                    for k, v in row.items():
+                        if not k: continue # Skip empty headers
+                        # Clean key: remove spaces, underscores, lowercase
+                        key = k.lower().strip().replace(' ', '').replace('_', '').replace('.', '')
+                        
+                        # Map common variations to standard keys needed for Autograb
+                        if key in ['firstname', 'fname', 'first', 'name', 'givenname']: 
+                            clean_row['firstname'] = v
+                        elif key in ['lastname', 'lname', 'last', 'surname']: 
+                            clean_row['lastname'] = v
+                        elif key in ['company', 'companyname', 'business', 'org', 'organization']: 
+                            clean_row['company'] = v
+                        elif key == 'email':
+                            clean_row['email'] = v
+                        else: 
+                            clean_row[k] = v # Keep other specific columns as-is
+                    # --- SMART CSV NORMALIZATION END ---
+
+                    if 'email' in clean_row and clean_row['email']:
+                        email = clean_row['email'].strip().lower()
                         is_suppressed = Suppression.query.filter_by(email=email).first()
+                        
                         recipient = Recipient(
                             email=email, 
                             campaign_id=campaign.id,
-                            data=json.dumps(row),
+                            # Store the NORMALIZED data so personalization engine can find 'firstname' easily
+                            data=json.dumps(clean_row),
                             status='Suppressed' if is_suppressed else 'Queued',
                             status_message='Suppressed by global list' if is_suppressed else None
                         )
                         db.session.add(recipient)
                         count += 1
+                
                 log_activity(f"Campaign '{campaign.name}' created with {count} recipients.", "SUCCESS")
                 flash(f"Loaded {count} recipients.", "info")
             
@@ -122,9 +144,12 @@ def add_recipient_manual(campaign_id):
         return jsonify({'success': False, 'message': 'Email already in list'})
         
     is_suppressed = Suppression.query.filter_by(email=email).first()
+    # For manual add, we create a basic JSON with just the email
+    data_payload = {'email': email, 'firstname': '', 'company': ''} 
+    
     recipient = Recipient(
         email=email, campaign_id=campaign.id,
-        data=json.dumps({'email': email}), 
+        data=json.dumps(data_payload), 
         status='Suppressed' if is_suppressed else 'Queued',
         status_message='Suppressed' if is_suppressed else None
     )
