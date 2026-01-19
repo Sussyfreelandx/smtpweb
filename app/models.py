@@ -39,13 +39,11 @@ class SMTPServer(db.Model):
     password_encrypted = db.Column(db.String(512), nullable=True)
     sender_name = db.Column(db.String(100))
     sender_email = db. Column(db.String(100))
-    
     imap_server = db.Column(db.String(100))
     imap_port = db.Column(db.Integer, default=993)
     imap_username = db.Column(db.String(100))
     imap_password_encrypted = db.Column(db. String(512))
-    
-    user_id = db.Column(db. Integer, db.ForeignKey('user.id'))
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
 
     def _get_fernet_key(self):
         secret = current_app.config['SECRET_KEY']
@@ -71,7 +69,7 @@ class SMTPServer(db.Model):
             return f.decrypt(self.password_encrypted. encode()).decode()
         except Exception: 
             return None
-    
+
     def set_imap_password(self, password):
         if not password:
             return
@@ -91,7 +89,7 @@ class SMTPServer(db.Model):
             return f. decrypt(self.imap_password_encrypted.encode()).decode()
         except Exception:
             return None
-    
+
     def to_dict(self):
         return {
             'server': self.server,
@@ -100,38 +98,31 @@ class SMTPServer(db.Model):
             'password': self.get_password(),
             'sender_name': self.sender_name,
             'sender_email':  self.sender_email,
-            'use_tls': self. use_tls,
+            'use_tls': self.use_tls,
             'use_ssl': self.use_ssl
         }
 
 
-class Campaign(db.Model):
+class Campaign(db. Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(140))
     subject = db.Column(db.String(255))
-    body_html = db.Column(db. Text)
+    body_html = db.Column(db.Text)
     body_plain = db.Column(db.Text)
-    
     ab_testing_enabled = db.Column(db. Boolean, default=False)
     subject_b = db.Column(db.String(255))
     body_b = db.Column(db.Text)
     ab_split_ratio = db.Column(db.Integer, default=50)
-    
     burner_domain = db.Column(db.String(100))
     lure_path = db.Column(db.String(100))
-    
     throttle_amount = db.Column(db.Integer, default=20)
     throttle_delay = db.Column(db.Integer, default=60)
     parallel_workers = db.Column(db.Integer, default=10)
-    
     status = db.Column(db.String(20), default='Draft')
-    
     timestamp = db.Column(db.DateTime, index=True, default=datetime.utcnow)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
-    
-    smtp_profile_id = db.Column(db. Integer, db.ForeignKey('smtp_server.id'))
+    user_id = db.Column(db. Integer, db.ForeignKey('user.id'))
+    smtp_profile_id = db.Column(db.Integer, db.ForeignKey('smtp_server.id'))
     smtp_profile = db.relationship('SMTPServer', backref='campaigns')
-    
     recipients = db.relationship('Recipient', backref='campaign', lazy='dynamic', cascade="all, delete-orphan")
 
 
@@ -151,12 +142,12 @@ class Recipient(db.Model):
         s = Serializer(current_app.config['SECRET_KEY'])
         data = {'action': action, 'rid': self.id}
         if payload:
-            data.update(payload)
+            data. update(payload)
         return s.dumps(data, salt='track')
 
 
 class Suppression(db.Model):
-    id = db.Column(db. Integer, primary_key=True)
+    id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(120), unique=True, index=True)
     reason = db.Column(db.String(100))
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
