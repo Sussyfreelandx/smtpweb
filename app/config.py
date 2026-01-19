@@ -75,8 +75,9 @@ class Config:
         'webhooks_enabled': True,
     }
 
-    # --- CRITICAL FIX FOR RENDER EMAIL SENDING ---
-    # This fixes the "Unable to build URLs" error in background tasks
+    # --- CRITICAL FIX FOR EMAIL SENDING ---
+    # We hardcode the domain so the background email worker knows 
+    # how to generate unsubscribe links without an active browser connection.
     SERVER_NAME = 'paris-sender-web.onrender.com'
     PREFERRED_URL_SCHEME = 'https'
 
@@ -84,23 +85,25 @@ class Config:
 class DevelopmentConfig(Config):
     DEBUG = True
     SESSION_COOKIE_SECURE = False
-    # Disable SERVER_NAME in local dev to prevent localhost issues
-    SERVER_NAME = None
+    # In development, we might not want to force the prod server name
+    # But if you are testing on Render, keep it. If local, comment it out.
+    SERVER_NAME = None 
 
 
 class ProductionConfig(Config):
     DEBUG = False
+    SERVER_NAME = 'paris-sender-web.onrender.com'
+    PREFERRED_URL_SCHEME = 'https'
 
 
 class TestingConfig(Config):
     TESTING = True
     SQLALCHEMY_DATABASE_URI = 'sqlite:///:memory:'
-    SERVER_NAME = None
 
 
 config = {
     'development': DevelopmentConfig,
     'production': ProductionConfig,
     'testing': TestingConfig,
-    'default': DevelopmentConfig
+    'default': ProductionConfig  # Changed default to Production for Render
 }
