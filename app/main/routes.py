@@ -2,7 +2,7 @@ from flask import (render_template, flash, redirect, url_for, request,
                    jsonify, current_app, Response)
 from flask_login import login_user, logout_user, current_user, login_required
 from app import db
-from app.models import (User, Campaign, Recipient, SMTPServer,
+from app. models import (User, Campaign, Recipient, SMTPServer,
                         Suppression, GlobalSettings, Sequence, SequenceRecipient)
 from app.core_logic. deliverability import DeliverabilityHelper
 from app.core_logic.ai_handler import AIHandler
@@ -90,8 +90,8 @@ def run_campaign_sending(app, campaign_id):
     """Background task to send campaign emails."""
     with app.app_context():
         try:
-            campaign = Campaign.query. get(campaign_id)
-            if not campaign: 
+            campaign = Campaign.query.get(campaign_id)
+            if not campaign:
                 log_activity(f"Campaign {campaign_id} not found", "ERROR")
                 return
 
@@ -117,10 +117,10 @@ def run_campaign_sending(app, campaign_id):
                 return
 
             smtp_config = smtp_profile.to_dict()
-            if not smtp_config.get('password'):
+            if not smtp_config. get('password'):
                 log_activity(f"No password for SMTP profile {smtp_profile.profile_name}", "ERROR")
-                campaign.status = 'Failed'
-                db.session. commit()
+                campaign. status = 'Failed'
+                db. session.commit()
                 return
 
             smtp_handler = SMTPHandler(smtp_config)
@@ -139,17 +139,17 @@ def run_campaign_sending(app, campaign_id):
                 db.session.expire_all()
                 campaign = Campaign.query.get(campaign_id)
 
-                if not campaign or campaign.status != 'Sending': 
+                if not campaign or campaign.status != 'Sending':
                     log_activity(f"Campaign {campaign_id} status changed.  Stopping.", "WARNING")
                     break
 
-                recipients = campaign.recipients. filter_by(status='Queued').limit(batch_size).all()
+                recipients = campaign.recipients.filter_by(status='Queued').limit(batch_size).all()
 
                 if not recipients: 
                     campaign.status = 'Completed'
-                    campaign.completed_at = datetime. utcnow()
-                    db. session.commit()
-                    log_activity(f"Campaign {campaign. name} completed.  Sent:  {total_sent}, Failed:  {total_failed}", "SUCCESS")
+                    campaign.completed_at = datetime.utcnow()
+                    db.session.commit()
+                    log_activity(f"Campaign {campaign. name} completed.  Sent:  {total_sent}, Failed: {total_failed}", "SUCCESS")
                     break
 
                 log_activity(f"Processing batch of {len(recipients)} recipients...", "INFO")
@@ -161,15 +161,15 @@ def run_campaign_sending(app, campaign_id):
                     if not campaign or campaign.status != 'Sending': 
                         break
 
-                    recipient = Recipient. query.get(recipient.id)
+                    recipient = Recipient.query. get(recipient.id)
                     if not recipient or recipient.status != 'Queued': 
                         continue
 
                     # SMTP Rotation logic
                     if smtp_profiles and campaign.smtp_rotation_enabled:
                         smtp_profile = smtp_profiles[current_profile_index]
-                        smtp_profile. reset_daily_count_if_needed()
-                        
+                        smtp_profile.reset_daily_count_if_needed()
+
                         if smtp_profile.sent_today >= smtp_profile.daily_limit:
                             smtp_profile, current_profile_index = get_next_smtp_profile(smtp_profiles, current_profile_index)
                             if not smtp_profile:
@@ -177,7 +177,7 @@ def run_campaign_sending(app, campaign_id):
                                 campaign.status = 'Paused'
                                 db.session.commit()
                                 return
-                        
+
                         smtp_config = smtp_profile. to_dict()
                         smtp_handler = SMTPHandler(smtp_config)
 
@@ -195,7 +195,7 @@ def run_campaign_sending(app, campaign_id):
                         unsubscribe_url = url_for('main.unsubscribe', token=unsubscribe_token, _external=True)
 
                         # Send email
-                        success, message = smtp_handler.send_email_sync(
+                        success, message = smtp_handler. send_email_sync(
                             to_email=recipient.email,
                             subject=p_subject,
                             html_content=p_body_html,
@@ -210,16 +210,16 @@ def run_campaign_sending(app, campaign_id):
                             recipient.status_message = "OK"
                             total_sent += 1
                             emails_sent_in_batch += 1
-                            
+
                             if smtp_profile:
                                 smtp_profile.sent_today += 1
-                            
+
                             log_activity(f"Sent to {recipient.email}", "SUCCESS")
                         else:
                             recipient.status = 'Failed'
                             recipient.status_message = message[: 250] if message else "Unknown error"
                             total_failed += 1
-                            log_activity(f"Failed to send to {recipient.email}: {message}", "ERROR")
+                            log_activity(f"Failed to send to {recipient. email}:  {message}", "ERROR")
 
                         db.session.commit()
 
@@ -232,7 +232,7 @@ def run_campaign_sending(app, campaign_id):
                         recipient.status_message = str(e)[: 250]
                         total_failed += 1
                         db.session.commit()
-                        log_activity(f"Exception sending to {recipient. email}: {e}", "ERROR")
+                        log_activity(f"Exception sending to {recipient.email}: {e}", "ERROR")
 
                 # Throttling delay between batches
                 db.session.expire_all()
@@ -248,9 +248,9 @@ def run_campaign_sending(app, campaign_id):
         except Exception as e: 
             log_activity(f"Campaign sending error: {str(e)}", "ERROR")
             try:
-                campaign = Campaign.query.get(campaign_id)
-                if campaign: 
-                    campaign. status = 'Failed'
+                campaign = Campaign.query. get(campaign_id)
+                if campaign:
+                    campaign.status = 'Failed'
                     db.session.commit()
             except Exception: 
                 pass
@@ -272,7 +272,7 @@ def index():
 def view_campaign(campaign_id):
     """View single campaign with recipients and analytics."""
     campaign = Campaign.query.get_or_404(campaign_id)
-    if campaign.author != current_user:
+    if campaign.author != current_user: 
         flash("You do not have permission.", "danger")
         return redirect(url_for('main.index'))
 
@@ -281,23 +281,23 @@ def view_campaign(campaign_id):
 
     # Calculate analytics
     total = campaign.recipients.count()
-    sent = campaign.recipients. filter_by(status='Sent').count()
-    failed = campaign.recipients.filter_by(status='Failed').count()
+    sent = campaign.recipients.filter_by(status='Sent').count()
+    failed = campaign. recipients.filter_by(status='Failed').count()
     queued = campaign.recipients.filter_by(status='Queued').count()
     opened = campaign.recipients. filter(Recipient.opened_at. isnot(None)).count()
     clicked = campaign.recipients. filter(Recipient. clicked_at.isnot(None)).count()
-    unsubscribed = campaign.recipients. filter_by(status='Unsubscribed').count()
+    unsubscribed = campaign.recipients.filter_by(status='Unsubscribed').count()
 
     # A/B Testing analytics
     ab_stats = None
     if campaign. ab_testing_enabled:
         a_sent = campaign.recipients. filter_by(ab_version='A', status='Sent').count()
         b_sent = campaign. recipients.filter_by(ab_version='B', status='Sent').count()
-        a_opened = campaign.recipients. filter(Recipient. ab_version == 'A', Recipient.opened_at.isnot(None)).count()
-        b_opened = campaign.recipients.filter(Recipient.ab_version == 'B', Recipient. opened_at.isnot(None)).count()
+        a_opened = campaign.recipients. filter(Recipient. ab_version == 'A', Recipient.opened_at. isnot(None)).count()
+        b_opened = campaign.recipients.filter(Recipient.ab_version == 'B', Recipient.opened_at.isnot(None)).count()
         a_clicked = campaign. recipients.filter(Recipient.ab_version == 'A', Recipient.clicked_at.isnot(None)).count()
         b_clicked = campaign.recipients. filter(Recipient. ab_version == 'B', Recipient.clicked_at. isnot(None)).count()
-        
+
         ab_stats = {
             'a_sent': a_sent,
             'b_sent': b_sent,
@@ -323,7 +323,7 @@ def view_campaign(campaign_id):
         'click_rate': round((clicked / sent * 100), 1) if sent > 0 else 0
     }
 
-    return render_template('campaign.html', title=campaign.name, campaign=campaign,
+    return render_template('campaign. html', title=campaign.name, campaign=campaign,
                            recipients=recipients, analytics=analytics, ab_stats=ab_stats)
 
 
@@ -335,7 +335,7 @@ def new_campaign():
 
     global_settings = GlobalSettings.query.first()
     default_burner = global_settings.burner_domain if global_settings else ""
-    default_lure = global_settings.lure_path if global_settings else ""
+    default_lure = global_settings. lure_path if global_settings else ""
     default_throttle_amount = global_settings. default_throttle_amount if global_settings else 20
     default_throttle_delay = global_settings.default_throttle_delay if global_settings else 60
 
@@ -356,11 +356,11 @@ def new_campaign():
                 body_plain=body_plain,
                 ab_testing_enabled=ab_enabled,
                 subject_b=request.form. get('subject_b'),
-                body_b=request. form.get('body_b'),
-                ab_split_ratio=int(request.form. get('ab_split_ratio', 50)),
+                body_b=request.form.get('body_b'),
+                ab_split_ratio=int(request. form.get('ab_split_ratio', 50)),
                 burner_domain=request.form.get('burner_domain') or default_burner,
                 lure_path=request. form.get('lure_path') or default_lure,
-                smtp_profile_id=request.form.get('smtp_profile_id'),
+                smtp_profile_id=request. form.get('smtp_profile_id'),
                 throttle_amount=int(request.form. get('throttle_amount', default_throttle_amount)),
                 throttle_delay=int(request. form.get('throttle_delay', default_throttle_delay)),
                 parallel_workers=int(request. form.get('parallel_workers', 10)),
@@ -388,13 +388,13 @@ def new_campaign():
                 stream = io.StringIO(file.stream.read().decode("UTF-8"), newline=None)
                 csv_reader = csv. DictReader(stream)
                 if csv_reader.fieldnames:
-                    csv_reader.fieldnames = [f.lower().strip() for f in csv_reader. fieldnames]
+                    csv_reader.fieldnames = [f.lower().strip() for f in csv_reader.fieldnames]
 
                 count = 0
                 skipped = 0
                 for row in csv_reader:
                     if 'email' in row and row['email']: 
-                        email = row['email']. strip().lower()
+                        email = row['email'].strip().lower()
                         if not is_valid_email(email):
                             skipped += 1
                             continue
@@ -406,40 +406,40 @@ def new_campaign():
                             status='Suppressed' if is_suppressed else 'Queued',
                             status_message='Suppressed by global list' if is_suppressed else None
                         )
-                        db.session. add(recipient)
+                        db.session.add(recipient)
                         count += 1
 
                 log_activity(f"Campaign '{campaign.name}' created with {count} recipients.  Skipped {skipped} invalid.", "SUCCESS")
                 flash(f"Loaded {count} recipients.  Skipped {skipped} invalid emails.", "info")
 
-            db.session. commit()
+            db.session.commit()
             flash('Campaign created! ', 'success')
             return redirect(url_for('main.view_campaign', campaign_id=campaign.id))
 
-        except Exception as e: 
+        except Exception as e:
             db.session.rollback()
             log_activity(f"Error creating campaign: {str(e)}", "ERROR")
             flash(f"Error creating campaign: {str(e)}", "danger")
 
     return render_template('create_campaign.html', title='New Campaign',
                            smtp_profiles=smtp_profiles,
-                           default_burner=default_burner, 
+                           default_burner=default_burner,
                            default_lure=default_lure,
                            default_throttle_amount=default_throttle_amount,
                            default_throttle_delay=default_throttle_delay)
 
 
-@bp.route('/campaign/<int:campaign_id>/add_recipient', methods=['POST'])
+@bp.route('/campaign/<int: campaign_id>/add_recipient', methods=['POST'])
 @login_required
 def add_recipient_manual(campaign_id):
     """Manually add a recipient to campaign."""
-    campaign = Campaign.query.get_or_404(campaign_id)
+    campaign = Campaign.query. get_or_404(campaign_id)
     if campaign.author != current_user:
         return jsonify({'success': False, 'message': 'Unauthorized'}), 403
 
-    email = request.form.get('email', '').strip().lower()
+    email = request.form. get('email', '').strip().lower()
     if not email:
-        return jsonify({'success':  False, 'message': 'Email required'})
+        return jsonify({'success': False, 'message':  'Email required'})
 
     if not is_valid_email(email):
         return jsonify({'success': False, 'message': 'Invalid email format'})
@@ -448,7 +448,7 @@ def add_recipient_manual(campaign_id):
     if exists:
         return jsonify({'success': False, 'message': 'Email already in list'})
 
-    is_suppressed = Suppression.query.filter_by(email=email).first()
+    is_suppressed = Suppression.query. filter_by(email=email).first()
 
     recipient = Recipient(
         email=email,
@@ -457,11 +457,11 @@ def add_recipient_manual(campaign_id):
         status='Suppressed' if is_suppressed else 'Queued',
         status_message='Suppressed by global list' if is_suppressed else None
     )
-    db.session.add(recipient)
-    db.session.commit()
+    db.session. add(recipient)
+    db.session. commit()
 
-    log_activity(f"Manually added {email} to campaign {campaign. name}", "INFO")
-    return jsonify({'success': True, 'message': 'Recipient added'})
+    log_activity(f"Manually added {email} to campaign {campaign.name}", "INFO")
+    return jsonify({'success': True, 'message':  'Recipient added'})
 
 
 @bp.route('/campaign/<int:campaign_id>/control/<action>')
@@ -474,23 +474,23 @@ def campaign_control(campaign_id, action):
 
     try:
         if action == 'start': 
-            queued_count = campaign.recipients.filter_by(status='Queued').count()
+            queued_count = campaign.recipients. filter_by(status='Queued').count()
             if queued_count == 0:
                 flash('No queued recipients to send to.', 'warning')
                 return redirect(url_for('main.view_campaign', campaign_id=campaign.id))
 
-            if not campaign. smtp_profile and not campaign.smtp_rotation_enabled: 
+            if not campaign.smtp_profile and not campaign.smtp_rotation_enabled: 
                 flash('No SMTP profile configured for this campaign.', 'danger')
                 return redirect(url_for('main.view_campaign', campaign_id=campaign.id))
 
-            if campaign.smtp_profile: 
+            if campaign.smtp_profile:
                 smtp_config = campaign.smtp_profile.to_dict()
                 if not smtp_config.get('password'):
                     flash('SMTP password not configured.  Please update your SMTP profile.', 'danger')
                     return redirect(url_for('main.view_campaign', campaign_id=campaign.id))
 
             campaign.status = 'Sending'
-            db.session. commit()
+            db.session.commit()
 
             thread = threading.Thread(
                 target=run_campaign_sending,
@@ -499,8 +499,8 @@ def campaign_control(campaign_id, action):
             thread.daemon = True
             thread.start()
 
-            log_activity(f"Started campaign:  {campaign.name}", "SUCCESS")
-            flash('Campaign started successfully.', 'success')
+            log_activity(f"Started campaign: {campaign. name}", "SUCCESS")
+            flash('Campaign started successfully. ', 'success')
 
         elif action == 'pause':
             campaign.status = 'Paused'
@@ -510,7 +510,7 @@ def campaign_control(campaign_id, action):
 
         elif action == 'stop':
             campaign.status = 'Stopped'
-            db. session.commit()
+            db.session. commit()
             log_activity(f"Stopped campaign: {campaign.name}", "ERROR")
             flash('Campaign stopped.', 'danger')
 
@@ -524,14 +524,14 @@ def campaign_control(campaign_id, action):
             log_activity(f"Queued {len(failed)} failed recipients for retry.", "INFO")
             flash(f'Queued {len(failed)} failed recipients for retry.', 'info')
 
-    except Exception as e: 
+    except Exception as e:
         log_activity(f"Control Error ({action}): {str(e)}", "ERROR")
         flash(f"Error: {str(e)}", "danger")
         if action == 'start':
             campaign.status = 'Draft'
             db. session.commit()
 
-    return redirect(url_for('main.view_campaign', campaign_id=campaign.id))
+    return redirect(url_for('main. view_campaign', campaign_id=campaign. id))
 
 
 @bp.route('/campaign/<int:campaign_id>/validate_list')
@@ -557,15 +557,15 @@ def validate_list(campaign_id):
                 r.status_message = f"MX Check:  {mx_status}"
                 invalid += 1
         except Exception:
-            r.status = 'Invalid'
-            r.status_message = "Invalid email format"
+            r. status = 'Invalid'
+            r. status_message = "Invalid email format"
             invalid += 1
         count += 1
 
     db.session.commit()
     log_activity(f"Validated {count} recipients.  {valid} valid, {invalid} invalid.", "INFO")
     flash(f"Validated {count} emails. {valid} valid, {invalid} invalid.", "info")
-    return redirect(url_for('main.view_campaign', campaign_id=campaign.id))
+    return redirect(url_for('main. view_campaign', campaign_id=campaign. id))
 
 
 @bp.route('/campaign/<int:campaign_id>/clear_list')
@@ -582,15 +582,15 @@ def clear_recipient_list(campaign_id):
         flash("Recipient list cleared.", "success")
     except Exception as e:
         flash(f"Error:  {e}", "danger")
-    return redirect(url_for('main.view_campaign', campaign_id=campaign.id))
+    return redirect(url_for('main. view_campaign', campaign_id=campaign. id))
 
 
 @bp.route('/campaign/<int:campaign_id>/export')
 @login_required
 def export_campaign_report(campaign_id):
     """Export campaign report as CSV."""
-    campaign = Campaign. query.get_or_404(campaign_id)
-    if campaign.author != current_user:
+    campaign = Campaign.query.get_or_404(campaign_id)
+    if campaign.author != current_user: 
         return redirect(url_for('main.index'))
 
     recipients = campaign.recipients. all()
@@ -598,20 +598,20 @@ def export_campaign_report(campaign_id):
     def generate():
         data = io.StringIO()
         w = csv.writer(data)
-        w.writerow(('Email', 'Status', 'AB Version', 'Sent At', 'Opened At', 'Clicked At', 
+        w.writerow(('Email', 'Status', 'AB Version', 'Sent At', 'Opened At', 'Clicked At',
                     'Open Count', 'Click Count', 'Attempts', 'Error Message'))
         yield data.getvalue()
         data.seek(0)
         data.truncate(0)
         for r in recipients: 
-            w.writerow((r.email, r. status, r.ab_version or '', r.sent_at, r.opened_at, 
-                        r.clicked_at, r.open_count, r.click_count, r.attempts, r.status_message))
+            w.writerow((r.email, r. status, r.ab_version or '', r.sent_at, r.opened_at,
+                        r.clicked_at, r.open_count, r.click_count, r. attempts, r.status_message))
             yield data.getvalue()
             data.seek(0)
             data.truncate(0)
 
     response = Response(generate(), mimetype='text/csv')
-    response.headers. set("Content-Disposition", "attachment", filename=f"report_{campaign.id}. csv")
+    response.headers. set("Content-Disposition", "attachment", filename=f"report_{campaign.id}.csv")
     return response
 
 
@@ -623,15 +623,15 @@ def delete_campaign(campaign_id):
     if campaign. author != current_user:
         flash("You do not have permission.", "danger")
         return redirect(url_for('main.index'))
-    
-    try: 
+
+    try:
         db.session.delete(campaign)
         db.session.commit()
         log_activity(f"Deleted campaign: {campaign. name}", "WARNING")
         flash("Campaign deleted.", "success")
     except Exception as e:
         flash(f"Error deleting campaign: {e}", "danger")
-    
+
     return redirect(url_for('main. index'))
 
 
@@ -643,7 +643,7 @@ def smtp_profiles():
     """Manage SMTP profiles."""
     if request. method == 'POST':
         try:
-            profile_id = request.form.get('profile_id')
+            profile_id = request.form. get('profile_id')
             if profile_id:
                 profile = SMTPServer.query.get(profile_id)
                 if not profile or profile.user_id != current_user.id:
@@ -653,8 +653,8 @@ def smtp_profiles():
                 profile = SMTPServer(user_id=current_user.id)
 
             profile.profile_name = request.form. get('name')
-            profile.server = request.form.get('server')
-            profile.port = int(request.form. get('port', 587))
+            profile. server = request.form. get('server')
+            profile.port = int(request.form.get('port', 587))
             profile. username = request.form. get('username')
             profile.sender_name = request.form. get('sender_name')
             profile. sender_email = request.form.get('sender_email')
@@ -668,7 +668,7 @@ def smtp_profiles():
             profile.imap_server = request.form. get('imap_server')
             profile.imap_port = int(request. form.get('imap_port', 993))
             profile.imap_username = request.form. get('imap_username')
-            
+
             imap_password = request.form.get('imap_password')
             if imap_password and imap_password. strip():
                 profile.set_imap_password(imap_password)
@@ -680,16 +680,16 @@ def smtp_profiles():
             db.session.add(profile)
             db.session.commit()
             log_activity(f"SMTP Profile saved: {profile.profile_name}", "SUCCESS")
-            flash('SMTP Profile Saved. ', 'success')
-        except Exception as e: 
-            db.session.rollback()
+            flash('SMTP Profile Saved.', 'success')
+        except Exception as e:
+            db. session.rollback()
             log_activity(f"Error saving SMTP profile: {e}", "ERROR")
             flash(f"Error saving profile: {str(e)}", "danger")
 
         return redirect(url_for('main.smtp_profiles'))
 
     profiles = SMTPServer. query.filter_by(user_id=current_user.id).all()
-    return render_template('smtp_profiles. html', title='SMTP Profiles', profiles=profiles)
+    return render_template('smtp_profiles.html', title='SMTP Profiles', profiles=profiles)
 
 
 @bp.route('/settings/smtp/test', methods=['POST'])
@@ -707,12 +707,12 @@ def test_smtp_connection():
 
         profile = SMTPServer.query.get(profile_id)
         if not profile:
-            return jsonify({'success': False, 'message': 'Profile not found'}), 404
+            return jsonify({'success': False, 'message':  'Profile not found'}), 404
 
         if profile.user_id != current_user.id:
-            return jsonify({'success': False, 'message': 'Unauthorized'}), 403
+            return jsonify({'success': False, 'message':  'Unauthorized'}), 403
 
-        smtp_config = profile.to_dict()
+        smtp_config = profile. to_dict()
         if not smtp_config. get('password'):
             return jsonify({'success': False, 'message': 'Password not set for this profile'}), 400
 
@@ -728,7 +728,7 @@ def test_smtp_connection():
 
     except Exception as e: 
         log_activity(f"SMTP Test error: {str(e)}", "ERROR")
-        return jsonify({'success': False, 'message':  f'Error: {str(e)}'}), 500
+        return jsonify({'success':  False, 'message': f'Error: {str(e)}'}), 500
 
 
 @bp.route('/settings/smtp/delete/<int:profile_id>', methods=['POST'])
@@ -736,7 +736,7 @@ def test_smtp_connection():
 def delete_smtp_profile(profile_id):
     """Delete SMTP profile."""
     profile = SMTPServer. query.get_or_404(profile_id)
-    if profile.user_id != current_user. id:
+    if profile.user_id != current_user.id:
         return redirect(url_for('main.smtp_profiles'))
     db.session.delete(profile)
     db.session.commit()
@@ -752,7 +752,7 @@ def suppression_list():
     """Manage suppression list."""
     form = SuppressionForm()
     if form.validate_on_submit():
-        email = form.email. data.lower().strip()
+        email = form.email. data. lower().strip()
         if not Suppression.query. filter_by(email=email).first():
             s = Suppression(email=email, reason=form.reason.data)
             db.session.add(s)
@@ -763,7 +763,7 @@ def suppression_list():
             flash(f'{email} is already suppressed.', 'warning')
         return redirect(url_for('main.suppression_list'))
     page = request.args. get('page', 1, type=int)
-    pagination = Suppression. query.order_by(Suppression. timestamp.desc()).paginate(page=page, per_page=50)
+    pagination = Suppression.query.order_by(Suppression.timestamp.desc()).paginate(page=page, per_page=50)
     return render_template('suppression. html', title='Suppression List', form=form, pagination=pagination)
 
 
@@ -786,7 +786,7 @@ def import_suppression_list():
     if not file or not file.filename:
         flash('No file selected.', 'danger')
         return redirect(url_for('main.suppression_list'))
-    
+
     try:
         stream = io.StringIO(file.stream. read().decode("UTF-8"), newline=None)
         csv_reader = csv.reader(stream)
@@ -799,11 +799,11 @@ def import_suppression_list():
                     s = Suppression(email=email, reason=reason)
                     db.session. add(s)
                     count += 1
-        db.session.commit()
+        db.session. commit()
         flash(f'Imported {count} emails to suppression list.', 'success')
-    except Exception as e:
+    except Exception as e: 
         flash(f'Error importing:  {e}', 'danger')
-    
+
     return redirect(url_for('main. suppression_list'))
 
 
@@ -812,16 +812,16 @@ def import_suppression_list():
 def export_suppression_list():
     """Export suppression list as CSV."""
     items = Suppression. query.all()
-    
+
     def generate():
-        data = io.StringIO()
+        data = io. StringIO()
         w = csv.writer(data)
         w.writerow(('Email', 'Reason', 'Date Added'))
         yield data.getvalue()
         data.seek(0)
         data.truncate(0)
-        for item in items: 
-            w.writerow((item.email, item.reason, item.timestamp))
+        for item in items:
+            w. writerow((item.email, item. reason, item.timestamp))
             yield data.getvalue()
             data.seek(0)
             data.truncate(0)
@@ -862,9 +862,9 @@ def general_settings():
         db.session.commit()
         log_activity("Global settings updated.", "SUCCESS")
         flash("Settings updated successfully.", "success")
-        return redirect(url_for('main.general_settings'))
+        return redirect(url_for('main. general_settings'))
 
-    return render_template('settings_general.html', settings=settings)
+    return render_template('settings_general.html', title='Global Settings', settings=settings)
 
 
 # ==================== DELIVERABILITY TOOLS ====================
@@ -876,15 +876,15 @@ def deliverability_tools():
     form = DeliverabilityForm()
     results = None
     helper = DeliverabilityHelper()
-    
-    if form. validate_on_submit():
+
+    if form.validate_on_submit():
         target = form.domain_ip.data
         if form.check_auth.data:
             results = {'type': 'auth', 'target': target, 'auth':  helper.check_domain_authentication(target)}
         elif form.check_blacklist.data:
             results = {'type': 'blacklist', 'target':  target, 'blacklist': helper.check_blacklist(target)}
-    
-    return render_template('deliverability. html', title='Deliverability Tools', form=form, results=results)
+
+    return render_template('deliverability.html', title='Deliverability Tools', form=form, results=results)
 
 
 @bp.route('/tools/spam_check', methods=['POST'])
@@ -896,17 +896,17 @@ def spam_check():
         subject = data.get('subject', '')
         body = data.get('body', '')
         check_type = data.get('type', 'basic')
-        
+
         helper = DeliverabilityHelper()
-        
+
         if check_type == 'ai':
             success, result = helper. analyze_spam_ai(subject, body)
-            return jsonify({'success':  success, 'result': result})
+            return jsonify({'success': success, 'result': result})
         else:
             result = helper.basic_spam_check(subject, body)
             return jsonify({'success': True, 'result':  result})
     except Exception as e: 
-        return jsonify({'success': False, 'result': str(e)})
+        return jsonify({'success':  False, 'result': str(e)})
 
 
 @bp.route('/tools/link_check', methods=['POST'])
@@ -916,10 +916,10 @@ def link_check():
     try:
         data = request.get_json()
         content = data.get('content', '')
-        
+
         helper = DeliverabilityHelper()
         results = helper.check_link_health(content)
-        
+
         return jsonify({'success': True, 'results': results})
     except Exception as e:
         return jsonify({'success':  False, 'error': str(e)})
@@ -937,8 +937,8 @@ def deliverability_tools_ajax():
             data.get('body'),
             provider_type=data.get('provider', 'openai')
         )
-        return jsonify({'success':  success, 'result': result})
-    except Exception as e: 
+        return jsonify({'success': success, 'result': result})
+    except Exception as e:
         return jsonify({'success': False, 'result': str(e)})
 
 
@@ -983,16 +983,16 @@ def css_inline():
     try:
         data = request.get_json()
         content = data.get('content', '')
-        
+
         try:
             import css_inline
             inliner = css_inline.CSSInliner()
             result = inliner. inline(content)
-            return jsonify({'success':  True, 'result': result})
+            return jsonify({'success': True, 'result': result})
         except ImportError:
             return jsonify({'success':  False, 'result': 'css_inline library not installed'})
-    except Exception as e: 
-        return jsonify({'success': False, 'result': str(e)})
+    except Exception as e:
+        return jsonify({'success': False, 'result':  str(e)})
 
 
 # ==================== ANALYTICS ====================
@@ -1002,36 +1002,36 @@ def css_inline():
 def analytics_dashboard():
     """Analytics dashboard."""
     campaigns = Campaign.query. filter_by(user_id=current_user.id).order_by(Campaign. timestamp.desc()).limit(10).all()
-    
+
     # Aggregate stats
     total_sent = 0
     total_opened = 0
     total_clicked = 0
     total_failed = 0
-    
+
     campaign_stats = []
     for campaign in campaigns:
-        sent = campaign.recipients. filter_by(status='Sent').count()
-        opened = campaign.recipients.filter(Recipient.opened_at. isnot(None)).count()
-        clicked = campaign.recipients.filter(Recipient.clicked_at. isnot(None)).count()
-        failed = campaign.recipients.filter_by(status='Failed').count()
-        
+        sent = campaign.recipients.filter_by(status='Sent').count()
+        opened = campaign.recipients. filter(Recipient.opened_at. isnot(None)).count()
+        clicked = campaign.recipients. filter(Recipient. clicked_at.isnot(None)).count()
+        failed = campaign.recipients. filter_by(status='Failed').count()
+
         total_sent += sent
         total_opened += opened
         total_clicked += clicked
         total_failed += failed
-        
+
         campaign_stats.append({
-            'id':  campaign.id,
+            'id': campaign. id,
             'name': campaign.name,
             'sent': sent,
-            'opened':  opened,
-            'clicked': clicked,
+            'opened': opened,
+            'clicked':  clicked,
             'failed': failed,
             'open_rate': round((opened / sent * 100), 1) if sent > 0 else 0,
             'click_rate': round((clicked / sent * 100), 1) if sent > 0 else 0
         })
-    
+
     summary = {
         'total_sent': total_sent,
         'total_opened':  total_opened,
@@ -1040,8 +1040,8 @@ def analytics_dashboard():
         'avg_open_rate':  round((total_opened / total_sent * 100), 1) if total_sent > 0 else 0,
         'avg_click_rate':  round((total_clicked / total_sent * 100), 1) if total_sent > 0 else 0
     }
-    
-    return render_template('analytics.html', title='Analytics', 
+
+    return render_template('analytics.html', title='Analytics',
                            campaign_stats=campaign_stats, summary=summary)
 
 
@@ -1052,19 +1052,19 @@ def click_heatmap(campaign_id):
     campaign = Campaign.query.get_or_404(campaign_id)
     if campaign.author != current_user: 
         return jsonify({'error': 'Unauthorized'}), 403
-    
+
     # Get all clicked links
     click_counts = Counter()
     recipients = campaign.recipients. filter(Recipient. clicked_links.isnot(None)).all()
-    
+
     for recipient in recipients:
         try:
             links = json.loads(recipient. clicked_links)
-            for link in links: 
+            for link in links:
                 click_counts[link] += 1
-        except: 
+        except:
             pass
-    
+
     return jsonify({'success': True, 'clicks': dict(click_counts)})
 
 
@@ -1128,14 +1128,14 @@ def unsubscribe(token):
                     db. session.add(suppression)
                     db.session.commit()
 
-                log_activity(f"Unsubscribed:  {recipient.email}", "INFO")
+                log_activity(f"Unsubscribed: {recipient.email}", "INFO")
 
         return render_template('message.html',
                                message_title='Unsubscribed',
                                message_body='You have been successfully unsubscribed from our mailing list.')
     except Exception as e:
         log_activity(f"Unsubscribe error: {str(e)}", "ERROR")
-        return render_template('message.html',
+        return render_template('message. html',
                                message_title='Error',
                                message_body='An error occurred processing your request.')
 
@@ -1148,20 +1148,20 @@ def track_open(token):
         s = Serializer(current_app.config['SECRET_KEY'])
         data = s.loads(token, salt='track', max_age=86400 * 30)
 
-        recipient_id = data.get('rid')
+        recipient_id = data. get('rid')
         if recipient_id:
-            recipient = Recipient.query.get(recipient_id)
+            recipient = Recipient.query. get(recipient_id)
             if recipient:
-                recipient.open_count = (recipient.open_count or 0) + 1
+                recipient. open_count = (recipient.open_count or 0) + 1
                 if not recipient.opened_at:
                     recipient.opened_at = datetime.utcnow()
                     if recipient.status not in ['Clicked', 'Unsubscribed']: 
                         recipient.status = 'Opened'
-                
+
                 # Store user agent and IP
-                recipient.user_agent = request.headers.get('User-Agent', '')[:255]
+                recipient.user_agent = request. headers.get('User-Agent', '')[:255]
                 recipient.ip_address = request.remote_addr
-                
+
                 db.session.commit()
     except Exception: 
         pass
@@ -1173,15 +1173,15 @@ def track_open(token):
     return response
 
 
-@bp.route('/track/click/<token>')
+@bp. route('/track/click/<token>')
 def track_click(token):
     """Track link clicks."""
     redirect_url = request. args.get('url', '#')
-    
+
     try:
         from itsdangerous import URLSafeTimedSerializer as Serializer
         s = Serializer(current_app.config['SECRET_KEY'])
-        data = s. loads(token, salt='track', max_age=86400 * 30)
+        data = s.loads(token, salt='track', max_age=86400 * 30)
 
         # Decode URL from payload
         if 'url' in data:
@@ -1194,21 +1194,21 @@ def track_click(token):
         if recipient_id:
             recipient = Recipient.query. get(recipient_id)
             if recipient:
-                recipient.click_count = (recipient.click_count or 0) + 1
-                if not recipient.clicked_at:
-                    recipient.clicked_at = datetime.utcnow()
+                recipient. click_count = (recipient.click_count or 0) + 1
+                if not recipient. clicked_at: 
+                    recipient.clicked_at = datetime. utcnow()
                     if recipient.status != 'Unsubscribed': 
                         recipient.status = 'Clicked'
-                
+
                 # Store clicked link
                 recipient. add_clicked_link(redirect_url)
-                
+
                 # Store user agent and IP
-                recipient.user_agent = request.headers.get('User-Agent', '')[:255]
-                recipient. ip_address = request.remote_addr
-                
-                db. session.commit()
-    except Exception: 
+                recipient.user_agent = request. headers.get('User-Agent', '')[:255]
+                recipient.ip_address = request.remote_addr
+
+                db.session.commit()
+    except Exception:
         pass
 
     return redirect(redirect_url)
@@ -1216,11 +1216,11 @@ def track_click(token):
 
 # ==================== AUTHENTICATION ====================
 
-@bp.route('/login', methods=['GET', 'POST'])
+@bp. route('/login', methods=['GET', 'POST'])
 def login():
     """User login."""
     if current_user.is_authenticated:
-        return redirect(url_for('main.index'))
+        return redirect(url_for('main. index'))
     if request.method == 'POST':
         user = User.query. filter_by(username=request.form. get('username')).first()
         if user and user.check_password(request. form.get('password')):
