@@ -16,10 +16,10 @@
                     <a href="{{ url_for('main.analytics_dashboard') }}" class="btn btn-outline-info">
                         <i class="fas fa-chart-line me-1"></i> Analytics
                     </a>
-                    <a href="{{ url_for('main. deliverability_tools') }}" class="btn btn-outline-dark">
+                    <a href="{{ url_for('main.deliverability_tools') }}" class="btn btn-outline-dark">
                         <i class="fas fa-shield-alt me-1"></i> Deliverability Tools
                     </a>
-                    <a href="{{ url_for('main. smtp_profiles') }}" class="btn btn-outline-dark">
+                    <a href="{{ url_for('main.smtp_profiles') }}" class="btn btn-outline-dark">
                         <i class="fas fa-server me-1"></i> SMTP Settings
                     </a>
                     <a href="{{ url_for('main.suppression_list') }}" class="btn btn-outline-danger">
@@ -49,15 +49,15 @@
         <div class="card card-custom">
             <div class="card-header bg-white d-flex justify-content-between align-items-center">
                 <span class="fw-bold"><i class="fas fa-envelope-open-text text-success me-2"></i> Recent Campaigns</span>
-                <span class="badge bg-secondary">{{ campaigns. count() }} Total</span>
+                <span class="badge bg-secondary">{{ campaigns.count() }} Total</span>
             </div>
             <div class="card-body p-0">
-                {% if campaigns. count() == 0 %}
+                {% if campaigns.count() == 0 %}
                     <div class="text-center py-5">
                         <i class="fas fa-inbox fa-3x text-muted mb-3"></i>
                         <h5 class="text-muted">No campaigns found</h5>
                         <p class="text-secondary">Get started by creating your first email campaign.</p>
-                        <a href="{{ url_for('main. new_campaign') }}" class="btn btn-sm btn-primary">
+                        <a href="{{ url_for('main.new_campaign') }}" class="btn btn-sm btn-primary">
                             <i class="fas fa-plus me-1"></i> Create Campaign
                         </a>
                     </div>
@@ -96,7 +96,7 @@
                                     <td class="text-muted small">{{ campaign.timestamp.strftime('%Y-%m-%d %H:%M') }}</td>
                                     <td>
                                         <span class="badge bg-info text-dark">
-                                            {{ campaign.recipients. count() }}
+                                            {{ campaign.recipients.count() }}
                                         </span>
                                     </td>
                                     <td class="text-end pe-4">
