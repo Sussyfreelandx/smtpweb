@@ -1464,3 +1464,72 @@ def analytics_dashboard():
                           daily_data=daily_data,
                           hourly_data=hourly_data,
                           days=days)
+
+
+@bp.route('/settings/suppression/bulk_add', methods=['POST'])
+@login_required
+def bulk_add_suppression():
+    """Bulk add emails to suppression list from text input."""
+    emails_text = request.form.get('emails', '')
+    reason = request.form.get('reason', 'Manual')
+    
+    if not emails_text.strip():
+        flash('No emails provided.', 'warning')
+        return redirect(url_for('main.suppression_list'))
+    
+    # Parse emails (handle both comma-separated and newline-separated)
+    import re
+    emails_text = emails_text.replace(',', '\n')
+    emails = [e.strip().lower() for e in emails_text.split('\n') if e.strip()]
+    
+    # Validate and add
+    count = 0
+    duplicates = 0
+    invalid = 0
+    
+    email_regex = re.compile(r'^[^\s@]+@[^\s@]+\.[^\s@]+$')
+    
+    for email in emails:
+        if not email_regex.match(email):
+            invalid += 1
+            continue
+            
+        if Suppression.query.filter_by(email=email).first():
+            duplicates += 1
+            continue
+        
+        suppression = Suppression(email=email, reason=reason, user_id=current_user.id)
+        db.session.add(suppression)
+        count += 1
+    
+    try:
+        db.session.commit()
+        flash(f'Added {count} emails to suppression list. {duplicates} duplicates skipped. {invalid} invalid.', 'success')
+        log_activity(f"Bulk added {count} emails to suppression list", "SUCCESS")
+    except Exception as e: 
+        db.session.rollback()
+        flash(f'Error adding emails: {str(e)}', 'danger')
+    
+    return redirect(url_for('main.suppression_list'))
+
+
+@bp.route('/settings/suppression/bulk_delete', methods=['POST'])
+@login_required
+def bulk_delete_suppression():
+    """Bulk delete emails from suppression list."""
+    ids = request.form.getlist('ids')
+    
+    if not ids: 
+        flash('No emails selected.', 'warning')
+        return redirect(url_for('main.suppression_list'))
+    
+    try:
+        count = Suppression.query.filter(Suppression.id.in_(ids)).delete(synchronize_session=False)
+        db.session.commit()
+        flash(f'Removed {count} emails from suppression list.', 'success')
+        log_activity(f"Bulk deleted {count} emails from suppression list", "WARNING")
+    except Exception as e: 
+        db.session.rollback()
+        flash(f'Error deleting emails: {str(e)}', 'danger')
+    
+    return redirect(url_for('main.suppression_list'))
