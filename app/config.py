@@ -1,17 +1,18 @@
 import os
+from dotenv import load_dotenv
 
-# Base directory is the directory where this file resides (the 'app' folder)
-basedir = os.path.abspath(os.path.dirname(__file__))
+# Base directory is the root of the project
+basedir = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
+load_dotenv(os.path.join(basedir, '.env'))
 
 class Config:
     """
     Sets the configuration for the Flask application.
     """
-    # Secret key for signing sessions
-    SECRET_KEY = os.environ.get('SECRET_KEY') or 'dev-secret-key-change-this'
+    # Secret key for signing sessions, cookies, and tokens
+    SECRET_KEY = os.environ.get('SECRET_KEY') or 'a-super-secret-key-that-you-should-change'
 
     # Database configuration
-    # This puts app.db in the 'app' folder by default if DATABASE_URL isn't set
     SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL') or \
         'sqlite:///' + os.path.join(basedir, 'app.db')
     
@@ -23,4 +24,9 @@ class Config:
 
     # AI Configuration
     OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
+    OPENAI_MODEL = os.environ.get('OPENAI_MODEL', 'gpt-3.5-turbo')
     LOCAL_AI_URL = os.environ.get('LOCAL_AI_URL')
+    LOCAL_AI_MODEL = os.environ.get('LOCAL_AI_MODEL', 'llama3')
+    
+    # File Uploads
+    UPLOAD_FOLDER = os.path.join(basedir, 'uploads')
