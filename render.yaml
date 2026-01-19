@@ -3,17 +3,19 @@ databases:
   - name: paris-sender-db
     databaseName: paris_sender_db
     user: paris_sender_user
+    ipAllowList: [] # Allow all, or specify your app's IP
 
 services:
   - type: redis
     name: paris-sender-redis
-    ipAllowList: []
+    ipAllowList: [] # Allow all, or specify your app's IP
 
   - type: web
     name: paris-sender-web
     env: python
     pythonVersion: "3.11"
     buildCommand: |
+      pip install --upgrade pip
       pip install -r requirements.txt
       # Check if migrations exist; if not, initialize them
       if [ ! -d "migrations" ]; then
@@ -22,7 +24,7 @@ services:
         flask db migrate -m "Initial migration"
       fi
       flask db upgrade
-    startCommand: gunicorn wsgi:app
+    startCommand: gunicorn "app:create_app()"
     envVars:
       - key: DATABASE_URL
         fromDatabase:
@@ -36,7 +38,7 @@ services:
       - key: SECRET_KEY
         generateValue: true
       - key: FLASK_APP
-        value: wsgi:app
+        value: "app:create_app()"
       - key: FLASK_DEBUG
         value: "0"
 
@@ -45,7 +47,7 @@ services:
     env: python
     pythonVersion: "3.11"
     buildCommand: pip install -r requirements.txt
-    startCommand: celery -A wsgi.celery worker --loglevel=info
+    startCommand: celery -A app.celery worker --loglevel=info
     envVars:
       - key: DATABASE_URL
         fromDatabase:
