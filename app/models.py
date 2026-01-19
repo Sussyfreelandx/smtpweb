@@ -5,6 +5,7 @@ from itsdangerous import URLSafeTimedSerializer as Serializer
 from flask import current_app
 from app import db, login
 from cryptography.fernet import Fernet
+import json
 
 @login.user_loader
 def load_user(id):
@@ -35,7 +36,7 @@ class SMTPServer(db.Model):
     sender_name = db.Column(db.String(100))
     sender_email = db.Column(db.String(100))
     
-    # --- NEW: IMAP Support for Reply Tracking ---
+    # IMAP Support
     imap_server = db.Column(db.String(100))
     imap_port = db.Column(db.Integer, default=993)
     imap_username = db.Column(db.String(100))
@@ -79,20 +80,28 @@ class SMTPServer(db.Model):
 class Campaign(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(140))
+    status = db.Column(db.String(20), default='Draft') # Draft, Sending, Paused, Stopped, Completed
     
-    # --- Standard Content ---
+    # Content
     subject = db.Column(db.String(140))
     body = db.Column(db.Text)
     
-    # --- NEW: A/B Testing Fields ---
+    # Configuration from Screenshot
+    parallel_workers = db.Column(db.Integer, default=10)
+    smtp_rotation_enabled = db.Column(db.Boolean, default=False)
+    throttle_amount = db.Column(db.Integer, default=20)
+    throttle_delay = db.Column(db.Integer, default=1)
+    throttle_unit = db.Column(db.String(10), default='Minutes') # 'Seconds' or 'Minutes'
+    
+    # A/B Testing
     ab_testing_enabled = db.Column(db.Boolean, default=False)
     subject_b = db.Column(db.String(140))
-    body_b = db.Column(db.Text) # Optional Body B
-    ab_split_ratio = db.Column(db.Integer, default=50) # Percentage for Version A
+    body_b = db.Column(db.Text)
+    ab_split_ratio = db.Column(db.Integer, default=50)
     
-    # --- NEW: Secure Redirector Fields ---
-    burner_domain = db.Column(db.String(100)) # e.g. "secure-updates.com"
-    lure_path = db.Column(db.String(100)) # e.g. "auth/login"
+    # Secure Redirector
+    burner_domain = db.Column(db.String(100))
+    lure_path = db.Column(db.String(100))
     
     timestamp = db.Column(db.DateTime, index=True, default=datetime.utcnow)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
@@ -103,10 +112,7 @@ class Campaign(db.Model):
 class Recipient(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(120), index=True)
-    
-    # --- Personalization Data (JSON) ---
-    # Store CSV data here to be used by Autograb
-    data = db.Column(db.Text) 
+    data = db.Column(db.Text) # JSON data
     
     status = db.Column(db.String(20), default='Queued')
     status_message = db.Column(db.String(200))
@@ -116,10 +122,6 @@ class Recipient(db.Model):
     clicked_at = db.Column(db.DateTime, nullable=True)
 
     def get_tracking_token(self, action, expires_in=None, payload=None):
-        """
-        Generates a secure token for tracking.
-        :param payload: Optional dict of extra data (e.g. original URL for clicks)
-        """
         s = Serializer(current_app.config['SECRET_KEY'])
         data = {'action': action, 'recipient_id': self.id}
         if payload:
