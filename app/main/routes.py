@@ -89,13 +89,13 @@ def new_campaign():
 
     global_settings = GlobalSettings.query.first()
     default_burner = global_settings.burner_domain if global_settings else ""
-    default_lure = global_settings.lure_path if global_settings else ""
+    default_lure = global_settings. lure_path if global_settings else ""
 
     if request.method == 'POST':
         try:
             ab_enabled = 'ab_testing_enabled' in request. form
 
-            body_html = request. form.get('body_html', '')
+            body_html = request.form. get('body_html', '')
             body_plain = html_to_plain_text(body_html)
 
             campaign = Campaign(
@@ -105,14 +105,14 @@ def new_campaign():
                 body_plain=body_plain,
                 ab_testing_enabled=ab_enabled,
                 subject_b=request.form. get('subject_b'),
-                body_b=request.form.get('body_b'),
-                ab_split_ratio=int(request.form.get('ab_split_ratio', 50)),
+                body_b=request. form.get('body_b'),
+                ab_split_ratio=int(request.form. get('ab_split_ratio', 50)),
                 burner_domain=request.form.get('burner_domain') or default_burner,
                 lure_path=request. form.get('lure_path') or default_lure,
-                smtp_profile_id=request.form.get('smtp_profile_id'),
-                throttle_amount=int(request.form.get('throttle_amount', 20)),
+                smtp_profile_id=request. form.get('smtp_profile_id'),
+                throttle_amount=int(request. form.get('throttle_amount', 20)),
                 throttle_delay=int(request. form.get('throttle_delay', 60)),
-                parallel_workers=int(request.form.get('parallel_workers', 10)),
+                parallel_workers=int(request. form.get('parallel_workers', 10)),
                 user_id=current_user.id
             )
             db.session.add(campaign)
@@ -120,14 +120,14 @@ def new_campaign():
 
             file = request.files. get('recipients_file')
             if file and file.filename:
-                stream = io.StringIO(file.stream.read().decode("UTF-8"), newline=None)
+                stream = io.StringIO(file.stream. read().decode("UTF-8"), newline=None)
                 csv_reader = csv. DictReader(stream)
                 if csv_reader.fieldnames:
                     csv_reader.fieldnames = [f.lower().strip() for f in csv_reader.fieldnames]
 
                 count = 0
                 for row in csv_reader:
-                    if 'email' in row and row['email']: 
+                    if 'email' in row and row['email']:
                         email = row['email']. strip().lower()
                         if not is_valid_email(email):
                             continue
@@ -167,8 +167,8 @@ def add_recipient_manual(campaign_id):
         return jsonify({'success': False, 'message': 'Unauthorized'}), 403
 
     email = request.form. get('email', '').strip().lower()
-    if not email: 
-        return jsonify({'success': False, 'message': 'Email required'})
+    if not email:
+        return jsonify({'success': False, 'message':  'Email required'})
 
     if not is_valid_email(email):
         return jsonify({'success': False, 'message': 'Invalid email format'})
@@ -227,7 +227,7 @@ def campaign_control(campaign_id, action):
             thread.start()
 
             log_activity(f"Started campaign:  {campaign.name}", "SUCCESS")
-            flash('Campaign started successfully. ', 'success')
+            flash('Campaign started successfully.', 'success')
 
         elif action == 'pause':
             campaign.status = 'Paused'
@@ -265,7 +265,7 @@ def run_campaign_sending(app, campaign_id):
     with app.app_context():
         try:
             campaign = Campaign.query.get(campaign_id)
-            if not campaign: 
+            if not campaign:
                 log_activity(f"Campaign {campaign_id} not found", "ERROR")
                 return
 
@@ -279,8 +279,8 @@ def run_campaign_sending(app, campaign_id):
             smtp_config = smtp_profile.to_dict()
             if not smtp_config.get('password'):
                 log_activity(f"No password for SMTP profile {smtp_profile.profile_name}", "ERROR")
-                campaign. status = 'Failed'
-                db. session.commit()
+                campaign.status = 'Failed'
+                db.session. commit()
                 return
 
             smtp_handler = SMTPHandler(smtp_config)
@@ -315,11 +315,11 @@ def run_campaign_sending(app, campaign_id):
                     if not campaign or campaign.status != 'Sending': 
                         break
 
-                    recipient = Recipient.query. get(recipient.id)
+                    recipient = Recipient. query.get(recipient.id)
                     if not recipient or recipient.status != 'Queued': 
                         continue
 
-                    try:
+                    try: 
                         recipient.status = 'Sending'
                         recipient.attempts += 1
                         db.session.commit()
@@ -332,7 +332,7 @@ def run_campaign_sending(app, campaign_id):
                                                   token=unsubscribe_token,
                                                   _external=True)
 
-                        success, message = smtp_handler. send_email_sync(
+                        success, message = smtp_handler.send_email_sync(
                             to_email=recipient.email,
                             subject=p_subject,
                             html_content=p_body_html,
@@ -343,7 +343,7 @@ def run_campaign_sending(app, campaign_id):
                         if success:
                             recipient.status = 'Sent'
                             recipient.sent_at = datetime. utcnow()
-                            recipient. status_message = "OK"
+                            recipient.status_message = "OK"
                             log_activity(f"Sent to {recipient.email}", "SUCCESS")
                         else:
                             recipient.status = 'Failed'
@@ -356,7 +356,7 @@ def run_campaign_sending(app, campaign_id):
                         recipient.status = 'Failed'
                         recipient.status_message = str(e)[: 250]
                         db.session.commit()
-                        log_activity(f"Exception sending to {recipient.email}: {e}", "ERROR")
+                        log_activity(f"Exception sending to {recipient. email}: {e}", "ERROR")
 
                 db.session.expire_all()
                 campaign = Campaign.query.get(campaign_id)
@@ -406,9 +406,9 @@ def validate_list(campaign_id):
         count += 1
 
     db.session.commit()
-    log_activity(f"Validated {count} recipients.  {valid} valid, {invalid} invalid.", "INFO")
+    log_activity(f"Validated {count} recipients. {valid} valid, {invalid} invalid.", "INFO")
     flash(f"Validated {count} emails. {valid} valid, {invalid} invalid.", "info")
-    return redirect(url_for('main. view_campaign', campaign_id=campaign. id))
+    return redirect(url_for('main. view_campaign', campaign_id=campaign.id))
 
 
 @bp.route('/campaign/<int:campaign_id>/clear_list')
@@ -443,7 +443,7 @@ def export_campaign_report(campaign_id):
         yield data.getvalue()
         data.seek(0)
         data.truncate(0)
-        for r in recipients: 
+        for r in recipients:
             w.writerow((r.email, r. status, r.sent_at, r.opened_at, r.clicked_at, r.attempts, r.status_message))
             yield data.getvalue()
             data.seek(0)
@@ -464,7 +464,7 @@ def smtp_profiles():
                 profile = SMTPServer.query.get(profile_id)
                 if not profile or profile.user_id != current_user.id:
                     flash("Profile not found.", "danger")
-                    return redirect(url_for('main. smtp_profiles'))
+                    return redirect(url_for('main.smtp_profiles'))
             else:
                 profile = SMTPServer(user_id=current_user.id)
 
@@ -475,7 +475,7 @@ def smtp_profiles():
             profile.sender_name = request.form. get('sender_name')
             profile. sender_email = request.form.get('sender_email')
             profile.use_tls = 'use_tls' in request.form
-            profile.use_ssl = 'use_ssl' in request. form
+            profile.use_ssl = 'use_ssl' in request.form
 
             password = request.form. get('password')
             if password and password. strip():
@@ -585,14 +585,14 @@ def general_settings():
         db.session.add(settings)
         db.session.commit()
 
-    if request.method == 'POST': 
-        settings.burner_domain = request.form. get('burner_domain')
-        settings.lure_path = request. form.get('lure_path')
+    if request.method == 'POST':
+        settings.burner_domain = request.form.get('burner_domain')
+        settings.lure_path = request.form.get('lure_path')
 
         pdf_file = request.files. get('template_pdf')
-        if pdf_file and pdf_file.filename:
+        if pdf_file and pdf_file.filename: 
             filename = secure_filename(pdf_file.filename)
-            upload_folder = os.path. join(current_app.root_path, 'static', 'uploads')
+            upload_folder = os.path.join(current_app.root_path, 'static', 'uploads')
             os.makedirs(upload_folder, exist_ok=True)
             path = os.path. join(upload_folder, filename)
             pdf_file.save(path)
@@ -628,8 +628,8 @@ def deliverability_tools_ajax():
     try:
         data = request.get_json()
         helper = DeliverabilityHelper()
-        success, result = helper. analyze_spam_ai(
-            data.get('subject'),
+        success, result = helper.analyze_spam_ai(
+            data. get('subject'),
             data.get('body'),
             provider_type=data.get('provider', 'openai')
         )
@@ -641,8 +641,8 @@ def deliverability_tools_ajax():
 @bp.route('/tools/ai_rewrite', methods=['POST'])
 @login_required
 def ai_rewrite():
-    try:
-        data = request.get_json()
+    try: 
+        data = request. get_json()
         content = data.get('content')
         if not content:
             return jsonify({'success': False, 'result': 'No content'})
@@ -680,7 +680,7 @@ def api_get_logs():
 @login_required
 def api_campaign_status(campaign_id):
     campaign = Campaign.query.get_or_404(campaign_id)
-    if campaign.author != current_user:
+    if campaign.author != current_user: 
         return jsonify({'error': 'Unauthorized'}), 403
 
     total = campaign.recipients.count()
@@ -709,7 +709,7 @@ def unsubscribe(token):
             recipient = Recipient. query.get(recipient_id)
             if recipient: 
                 recipient.status = 'Unsubscribed'
-                db.session.commit()
+                db.session. commit()
 
                 if not Suppression.query. filter_by(email=recipient.email).first():
                     suppression = Suppression(email=recipient. email, reason='Unsubscribed')
@@ -766,7 +766,7 @@ def track_click(token):
 
         recipient_id = data.get('rid')
         if recipient_id:
-            recipient = Recipient. query.get(recipient_id)
+            recipient = Recipient.query.get(recipient_id)
             if recipient and not recipient.clicked_at:
                 recipient.clicked_at = datetime.utcnow()
                 if recipient.status != 'Unsubscribed': 
@@ -780,8 +780,8 @@ def track_click(token):
 
 @bp.route('/login', methods=['GET', 'POST'])
 def login():
-    if current_user.is_authenticated:
-        return redirect(url_for('main.index'))
+    if current_user. is_authenticated: 
+        return redirect(url_for('main. index'))
     if request.method == 'POST':
         user = User.query. filter_by(username=request.form. get('username')).first()
         if user and user.check_password(request. form.get('password')):
