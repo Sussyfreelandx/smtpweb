@@ -3,16 +3,146 @@
 {% block content %}
 <div class="row justify-content-center mt-5">
     <div class="col-lg-6 col-md-8">
-        <div class="card shadow text-center">
-            <div class="card-body py-5">
-                <i class="fas fa-envelope-open-text fa-4x text-primary mb-4"></i>
-                <h1 class="card-title">{{ message_title }}</h1>
-                <p class="lead text-muted">{{ message_body }}</p>
-                <a href="{{ url_for('main.index') }}" class="btn btn-primary mt-3">
-                    <i class="fas fa-home"></i> Return to Dashboard
-                </a>
+        <div class="card shadow-sm text-center">
+            <div class="card-body py-5 px-4">
+                <!-- Dynamic Icon based on message type -->
+                {% if message_type == 'success' or 'success' in message_title|lower %}
+                <div class="bg-success bg-opacity-10 rounded-circle d-inline-flex align-items-center justify-content-center mb-4" style="width: 100px; height: 100px;">
+                    <i class="fas fa-check-circle fa-4x text-success"></i>
+                </div>
+                {% elif message_type == 'error' or 'error' in message_title|lower or 'fail' in message_title|lower %}
+                <div class="bg-danger bg-opacity-10 rounded-circle d-inline-flex align-items-center justify-content-center mb-4" style="width: 100px; height: 100px;">
+                    <i class="fas fa-times-circle fa-4x text-danger"></i>
+                </div>
+                {% elif message_type == 'warning' or 'warning' in message_title|lower %}
+                <div class="bg-warning bg-opacity-10 rounded-circle d-inline-flex align-items-center justify-content-center mb-4" style="width: 100px; height: 100px;">
+                    <i class="fas fa-exclamation-triangle fa-4x text-warning"></i>
+                </div>
+                {% elif 'unsubscribe' in message_title|lower %}
+                <div class="bg-info bg-opacity-10 rounded-circle d-inline-flex align-items-center justify-content-center mb-4" style="width: 100px; height: 100px;">
+                    <i class="fas fa-envelope-open-text fa-4x text-info"></i>
+                </div>
+                {% else %}
+                <div class="bg-primary bg-opacity-10 rounded-circle d-inline-flex align-items-center justify-content-center mb-4" style="width: 100px; height: 100px;">
+                    <i class="fas fa-info-circle fa-4x text-primary"></i>
+                </div>
+                {% endif %}
+                
+                <!-- Title -->
+                <h1 class="card-title h2 mb-3">{{ message_title }}</h1>
+                
+                <!-- Body Message -->
+                <p class="lead text-muted mb-4">{{ message_body }}</p>
+                
+                <!-- Additional Details (if provided) -->
+                {% if message_details %}
+                <div class="bg-light rounded p-3 mb-4 text-start">
+                    <small class="text-muted">
+                        {{ message_details }}
+                    </small>
+                </div>
+                {% endif %}
+                
+                <!-- Action Buttons -->
+                <div class="d-flex justify-content-center gap-3 flex-wrap">
+                    {% if current_user.is_authenticated %}
+                    <a href="{{ url_for('main.index') }}" class="btn btn-primary px-4">
+                        <i class="fas fa-home me-2"></i> Return to Dashboard
+                    </a>
+                    {% else %}
+                    <a href="{{ url_for('main.login') }}" class="btn btn-primary px-4">
+                        <i class="fas fa-sign-in-alt me-2"></i> Sign In
+                    </a>
+                    {% endif %}
+                    
+                    {% if show_back_button %}
+                    <button onclick="history.back()" class="btn btn-outline-secondary px-4">
+                        <i class="fas fa-arrow-left me-2"></i> Go Back
+                    </button>
+                    {% endif %}
+                    
+                    {% if action_url and action_text %}
+                    <a href="{{ action_url }}" class="btn btn-success px-4">
+                        <i class="fas fa-arrow-right me-2"></i> {{ action_text }}
+                    </a>
+                    {% endif %}
+                </div>
+            </div>
+            
+            <!-- Footer (optional contact/support info) -->
+            {% if show_support %}
+            <div class="card-footer bg-light text-muted small py-3">
+                <i class="fas fa-question-circle me-1"></i>
+                Need help? Contact support at 
+                <a href="mailto:support@example.com">support@example.com</a>
+            </div>
+            {% endif %}
+        </div>
+        
+        <!-- Auto-redirect notice (if applicable) -->
+        {% if redirect_url and redirect_seconds %}
+        <div class="text-center mt-3">
+            <p class="text-muted small">
+                <i class="fas fa-clock me-1"></i>
+                You will be redirected in <span id="countdown">{{ redirect_seconds }}</span> seconds... 
+            </p>
+            <a href="{{ redirect_url }}" class="small">Click here if not redirected automatically</a>
+        </div>
+        
+        <script>
+            (function() {
+                var seconds = {{ redirect_seconds }};
+                var countdownEl = document.getElementById('countdown');
+                
+                var interval = setInterval(function() {
+                    seconds--;
+                    countdownEl.textContent = seconds;
+                    
+                    if (seconds <= 0) {
+                        clearInterval(interval);
+                        window.location.href = "{{ redirect_url }}";
+                    }
+                }, 1000);
+            })();
+        </script>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Additional styling for special pages -->
+{% if is_unsubscribe_page %}
+<div class="row justify-content-center mt-4">
+    <div class="col-lg-6 col-md-8">
+        <div class="card border-0 bg-light">
+            <div class="card-body text-center py-4">
+                <h6 class="text-muted mb-3">We're sorry to see you go</h6>
+                <p class="small text-muted mb-0">
+                    You have been successfully unsubscribed from our mailing list.
+                    If this was a mistake, you can always re-subscribe by contacting us.
+                </p>
             </div>
         </div>
     </div>
 </div>
+{% endif %}
+
+{% if is_error_page %}
+<div class="row justify-content-center mt-4">
+    <div class="col-lg-6 col-md-8">
+        <div class="card border-0">
+            <div class="card-body">
+                <h6 class="text-muted mb-3">
+                    <i class="fas fa-lightbulb me-1 text-warning"></i> Troubleshooting Tips
+                </h6>
+                <ul class="small text-muted ps-3 mb-0">
+                    <li>Check if the URL is correct</li>
+                    <li>Try refreshing the page</li>
+                    <li>Clear your browser cache</li>
+                    <li>If the problem persists, contact support</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
 {% endblock %}
