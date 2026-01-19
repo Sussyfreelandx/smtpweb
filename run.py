@@ -1,23 +1,20 @@
 from app import create_app, db
-from app.models import User, Campaign, Recipient, SMTPServer, Suppression, GlobalSettings
+from app.models import User, Campaign, Recipient, SMTPServer, Suppression
 
-# Create the application instance
 app = create_app()
 
 
 @app.shell_context_processor
 def make_shell_context():
-    """Makes objects available in flask shell."""
     return {
         'db': db,
         'User': User,
-        'Campaign': Campaign,
+        'Campaign':  Campaign,
         'Recipient': Recipient,
         'SMTPServer': SMTPServer,
-        'Suppression': Suppression,
-        'GlobalSettings': GlobalSettings
+        'Suppression':  Suppression
     }
 
 
-if __name__ == '__main__':
+if __name__ == '__main__': 
     app.run(debug=True)
