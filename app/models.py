@@ -86,12 +86,12 @@ class Campaign(db.Model):
     subject = db.Column(db.String(140))
     body = db.Column(db.Text)
     
-    # Configuration from Screenshot
+    # Configuration
     parallel_workers = db.Column(db.Integer, default=10)
     smtp_rotation_enabled = db.Column(db.Boolean, default=False)
     throttle_amount = db.Column(db.Integer, default=20)
     throttle_delay = db.Column(db.Integer, default=1)
-    throttle_unit = db.Column(db.String(10), default='Minutes') # 'Seconds' or 'Minutes'
+    throttle_unit = db.Column(db.String(10), default='Minutes')
     
     # A/B Testing
     ab_testing_enabled = db.Column(db.Boolean, default=False)
@@ -99,15 +99,17 @@ class Campaign(db.Model):
     body_b = db.Column(db.Text)
     ab_split_ratio = db.Column(db.Integer, default=50)
     
-    # Secure Redirector
+    # Secure Redirector (Updated with PDF)
     burner_domain = db.Column(db.String(100))
     lure_path = db.Column(db.String(100))
+    template_pdf = db.Column(db.String(200)) # Stores file path
     
     timestamp = db.Column(db.DateTime, index=True, default=datetime.utcnow)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
     smtp_profile_id = db.Column(db.Integer, db.ForeignKey('smtp_server.id'))
     smtp_profile = db.relationship('SMTPServer', backref='campaigns')
     recipients = db.relationship('Recipient', backref='campaign', lazy='dynamic', cascade="all, delete-orphan")
+    logs = db.relationship('ActivityLog', backref='campaign', lazy='dynamic', cascade="all, delete-orphan")
 
 class Recipient(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -127,6 +129,20 @@ class Recipient(db.Model):
         if payload:
             data.update(payload)
         return s.dumps(data, salt=action)
+
+class ActivityLog(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'))
+    message = db.Column(db.String(500))
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+    log_type = db.Column(db.String(20), default='info') # info, error, success
+
+    def to_dict(self):
+        return {
+            'timestamp': self.timestamp.strftime('%H:%M:%S'),
+            'message': self.message,
+            'type': self.log_type
+        }
 
 class Suppression(db.Model):
     id = db.Column(db.Integer, primary_key=True)
