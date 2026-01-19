@@ -98,7 +98,7 @@ class SMTPServer(db.Model):
     def to_dict(self):
         return {
             'server': self.server,
-            'port':  self.port,
+            'port': self.port,
             'username': self.username,
             'password': self.get_password(),
             'sender_name': self.sender_name,
