@@ -8,111 +8,124 @@ from app.core_logic.smtp_handler import SMTPHandler
 from app.core_logic.personalization import PersonalizationEngine
 from app.utils import log_activity
 
-# Initialize App Context for Worker
 app = create_app()
 app.app_context().push()
 
 @shared_task(bind=True)
 def send_campaign_task(self, campaign_id):
     """
-    Orchestrator for sending campaigns.
-    Handles Throttling and Parallel batching.
+    Orchestrator: Batches recipients and delegates to workers.
     """
     with app.app_context():
         campaign = Campaign.query.get(campaign_id)
-        if not campaign: return
+        if not campaign or campaign.status != 'Sending': return
 
-        if campaign.status not in ['Sending']:
-            return
-
+        # Configuration
         batch_size = campaign.throttle_amount or 20
         delay_seconds = campaign.throttle_delay or 60
         
-        log_activity(f"Starting campaign task: {campaign.name}. Batch: {batch_size}", "INFO")
+        log_activity(f"Starting campaign '{campaign.name}'. Batch: {batch_size}", "INFO")
 
         recipients = campaign.recipients.filter_by(status='Queued').all()
-        total_recipients = len(recipients)
+        total = len(recipients)
         
-        if total_recipients == 0:
+        if total == 0:
             campaign.status = 'Completed'
             db.session.commit()
             return
 
         # Process in batches
-        for i in range(0, total_recipients, batch_size):
+        for i in range(0, total, batch_size):
             db.session.refresh(campaign)
             if campaign.status != 'Sending':
-                log_activity(f"Campaign {campaign.name} stopped/paused.", "WARNING")
+                log_activity(f"Campaign '{campaign.name}' paused/stopped.", "WARNING")
                 break
 
             batch = recipients[i : i + batch_size]
-            log_activity(f"Sending batch {i//batch_size + 1}: {len(batch)} emails...", "INFO")
+            batch_ids = [r.id for r in batch]
             
-            # Use Celery group for parallel execution
-            job_group = group(send_single_email_task.s(r.id) for r in batch)
-            job_group.apply_async()
+            log_activity(f"Processing batch {i//batch_size + 1}: {len(batch)} emails.", "INFO")
             
-            # Throttling delay
-            if i + batch_size < total_recipients:
+            # Send the entire batch IDs to a single worker for connection reuse
+            send_batch_task.delay(campaign_id, batch_ids)
+            
+            if i + batch_size < total:
                 time.sleep(delay_seconds)
 
-        # Final check
+        # Final Status Check
         db.session.refresh(campaign)
-        if campaign.status == 'Sending':
-            remaining = campaign.recipients.filter_by(status='Queued').count()
-            if remaining == 0:
-                campaign.status = 'Completed'
-                db.session.commit()
-                log_activity(f"Campaign {campaign.name} completed.", "SUCCESS")
+        remaining = campaign.recipients.filter_by(status='Queued').count()
+        if remaining == 0 and campaign.status == 'Sending':
+            campaign.status = 'Completed'
+            db.session.commit()
+            log_activity(f"Campaign '{campaign.name}' completed.", "SUCCESS")
 
-@shared_task(bind=True, autoretry_for=(Exception,), retry_kwargs={'max_retries': 2, 'countdown': 30})
-def send_single_email_task(self, recipient_id):
+@shared_task(bind=True)
+def send_batch_task(self, campaign_id, recipient_ids):
     """
-    Worker task: Sends a single email.
+    Worker: Opens ONE SMTP connection and sends to multiple recipients.
+    This drastically improves speed and reliability.
     """
     with app.app_context():
-        recipient = Recipient.query.get(recipient_id)
-        if not recipient or recipient.status != 'Queued': return
+        campaign = Campaign.query.get(campaign_id)
+        if not campaign: return
 
-        campaign = recipient.campaign
-        if campaign.status != 'Sending': return
+        smtp_profile = campaign.smtp_profile
+        if not smtp_profile:
+            log_activity("Worker failed: No SMTP profile.", "ERROR")
+            return
 
-        recipient.status = 'Sending'
-        db.session.commit()
+        # Initialize SMTP Handler ONCE
+        config = smtp_profile.to_dict()
+        smtp_handler = SMTPHandler(config)
         
-        try:
-            smtp_profile = campaign.smtp_profile
-            if not smtp_profile: raise Exception("No SMTP Profile")
-
-            # Decrypt config freshly
-            profile_config = smtp_profile.to_dict()
-            smtp_handler = SMTPHandler(profile_config)
-            personalizer = PersonalizationEngine(campaign, recipient)
-            
-            p_subject, p_body = personalizer.personalize()
-            unsub_token = recipient.get_tracking_token('unsubscribe')
-            unsub_url = url_for('main.unsubscribe', token=unsub_token, _external=True)
-
-            # Sync Send (Robust)
-            success, message = smtp_handler.send_email_sync(
-                to_email=recipient.email,
-                subject=p_subject,
-                html_content=p_body,
-                unsubscribe_url=unsub_url
+        # Connect once
+        connected, error_msg = smtp_handler.connect()
+        if not connected:
+            log_activity(f"Worker SMTP Connection Failed: {error_msg}", "ERROR")
+            # Mark all in batch as failed so they don't hang
+            Recipient.query.filter(Recipient.id.in_(recipient_ids)).update(
+                {'status': 'Failed', 'status_message': f'SMTP Connect Error: {error_msg}'},
+                synchronize_session=False
             )
+            db.session.commit()
+            return
 
-            if success:
-                recipient.status = 'Sent'
-                recipient.sent_at = datetime.utcnow()
-                recipient.status_message = "OK"
-            else:
-                recipient.status = 'Failed'
-                recipient.status_message = message
-                log_activity(f"Failed {recipient.email}: {message}", "ERROR")
+        # Send loop reuse connection
+        for rid in recipient_ids:
+            recipient = Recipient.query.get(rid)
+            if not recipient or recipient.status != 'Queued': continue
+
+            # Check pause status periodically
+            if campaign.status != 'Sending': break
+
+            recipient.status = 'Sending'
+            db.session.commit()
+
+            try:
+                personalizer = PersonalizationEngine(campaign, recipient)
+                p_subject, p_body = personalizer.personalize()
                 
-        except Exception as e:
-            recipient.status = 'Failed'
-            recipient.status_message = str(e)
-            log_activity(f"Worker Error {recipient.email}: {e}", "ERROR")
-        
-        db.session.commit()
+                unsub_token = recipient.get_tracking_token('unsubscribe')
+                unsub_url = url_for('main.unsubscribe', token=unsub_token, _external=True)
+
+                # Use the existing connection
+                success, msg = smtp_handler.send_message_existing_conn(
+                    recipient.email, p_subject, p_body, unsub_url
+                )
+
+                if success:
+                    recipient.status = 'Sent'
+                    recipient.sent_at = datetime.now()
+                    recipient.status_message = "OK"
+                else:
+                    recipient.status = 'Failed'
+                    recipient.status_message = msg
+            except Exception as e:
+                recipient.status = 'Failed'
+                recipient.status_message = str(e)
+            
+            db.session.commit()
+
+        # Close connection after batch
+        smtp_handler.quit()
