@@ -3,7 +3,8 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_login import LoginManager
 from celery import Celery
-from config import Config
+# CHANGED: Import from current package (.) instead of root
+from .config import Config 
 
 # Initialize extensions
 db = SQLAlchemy()
@@ -22,11 +23,11 @@ def create_app(config_class=Config):
     login.init_app(app)
     celery.conf.update(app.config)
 
-    # Register Main Blueprint (Dashboard, Settings, Campaigns)
+    # Register Main Blueprint
     from app.main.routes import bp as main_bp
     app.register_blueprint(main_bp)
 
-    # Register Tracking Blueprint (Open/Click Tracking)
+    # Register Tracking Blueprint
     from app.tracking import bp as tracking_bp
     app.register_blueprint(tracking_bp)
 
