@@ -39,13 +39,9 @@ class SMTPServer(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
 
     def _get_fernet_key(self):
-        """Generates a safe 32-byte key from app secret."""
-        try:
-            secret = current_app.config.get('SECRET_KEY', 'default-fallback-key')
-            digest = hashlib.sha256(secret.encode()).digest()
-            return base64.urlsafe_b64encode(digest)
-        except Exception:
-            return base64.urlsafe_b64encode(hashlib.sha256(b'default').digest())
+        secret = current_app.config.get('SECRET_KEY', 'default-fallback-key')
+        digest = hashlib.sha256(secret.encode()).digest()
+        return base64.urlsafe_b64encode(digest)
 
     def set_password(self, password):
         if not password: return
@@ -53,21 +49,28 @@ class SMTPServer(db.Model):
             key = self._get_fernet_key()
             f = Fernet(key)
             self.password_encrypted = f.encrypt(password.encode()).decode()
-        except Exception:
+        except Exception as e:
+            # Avoid crashing if encryption fails
+            print(f"Encryption Error: {e}")
             pass
 
     def get_password(self):
-        """Safely retrieves password without crashing if key changed."""
+        """
+        Safely retrieves password. Returns None if decryption fails, 
+        preventing 500 Internal Server Error.
+        """
         if not self.password_encrypted: return None
         try:
             key = self._get_fernet_key()
             f = Fernet(key)
             return f.decrypt(self.password_encrypted.encode()).decode()
         except Exception:
-            # CRITICAL FIX: Return None instead of raising 500 Error
+            # CRITICAL FIX: Return None if key has changed or data is corrupt.
+            # This prevents the entire settings page from crashing.
             return None
     
     def to_dict(self):
+        # This now safely handles password decryption
         return {
             'server': self.server,
             'port': self.port,
@@ -79,6 +82,7 @@ class SMTPServer(db.Model):
             'use_ssl': self.use_ssl
         }
 
+# ... rest of the models (Campaign, Recipient, etc.) remain the same
 class Campaign(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(140))
@@ -99,6 +103,7 @@ class Campaign(db.Model):
     smtp_profile_id = db.Column(db.Integer, db.ForeignKey('smtp_server.id'))
     smtp_profile = db.relationship('SMTPServer', backref='campaigns')
     recipients = db.relationship('Recipient', backref='campaign', lazy='dynamic', cascade="all, delete-orphan")
+    attachments = db.relationship('Attachment', backref='campaign', lazy='dynamic', cascade="all, delete-orphan")
 
 class Recipient(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -116,6 +121,12 @@ class Recipient(db.Model):
         data = {'action': action, 'rid': self.id}
         if payload: data.update(payload)
         return s.dumps(data, salt='track')
+
+class Attachment(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    filename = db.Column(db.String(255))
+    filepath = db.Column(db.String(512)) # Store path on server
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'))
 
 class Suppression(db.Model):
     id = db.Column(db.Integer, primary_key=True)
