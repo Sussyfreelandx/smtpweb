@@ -154,7 +154,8 @@
                             </tr>
                         </thead>
                         <tbody>
-                            {% for campaign in campaigns.limit(20).all() %}
+                            <!-- Use recent_campaigns (list) if available, otherwise fallback to iterating query -->
+                            {% for campaign in recent_campaigns if recent_campaigns else campaigns.limit(20).all() %}
                             <tr>
                                 <td class="ps-4">
                                     <a href="{{ url_for('main.view_campaign', campaign_id=campaign.id) }}" class="text-decoration-none fw-bold text-dark">
@@ -195,8 +196,12 @@
                                     </span>
                                 </td>
                                 <td class="text-muted small">
-                                    <div>{{ campaign.created_at.strftime('%Y-%m-%d') }}</div>
-                                    <small class="text-muted">{{ campaign.created_at.strftime('%H:%M') }}</small>
+                                    {% if campaign.created_at %}
+                                        <div>{{ campaign.created_at.strftime('%Y-%m-%d') }}</div>
+                                        <small class="text-muted">{{ campaign.created_at.strftime('%H:%M') }}</small>
+                                    {% else %}
+                                        <span class="text-muted">-</span>
+                                    {% endif %}
                                 </td>
                                 <td class="text-center">
                                     <span class="badge bg-light text-dark border">
