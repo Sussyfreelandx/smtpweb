@@ -33,27 +33,19 @@ class SMTPServer(db.Model):
     use_tls = db.Column(db.Boolean, default=True)
     use_ssl = db.Column(db.Boolean, default=False)
     username = db.Column(db.String(100), nullable=False)
-    password_encrypted = db.Column(db.String(512), nullable=True) # Allow nullable for initial creation
+    password_encrypted = db.Column(db.String(512), nullable=True)
     sender_name = db.Column(db.String(100))
     sender_email = db.Column(db.String(100))
-    
-    imap_server = db.Column(db.String(100))
-    imap_port = db.Column(db.Integer, default=993)
-    imap_username = db.Column(db.String(100))
-    imap_password_encrypted = db.Column(db.String(512))
-    
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
 
     def _get_fernet_key(self):
-        """
-        Generates a safe URL-safe base64-encoded 32-byte key from the app SECRET_KEY.
-        This prevents Internal Server Errors if SECRET_KEY is not in Fernet format.
-        """
-        secret = current_app.config['SECRET_KEY']
-        # Hash the secret to ensure 32 bytes
-        digest = hashlib.sha256(secret.encode()).digest()
-        # Encode to base64url format required by Fernet
-        return base64.urlsafe_b64encode(digest)
+        """Generates a safe 32-byte key from app secret."""
+        try:
+            secret = current_app.config.get('SECRET_KEY', 'default-fallback-key')
+            digest = hashlib.sha256(secret.encode()).digest()
+            return base64.urlsafe_b64encode(digest)
+        except Exception:
+            return base64.urlsafe_b64encode(hashlib.sha256(b'default').digest())
 
     def set_password(self, password):
         if not password: return
@@ -61,37 +53,19 @@ class SMTPServer(db.Model):
             key = self._get_fernet_key()
             f = Fernet(key)
             self.password_encrypted = f.encrypt(password.encode()).decode()
-        except Exception as e:
-            print(f"Encryption Error: {e}")
-            # In a real production app, handle this. 
-            # For now, we avoid crashing if encryption fails.
+        except Exception:
             pass
 
     def get_password(self):
+        """Safely retrieves password without crashing if key changed."""
         if not self.password_encrypted: return None
         try:
             key = self._get_fernet_key()
             f = Fernet(key)
             return f.decrypt(self.password_encrypted.encode()).decode()
         except Exception:
-            # Return None instead of crashing 500 error if key changed or data corrupt
+            # CRITICAL FIX: Return None instead of raising 500 Error
             return None
-    
-    def set_imap_password(self, password):
-        if not password: return
-        try:
-            key = self._get_fernet_key()
-            f = Fernet(key)
-            self.imap_password_encrypted = f.encrypt(password.encode()).decode()
-        except Exception: pass
-
-    def get_imap_password(self):
-        if not self.imap_password_encrypted: return None
-        try:
-            key = self._get_fernet_key()
-            f = Fernet(key)
-            return f.decrypt(self.imap_password_encrypted.encode()).decode()
-        except Exception: return None
     
     def to_dict(self):
         return {
@@ -110,35 +84,25 @@ class Campaign(db.Model):
     name = db.Column(db.String(140))
     subject = db.Column(db.String(140))
     body = db.Column(db.Text)
-    
     ab_testing_enabled = db.Column(db.Boolean, default=False)
     subject_b = db.Column(db.String(140))
     body_b = db.Column(db.Text)
     ab_split_ratio = db.Column(db.Integer, default=50)
-    
     burner_domain = db.Column(db.String(100))
     lure_path = db.Column(db.String(100))
-    
-    # New Config Fields
     throttle_amount = db.Column(db.Integer, default=20)
     throttle_delay = db.Column(db.Integer, default=60)
     parallel_workers = db.Column(db.Integer, default=10)
-    
-    # Status tracking
-    status = db.Column(db.String(20), default='Draft') # Draft, Sending, Paused, Completed, Stopped
-    
+    status = db.Column(db.String(20), default='Draft')
     timestamp = db.Column(db.DateTime, index=True, default=datetime.utcnow)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
-    
     smtp_profile_id = db.Column(db.Integer, db.ForeignKey('smtp_server.id'))
     smtp_profile = db.relationship('SMTPServer', backref='campaigns')
-    
     recipients = db.relationship('Recipient', backref='campaign', lazy='dynamic', cascade="all, delete-orphan")
 
 class Recipient(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(120), index=True)
-    # Important: db.Text is used to store full CSV row JSON for autograb logic
     data = db.Column(db.Text) 
     status = db.Column(db.String(20), default='Queued')
     status_message = db.Column(db.String(255))
