@@ -26,7 +26,7 @@ class SMTPHandler:
 
     def _create_secure_ssl_context(self):
         context = ssl.create_default_context()
-        context.minimum_version = ssl.TLSVersion.TLSv1_2
+        context.minimum_version = ssl. TLSVersion. TLSv1_2
         return context
 
     def _html_to_text(self, html):
