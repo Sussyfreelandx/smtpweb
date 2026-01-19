@@ -265,6 +265,11 @@
             isCollapsed = !isCollapsed;
         }
 
+        // --- CRITICAL FIX START: Commented out broken log fetcher ---
+        // The URL 'main.api_get_logs' does not exist, which was causing the 500 Error.
+        // We comment this out so the page can load.
+        
+        /*
         function fetchLogs() {
             fetch("{{ url_for('main.api_get_logs') }}")
                 .then(response => response.json())
@@ -304,6 +309,8 @@
 
         setInterval(fetchLogs, 2500);
         fetchLogs();
+        */
+        // --- CRITICAL FIX END ---
         {% endif %}
     </script>
   </body>
