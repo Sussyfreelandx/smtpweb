@@ -11,19 +11,19 @@
             <div class="card-body">
                 <div class="d-grid gap-2">
                     <a href="{{ url_for('main.new_campaign') }}" class="btn btn-primary">
-                        <i class="fas fa-plus"></i> New Campaign
+                        <i class="fas fa-plus me-1"></i> New Campaign
                     </a>
-                    <!-- FIXED: Linked to Deliverability/Analytics tools -->
-                    <a href="{{ url_for('main.deliverability_tools') }}" class="btn btn-outline-dark">
-                        <i class="fas fa-chart-line"></i> Deliverability & Tools
+                    <a href="{{ url_for('main.analytics_dashboard') }}" class="btn btn-outline-info">
+                        <i class="fas fa-chart-line me-1"></i> Analytics
                     </a>
-                    <!-- FIXED: Linked to SMTP Profiles -->
-                    <a href="{{ url_for('main.smtp_profiles') }}" class="btn btn-outline-dark">
-                        <i class="fas fa-cogs"></i> SMTP Settings
+                    <a href="{{ url_for('main. deliverability_tools') }}" class="btn btn-outline-dark">
+                        <i class="fas fa-shield-alt me-1"></i> Deliverability Tools
                     </a>
-                    <!-- NEW: Linked to Suppression List -->
+                    <a href="{{ url_for('main. smtp_profiles') }}" class="btn btn-outline-dark">
+                        <i class="fas fa-server me-1"></i> SMTP Settings
+                    </a>
                     <a href="{{ url_for('main.suppression_list') }}" class="btn btn-outline-danger">
-                        <i class="fas fa-ban"></i> Suppression List
+                        <i class="fas fa-ban me-1"></i> Suppression List
                     </a>
                 </div>
                 
@@ -31,17 +31,13 @@
                 
                 <h6 class="text-muted small text-uppercase">System Status</h6>
                 <ul class="list-group list-group-flush small">
-                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                    <li class="list-group-item d-flex justify-content-between align-items-center px-0">
                         Web Server
                         <span class="badge bg-success rounded-pill">Running</span>
                     </li>
-                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                    <li class="list-group-item d-flex justify-content-between align-items-center px-0">
                         Database
                         <span class="badge bg-success rounded-pill">Connected</span>
-                    </li>
-                    <li class="list-group-item d-flex justify-content-between align-items-center">
-                        Worker (Celery)
-                        <span class="badge bg-success rounded-pill">Active</span>
                     </li>
                 </ul>
             </div>
@@ -53,15 +49,17 @@
         <div class="card card-custom">
             <div class="card-header bg-white d-flex justify-content-between align-items-center">
                 <span class="fw-bold"><i class="fas fa-envelope-open-text text-success me-2"></i> Recent Campaigns</span>
-                <span class="badge bg-secondary">{{ campaigns.count() }} Total</span>
+                <span class="badge bg-secondary">{{ campaigns. count() }} Total</span>
             </div>
             <div class="card-body p-0">
-                {% if campaigns.count() == 0 %}
+                {% if campaigns. count() == 0 %}
                     <div class="text-center py-5">
                         <i class="fas fa-inbox fa-3x text-muted mb-3"></i>
                         <h5 class="text-muted">No campaigns found</h5>
                         <p class="text-secondary">Get started by creating your first email campaign.</p>
-                        <a href="{{ url_for('main.new_campaign') }}" class="btn btn-sm btn-primary">Create Campaign</a>
+                        <a href="{{ url_for('main. new_campaign') }}" class="btn btn-sm btn-primary">
+                            <i class="fas fa-plus me-1"></i> Create Campaign
+                        </a>
                     </div>
                 {% else %}
                     <div class="table-responsive">
@@ -69,6 +67,7 @@
                             <thead class="bg-light">
                                 <tr>
                                     <th class="ps-4">Campaign Name</th>
+                                    <th>Status</th>
                                     <th>Subject</th>
                                     <th>Created</th>
                                     <th>Recipients</th>
@@ -82,17 +81,27 @@
                                         <a href="{{ url_for('main.view_campaign', campaign_id=campaign.id) }}" class="text-decoration-none text-dark">
                                             {{ campaign.name }}
                                         </a>
+                                        {% if campaign.ab_testing_enabled %}
+                                        <span class="badge bg-info ms-1" title="A/B Testing Enabled">A/B</span>
+                                        {% endif %}
                                     </td>
-                                    <td class="text-muted small">{{ campaign.subject }}</td>
-                                    <td class="text-muted small">{{ campaign.timestamp.strftime('%Y-%m-%d') }}</td>
+                                    <td>
+                                        <span class="campaign-status campaign-{{ campaign.status|lower }}">
+                                            {{ campaign.status }}
+                                        </span>
+                                    </td>
+                                    <td class="text-muted small" style="max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                                        {{ campaign.subject }}
+                                    </td>
+                                    <td class="text-muted small">{{ campaign.timestamp.strftime('%Y-%m-%d %H:%M') }}</td>
                                     <td>
                                         <span class="badge bg-info text-dark">
-                                            {{ campaign.recipients.count() }}
+                                            {{ campaign.recipients. count() }}
                                         </span>
                                     </td>
                                     <td class="text-end pe-4">
                                         <a href="{{ url_for('main.view_campaign', campaign_id=campaign.id) }}" class="btn btn-sm btn-outline-primary">
-                                            Manage
+                                            <i class="fas fa-eye me-1"></i> Manage
                                         </a>
                                     </td>
                                 </tr>
