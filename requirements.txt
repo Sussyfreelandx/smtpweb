@@ -14,7 +14,7 @@ Jinja2
 pypdf2
 requests
 itsdangerous
-PySocks==1.7.1  <-- ADD THIS LINE
+PySocks==1.7.1
 
 # Background Jobs
 Celery
