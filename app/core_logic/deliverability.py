@@ -8,10 +8,10 @@ try:
 except ImportError:
     DNSPYTHON_AVAILABLE = False
 
-try:
+try: 
     import requests
     REQUESTS_AVAILABLE = True
-except ImportError:
+except ImportError: 
     REQUESTS_AVAILABLE = False
 
 log = logging.getLogger(__name__)
@@ -20,14 +20,14 @@ log = logging.getLogger(__name__)
 class DeliverabilityHelper:
     def __init__(self):
         if DNSPYTHON_AVAILABLE:
-            self.resolver = dns.resolver.Resolver()
+            self.resolver = dns.resolver. Resolver()
             self.resolver.timeout = 3
             self.resolver.lifetime = 3
         else:
             self.resolver = None
 
         self.blacklist_servers = [
-            "bl.spamcop.net", "dnsbl.sorbs.net", "zen.spamhaus.org",
+            "bl.spamcop.net", "dnsbl.sorbs.net", "zen.spamhaus. org",
             "b.barracudacentral.org", "cbl.abuseat.org"
         ]
 
@@ -38,7 +38,7 @@ class DeliverabilityHelper:
         try:
             self.resolver.resolve(domain, 'MX')
             return "Valid"
-        except dns.resolver.NXDOMAIN:
+        except dns.resolver.NXDOMAIN: 
             return "Invalid (No Domain)"
         except dns.resolver.NoAnswer:
             return "Invalid (No MX)"
@@ -55,7 +55,7 @@ class DeliverabilityHelper:
         results = {}
 
         # Check SPF
-        try:
+        try: 
             txt_records = self. resolver.resolve(domain, 'TXT')
             spf_record = next((str(r) for r in txt_records if 'v=spf1' in str(r).lower()), None)
             results['spf'] = "Found" if spf_record else "Missing"
@@ -63,8 +63,8 @@ class DeliverabilityHelper:
             results['spf'] = "Error"
 
         # Check DMARC
-        try:
-            dmarc_domain = f'_dmarc.{domain}'
+        try: 
+            dmarc_domain = f'_dmarc. {domain}'
             txt_records = self. resolver.resolve(dmarc_domain, 'TXT')
             dmarc_record = next((str(r) for r in txt_records if 'v=dmarc1' in str(r).lower()), None)
             results['dmarc'] = "Found" if dmarc_record else "Missing"
@@ -76,7 +76,7 @@ class DeliverabilityHelper:
         common_selectors = ["google", "selector1", "selector2", "default", "k1", "dkim"]
         for selector in common_selectors:
             try:
-                self.resolver.resolve(f'{selector}._domainkey.{domain}', 'TXT')
+                self.resolver.resolve(f'{selector}._domainkey. {domain}', 'TXT')
                 dkim_found = True
                 break
             except Exception:
@@ -93,7 +93,7 @@ class DeliverabilityHelper:
         is_ip = re.match(r'^\d{1,3}(\.\d{1,3}){3}$', ip_or_domain)
 
         if is_ip:
-            query_target = '.'.join(reversed(ip_or_domain.split('.')))
+            query_target = '. '.join(reversed(ip_or_domain.split('.')))
         else:
             query_target = ip_or_domain
 
@@ -106,11 +106,11 @@ class DeliverabilityHelper:
             except Exception:
                 continue
 
-        return f"Listed on: {', '.join(listed_on)}" if listed_on else "Clean"
+        return f"Listed on:  {', '.join(listed_on)}" if listed_on else "Clean"
 
     def check_link_health(self, html_content):
         """Check if links in content are valid."""
-        if not REQUESTS_AVAILABLE:
+        if not REQUESTS_AVAILABLE: 
             return {"error": "Requests library not available"}
 
         links = re.findall(r'href=["\'](https?://[^"\']+)["\']', html_content)
@@ -121,7 +121,7 @@ class DeliverabilityHelper:
         for link in set(links):
             try:
                 response = requests.head(link, timeout=5, allow_redirects=True)
-                if 200 <= response.status_code < 400:
+                if 200 <= response. status_code < 400:
                     results[link] = f"OK ({response.status_code})"
                 else:
                     results[link] = f"Bad ({response.status_code})"
@@ -145,11 +145,11 @@ class DeliverabilityHelper:
     def basic_spam_check(self, subject, body):
         """Perform basic spam word analysis."""
         spam_words = [
-            "free", "guarantee", "credit", "offer", "urgent", "winner",
+            "free", "guarantee", "credit", "offer", "urgent", "winner", 
             "cash", "bonus", "buy now", "limited time", "act now",
             "click here", "congratulations", "prize", "million"
         ]
-
+        
         score = 0
         triggers = []
         full_text = (subject + " " + body).lower()
@@ -184,7 +184,7 @@ class DeliverabilityHelper:
         pattern = re.compile(r'\{([^{}]*)\}')
         while True:
             match = pattern.search(text)
-            if not match:
+            if not match: 
                 break
             options = match.group(1).split('|')
             text = text[:match.start()] + random.choice(options) + text[match.end():]
