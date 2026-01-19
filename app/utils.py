@@ -5,14 +5,14 @@ LOG_BUFFER = deque(maxlen=100)
 
 
 def log_activity(message, level="INFO"):
-    timestamp = datetime. now().strftime("%H:%M:%S")
+    timestamp = datetime.now().strftime("%H:%M:%S")
     entry = {
-        "timestamp": timestamp,
+        "timestamp":  timestamp,
         "message": message,
-        "level":  level
+        "level": level
     }
     LOG_BUFFER.append(entry)
-    print(f"[{timestamp}] {level}:  {message}")
+    print(f"[{timestamp}] {level}: {message}")
 
 
 def get_logs():
