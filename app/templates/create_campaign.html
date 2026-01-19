@@ -38,11 +38,14 @@
 <hr>
 <p><a href='{{unsubscribe_link}}'>Unsubscribe</a></p>"></textarea>
                                 <div class="form-text small bg-white p-2 border rounded mt-1 text-muted">
-                                    <strong class="text-dark">Available Tags:</strong><br>
+                                    <strong class="text-dark">Autograb Placeholders (Auto-Detected):</strong><br>
                                     <ul class="mb-1 ps-3">
-                                        <li><code>{{firstname}}</code> - Auto-detected name or "there"</li>
-                                        <li><code>{{company}}</code> - Auto-detected company or "your company"</li>
+                                        <li><code>{{firstname}}</code> - Extracts name from email (e.g., "John" from john.doe@...)</li>
+                                        <li><code>{{company}}</code> - Extracts company from domain (e.g., "Acme" from ...@acme.com)</li>
                                         <li><code>{{greetings}}</code> - Time-based (e.g., "Good morning John")</li>
+                                    </ul>
+                                    <strong class="text-dark">Standard Tags:</strong><br>
+                                    <ul class="mb-1 ps-3">
                                         <li><code>{{sender_name}}</code> - Name from SMTP Profile</li>
                                         <li><code>{{currentdate}}</code> - Current Date (e.g., January 01, 2026)</li>
                                         <li><code>{{time}}</code> - Current Time (e.g., 02:30 PM)</li>
@@ -172,7 +175,6 @@
             const body = document.getElementById('body_html').value;
             if(!body) return alert("Please enter some content in the HTML Body first.");
             
-            // Show loading state (optional UI enhancement)
             const btn = event.target;
             const originalText = btn.innerText;
             btn.innerText = "⏳ Processing...";
