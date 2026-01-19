@@ -167,7 +167,9 @@
     
     function testConnection(btn, id) {
         const originalHtml = btn.innerHTML;
-        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+        // Make it visually clear that work is happening
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Connecting...';
+        btn.classList.add('disabled');
         btn.disabled = true;
 
         fetch("{{ url_for('main.test_smtp_connection') }}", {
@@ -175,26 +177,43 @@
             headers: {
                 "Content-Type": "application/json",
                 "X-Requested-With": "XMLHttpRequest",
-                "X-CSRFToken": csrfToken // Added CSRF Token Header
+                "X-CSRFToken": csrfToken 
             },
             body: JSON.stringify({ profile_id: id })
         })
         .then(response => {
-            if (!response.ok) {
-                throw new Error("HTTP " + response.status);
-            }
-            return response.json();
+            return response.json().then(data => ({
+                status: response.status,
+                body: data
+            }));
         })
-        .then(data => {
-            alert(data.message);
+        .then(({status, body}) => {
+            if (status >= 200 && status < 300) {
+                // Success
+                btn.classList.remove('btn-info');
+                btn.classList.add('btn-success');
+                alert(body.message);
+            } else {
+                // Failure
+                btn.classList.remove('btn-info');
+                btn.classList.add('btn-danger');
+                alert(body.message);
+            }
         })
         .catch(err => {
             console.error(err);
-            alert("Connection Test Failed: " + err + ". Check console/logs.");
+            btn.classList.remove('btn-info');
+            btn.classList.add('btn-danger');
+            alert("Network/Server Error: Could not reach backend.");
         })
         .finally(() => {
-            btn.innerHTML = originalHtml;
-            btn.disabled = false;
+            // Reset button state after 3 seconds
+            setTimeout(() => {
+                btn.innerHTML = originalHtml;
+                btn.disabled = false;
+                btn.classList.remove('disabled', 'btn-success', 'btn-danger');
+                btn.classList.add('btn-info');
+            }, 3000);
         });
     }
 </script>
