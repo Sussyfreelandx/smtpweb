@@ -7,37 +7,60 @@
     </a>
 </div>
 
-<h1>Deliverability Tools</h1>
-<p class="lead">Check domain reputation and analyze content before sending.</p>
+<h1 class="mb-2">Deliverability Tools</h1>
+<p class="lead text-muted">Check domain reputation, analyze content for spam triggers, and verify links before sending.</p>
 
 <div class="row">
     <!-- Domain/IP Checks -->
     <div class="col-lg-6 mb-4">
-        <div class="card">
-            <div class="card-header">Domain & IP Reputation</div>
+        <div class="card h-100">
+            <div class="card-header bg-primary text-white">
+                <i class="fas fa-shield-alt me-2"></i> Domain & IP Reputation
+            </div>
             <div class="card-body">
                 <form method="post">
                     {{ form.hidden_tag() }}
                     <div class="mb-3">
                         {{ form.domain_ip.label(class="form-label") }}
-                        {{ form.domain_ip(class="form-control", placeholder="example.com or 1.2.3.4") }}
+                        {{ form.domain_ip(class="form-control", placeholder="example.com or 123.45.67.89") }}
+                        <small class="text-muted">Enter your sending domain or IP address</small>
                     </div>
-                    {{ form.check_auth(class="btn btn-primary") }}
-                    {{ form.check_blacklist(class="btn btn-secondary") }}
+                    <div class="d-flex gap-2">
+                        {{ form.check_auth(class="btn btn-primary") }}
+                        {{ form.check_blacklist(class="btn btn-secondary") }}
+                    </div>
                 </form>
+                
                 {% if results %}
                 <hr>
-                <h5>Results for: <span class="fw-normal">{{ results.target }}</span></h5>
+                <h5>Results for:  <span class="fw-normal text-primary">{{ results.target }}</span></h5>
                 <ul class="list-group">
                     {% if results.type == 'auth' and results.auth %}
-                        <li class="list-group-item d-flex justify-content-between align-items-center"><strong>SPF Record</strong><span>{{ results.auth.spf }}</span></li>
-                        <li class="list-group-item d-flex justify-content-between align-items-center"><strong>DMARC Record</strong><span>{{ results.auth.dmarc }}</span></li>
-                        <li class="list-group-item d-flex justify-content-between align-items-center"><strong>DKIM (Common)</strong><span>{{ results.auth.dkim }}</span></li>
+                        <li class="list-group-item d-flex justify-content-between align-items-center">
+                            <strong>SPF Record</strong>
+                            <span class="badge {% if 'Found' in results.auth.spf %}bg-success{% elif 'Missing' in results.auth.spf %}bg-danger{% else %}bg-warning{% endif %}">
+                                {{ results.auth.spf }}
+                            </span>
+                        </li>
+                        <li class="list-group-item d-flex justify-content-between align-items-center">
+                            <strong>DMARC Record</strong>
+                            <span class="badge {% if 'Found' in results.auth.dmarc %}bg-success{% elif 'Missing' in results.auth.dmarc %}bg-danger{% else %}bg-warning{% endif %}">
+                                {{ results.auth.dmarc }}
+                            </span>
+                        </li>
+                        <li class="list-group-item d-flex justify-content-between align-items-center">
+                            <strong>DKIM Record</strong>
+                            <span class="badge {% if 'Found' in results.auth.dkim %}bg-success{% else %}bg-warning{% endif %}">
+                                {{ results.auth.dkim }}
+                            </span>
+                        </li>
                     {% endif %}
-                     {% if results.type == 'blacklist' and results.blacklist %}
+                    {% if results.type == 'blacklist' and results.blacklist %}
                         <li class="list-group-item d-flex justify-content-between align-items-center">
                             <strong>Blacklist Status</strong>
-                            <span class="badge {% if 'Clean' in results.blacklist %}bg-success{% else %}bg-danger{% endif %}">{{ results.blacklist }}</span>
+                            <span class="badge {% if 'Clean' in results.blacklist %}bg-success{% else %}bg-danger{% endif %}">
+                                {{ results.blacklist }}
+                            </span>
                         </li>
                     {% endif %}
                 </ul>
@@ -48,35 +71,60 @@
 
     <!-- AI Spam Check -->
     <div class="col-lg-6 mb-4">
-        <div class="card">
-            <div class="card-header">AI-Powered Spam Check</div>
+        <div class="card h-100">
+            <div class="card-header bg-info text-white">
+                <i class="fas fa-robot me-2"></i> Content Analysis
+            </div>
             <div class="card-body">
-                <form id="ai-spam-check-form">
+                <form id="spam-check-form">
                     <div class="mb-3">
-                        <label for="ai-subject" class="form-label">Subject</label>
-                        <input type="text" class="form-control" id="ai-subject">
+                        <label for="spam-subject" class="form-label">Subject Line</label>
+                        <input type="text" class="form-control" id="spam-subject" placeholder="Enter your email subject">
                     </div>
                     <div class="mb-3">
-                        <label for="ai-body" class="form-label">Email Body</label>
-                        <textarea class="form-control" id="ai-body" rows="5"></textarea>
+                        <label for="spam-body" class="form-label">Email Body</label>
+                        <textarea class="form-control" id="spam-body" rows="5" placeholder="Paste your email content here..."></textarea>
                     </div>
-                     <div class="mb-3">
-                        <label for="ai-provider" class="form-label">AI Provider</label>
-                        <select class="form-select" id="ai-provider">
-                            <option value="openai">OpenAI</option>
-                            <option value="local">Local</option>
-                        </select>
-                         <div class="form-text">Ensure the selected provider is configured in your app's <code>.env</code> file.</div>
+                    <div class="d-flex gap-2">
+                        <button type="button" class="btn btn-warning" onclick="runBasicSpamCheck()">
+                            <i class="fas fa-search me-1"></i> Basic Check
+                        </button>
+                        <button type="button" class="btn btn-info text-white" onclick="runAISpamCheck()">
+                            <i class="fas fa-brain me-1"></i> AI Analysis
+                        </button>
                     </div>
-                    <button type="submit" class="btn btn-info">
-                        <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
-                        Run AI Analysis
-                    </button>
                 </form>
-                <div id="ai-result-container" class="mt-3" style="display:none;">
+                
+                <div id="spam-result-container" class="mt-3" style="display: none;">
                     <hr>
-                    <h5>AI Analysis:</h5>
-                    <pre id="ai-result" class="p-3 bg-light rounded" style="white-space: pre-wrap;"></pre>
+                    <h5>Analysis Results: </h5>
+                    <div id="spam-result" class="p-3 bg-light rounded"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Link Health Check -->
+<div class="row">
+    <div class="col-12 mb-4">
+        <div class="card">
+            <div class="card-header bg-success text-white">
+                <i class="fas fa-link me-2"></i> Link Health Check
+            </div>
+            <div class="card-body">
+                <p class="text-muted">Paste your email HTML content below to check if all links are valid and accessible.</p>
+                <div class="mb-3">
+                    <textarea class="form-control" id="link-check-content" rows="4" placeholder="Paste your HTML email content here..."></textarea>
+                </div>
+                <button type="button" class="btn btn-success" onclick="runLinkCheck()">
+                    <i class="fas fa-check-double me-1"></i> Check Links
+                </button>
+                
+                <div id="link-result-container" class="mt-3" style="display:none;">
+                    <hr>
+                    <h5>Link Check Results:</h5>
+                    <div id="link-results"></div>
                 </div>
             </div>
         </div>
@@ -86,53 +134,163 @@
 
 {% block scripts %}
 <script>
-document.getElementById('ai-spam-check-form').addEventListener('submit', function(e) {
-    e.preventDefault();
-    const button = this.querySelector('button[type="submit"]');
-    const spinner = button.querySelector('.spinner-border');
-    const resultContainer = document.getElementById('ai-result-container');
-    const resultPre = document.getElementById('ai-result');
-
-    const subject = document.getElementById('ai-subject').value;
-    const body = document.getElementById('ai-body').value;
-    const provider = document.getElementById('ai-provider').value;
-
-    button.disabled = true;
-    spinner.classList.remove('d-none');
-    resultContainer.style.display = 'none';
-
-    fetch("{{ url_for('main.deliverability_tools_ajax') }}", {
+function runBasicSpamCheck() {
+    const subject = document.getElementById('spam-subject').value;
+    const body = document.getElementById('spam-body').value;
+    
+    if (!subject && !body) {
+        alert('Please enter a subject or body to analyze.');
+        return;
+    }
+    
+    const resultContainer = document.getElementById('spam-result-container');
+    const resultDiv = document.getElementById('spam-result');
+    
+    resultContainer.style.display = 'block';
+    resultDiv.innerHTML = '<div class="text-center"><span class="spinner-border spinner-border-sm"></span> Analyzing...</div>';
+    
+    fetch("{{ url_for('main.spam_check') }}", {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
+            'X-CSRFToken': '{{ csrf_token() }}'
         },
         body: JSON.stringify({
-            'subject': subject,
-            'body': body,
-            'provider': provider
+            subject: subject,
+            body: body,
+            type: 'basic'
         })
     })
     .then(response => response.json())
     .then(data => {
-        resultContainer.style.display = 'block';
         if (data.success) {
-            resultPre.textContent = data.result;
-            resultPre.classList.remove('text-danger');
+            const result = data.result;
+            let html = `
+                <div class="mb-2">
+                    <strong>Spam Score:</strong> 
+                    <span class="badge ${result.score < 3 ? 'bg-success' : result.score < 6 ? 'bg-warning' : 'bg-danger'}">
+                        ${result.score}/10
+                    </span>
+                    <span class="ms-2">${result.rating}</span>
+                </div>
+            `;
+            
+            if (result.triggers && result.triggers.length > 0) {
+                html += `<div class="mb-2"><strong>Triggers Found:</strong></div><ul class="mb-0">`;
+                result.triggers.forEach(trigger => {
+                    html += `<li class="text-danger">${trigger}</li>`;
+                });
+                html += '</ul>';
+            } else {
+                html += '<div class="text-success"><i class="fas fa-check-circle me-1"></i> No obvious spam triggers found.</div>';
+            }
+            
+            resultDiv.innerHTML = html;
         } else {
-            resultPre.textContent = "Error: " + data.result;
-            resultPre.classList.add('text-danger');
+            resultDiv.innerHTML = `<div class="text-danger">Error: ${data.result}</div>`;
         }
     })
     .catch(error => {
-        resultContainer.style.display = 'block';
-        resultPre.textContent = 'An unexpected error occurred. Check the browser console for details.';
-        resultPre.classList.add('text-danger');
-        console.error('Error:', error);
-    })
-    .finally(() => {
-        button.disabled = false;
-        spinner.classList.add('d-none');
+        resultDiv.innerHTML = `<div class="text-danger">Error: ${error}</div>`;
     });
-});
+}
+
+function runAISpamCheck() {
+    const subject = document.getElementById('spam-subject').value;
+    const body = document.getElementById('spam-body').value;
+    
+    if (!subject && !body) {
+        alert('Please enter a subject or body to analyze.');
+        return;
+    }
+    
+    const resultContainer = document.getElementById('spam-result-container');
+    const resultDiv = document.getElementById('spam-result');
+    
+    resultContainer.style.display = 'block';
+    resultDiv.innerHTML = '<div class="text-center"><span class="spinner-border spinner-border-sm"></span> Running AI analysis... This may take a moment.</div>';
+    
+    fetch("{{ url_for('main.deliverability_tools_ajax') }}", {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': '{{ csrf_token() }}'
+        },
+        body: JSON.stringify({
+            subject: subject,
+            body: body,
+            provider: 'openai'
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            resultDiv.innerHTML = `<pre style="white-space: pre-wrap; font-family: inherit;">${data.result}</pre>`;
+        } else {
+            resultDiv.innerHTML = `<div class="text-danger">Error: ${data.result}</div>`;
+        }
+    })
+    .catch(error => {
+        resultDiv.innerHTML = `<div class="text-danger">Error: ${error}</div>`;
+    });
+}
+
+function runLinkCheck() {
+    const content = document.getElementById('link-check-content').value;
+    
+    if (!content) {
+        alert('Please enter HTML content to check links.');
+        return;
+    }
+    
+    const resultContainer = document.getElementById('link-result-container');
+    const resultsDiv = document.getElementById('link-results');
+    
+    resultContainer.style.display = 'block';
+    resultsDiv.innerHTML = '<div class="text-center"><span class="spinner-border spinner-border-sm"></span> Checking links...</div>';
+    
+    fetch("{{ url_for('main.link_check') }}", {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': '{{ csrf_token() }}'
+        },
+        body: JSON.stringify({ content: content })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            const results = data.results;
+            
+            if (results.message) {
+                resultsDiv.innerHTML = `<div class="text-muted">${results.message}</div>`;
+                return;
+            }
+            
+            if (results.error) {
+                resultsDiv.innerHTML = `<div class="text-danger">${results.error}</div>`;
+                return;
+            }
+            
+            let html = '<table class="table table-sm"><thead><tr><th>Link</th><th>Status</th></tr></thead><tbody>';
+            for (const [link, status] of Object.entries(results)) {
+                const isOk = status.includes('OK');
+                html += `
+                    <tr>
+                        <td class="text-break" style="max-width: 400px;"><small>${link}</small></td>
+                        <td><span class="badge ${isOk ? 'bg-success' : 'bg-danger'}">${status}</span></td>
+                    </tr>
+                `;
+            }
+            html += '</tbody></table>';
+            resultsDiv.innerHTML = html;
+        } else {
+            resultsDiv.innerHTML = `<div class="text-danger">Error: ${data.error}</div>`;
+        }
+    })
+    .catch(error => {
+        resultsDiv.innerHTML = `<div class="text-danger">Error: ${error}</div>`;
+    });
+}
 </script>
 {% endblock %}
