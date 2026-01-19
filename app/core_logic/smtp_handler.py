@@ -8,51 +8,40 @@ from email.mime.multipart import MIMEMultipart
 from email.utils import formataddr, formatdate, make_msgid
 from email.header import Header
 
-# Configure logging
 log = logging.getLogger(__name__)
 
 class SMTPHandler:
-    """
-    Handles all SMTP operations using standard smtplib (No AIOSMTP).
-    Includes robust multipart message creation and connection logic from Paris Sender Desktop.
-    """
     def __init__(self, smtp_config):
         self.smtp_server = smtp_config.get('server')
         try:
             self.smtp_port = int(smtp_config.get('port', 587))
-        except (ValueError, TypeError):
+        except:
             self.smtp_port = 587
-            
         self.username = smtp_config.get('username')
         self.password = smtp_config.get('password')
         self.use_tls = smtp_config.get('use_tls', True)
         self.use_ssl = smtp_config.get('use_ssl', False)
         self.sender_name = smtp_config.get('sender_name', '')
         self.sender_email = smtp_config.get('sender_email') or self.username
+        self.server_conn = None
 
     def _create_secure_ssl_context(self):
-        """Creates a context that allows legacy SSL versions if needed, matching desktop robustness."""
         context = ssl.create_default_context()
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
         return context
 
     def _html_to_text(self, html):
-        """Converts HTML to plain text for the alternative MIME part."""
+        # ... (Keep existing _html_to_text function) ...
         try:
-            # Remove scripts and styles
             text = re.sub(r'<(script|style).*?>.*?</\1>', '', html, flags=re.DOTALL | re.IGNORECASE)
-            # Replace breaks and block elements with newlines
             text = re.sub(r'</(p|h[1-6]|li|div|tr|br)\s*>', '\n', text, flags=re.IGNORECASE)
-            # Remove remaining tags
             text = re.sub(r'<[^>]+>', ' ', text)
-            # Collapse whitespace
             return re.sub(r'\n\s*\n', '\n\n', text).strip()
-        except Exception:
-            return "Please enable HTML to view this message."
+        except:
+            return "View as HTML."
 
     def _create_mime_message(self, to_email, subject, html_content, unsubscribe_url=None):
-        """Creates a proper Multipart/Related email matching desktop standards."""
         msg_root = MIMEMultipart('related')
         msg_root['Subject'] = Header(subject, 'utf-8').encode()
         msg_root['From'] = formataddr((str(Header(self.sender_name, 'utf-8')), self.sender_email))
@@ -66,92 +55,71 @@ class SMTPHandler:
             
         msg_alternative = MIMEMultipart('alternative')
         msg_root.attach(msg_alternative)
-        
-        # Plain text version
-        plain_text = self._html_to_text(html_content)
-        msg_alternative.attach(MIMEText(plain_text, 'plain', 'utf-8'))
-        
-        # HTML version
+        msg_alternative.attach(MIMEText(self._html_to_text(html_content), 'plain', 'utf-8'))
         msg_alternative.attach(MIMEText(html_content, 'html', 'utf-8'))
-        
         return msg_root
 
-    def test_connection(self):
-        """
-        Tests the SMTP connection.
-        Logic mirrors the desktop app's threaded tester for maximum compatibility.
-        """
-        if not self.smtp_server or not self.username:
-            return False, "Configuration incomplete."
-
-        server = None
+    def connect(self):
+        """Establishes a persistent connection."""
         try:
             context = self._create_secure_ssl_context()
-            
-            # Connection logic
             if self.use_ssl or self.smtp_port == 465:
-                server = smtplib.SMTP_SSL(self.smtp_server, self.smtp_port, context=context, timeout=15)
+                self.server_conn = smtplib.SMTP_SSL(self.smtp_server, self.smtp_port, context=context, timeout=30)
             else:
-                server = smtplib.SMTP(self.smtp_server, self.smtp_port, timeout=15)
+                self.server_conn = smtplib.SMTP(self.smtp_server, self.smtp_port, timeout=30)
             
-            # EHLO/HELO
-            try:
-                server.ehlo()
-            except smtplib.SMTPHeloError:
-                server.helo()
-
-            # STARTTLS
-            if not self.use_ssl and self.use_tls and server.has_extn('STARTTLS'):
-                server.starttls(context=context)
-                server.ehlo()
+            self.server_conn.ehlo()
+            if not self.use_ssl and self.use_tls and self.server_conn.has_extn('STARTTLS'):
+                self.server_conn.starttls(context=context)
+                self.server_conn.ehlo()
                 
-            # Login
-            server.login(self.username, self.password)
-            server.quit()
-            
-            return True, "Connection Successful"
-            
-        except smtplib.SMTPAuthenticationError as e:
-            error_msg = str(e.smtp_error) if hasattr(e, 'smtp_error') else str(e)
-            return False, f"Authentication Failed: {error_msg}"
-        except (socket.timeout, TimeoutError):
-            return False, "Connection Timed Out"
+            self.server_conn.login(self.username, self.password)
+            return True, "Connected"
         except Exception as e:
-            log.error(f"SMTP Test Error: {e}")
-            return False, f"Error: {str(e)}"
-        finally:
-            if server:
-                try:
-                    server.close()
-                except:
-                    pass
+            self.quit()
+            return False, str(e)
 
-    def send_email_sync(self, to_email, subject, html_content, unsubscribe_url=None):
-        """
-        Sends a single email synchronously.
-        Used by Celery workers to handle bulk lists without hanging.
-        """
+    def send_message_existing_conn(self, to_email, subject, html_content, unsubscribe_url=None):
+        """Sends using the already open connection."""
+        if not self.server_conn:
+            return False, "No active connection"
+            
         try:
-            mime_message = self._create_mime_message(to_email, subject, html_content, unsubscribe_url)
-            context = self._create_secure_ssl_context()
-            server = None
-            
-            # Establish connection (fresh connection per batch/email allows for better error recovery in workers)
-            if self.use_ssl or self.smtp_port == 465:
-                server = smtplib.SMTP_SSL(self.smtp_server, self.smtp_port, context=context, timeout=20)
-            else:
-                server = smtplib.SMTP(self.smtp_server, self.smtp_port, timeout=20)
-            
-            server.ehlo()
-            if not self.use_ssl and self.use_tls and server.has_extn('STARTTLS'):
-                server.starttls(context=context)
-                server.ehlo()
-                
-            server.login(self.username, self.password)
-            server.send_message(mime_message)
-            server.quit()
-            
+            msg = self._create_mime_message(to_email, subject, html_content, unsubscribe_url)
+            self.server_conn.send_message(msg)
             return True, "Sent"
         except Exception as e:
-            log.error(f"SMTP Send Failed for {to_email}: {e}")
+            # If pipe broken, try to reconnect once
+            log.warning(f"Connection lost, retrying: {e}")
+            connected, _ = self.connect()
+            if connected:
+                try:
+                    self.server_conn.send_message(msg)
+                    return True, "Sent (Reconnected)"
+                except Exception as final_e:
+                    return False, str(final_e)
             return False, str(e)
+
+    def quit(self):
+        """Cleanly closes the connection."""
+        if self.server_conn:
+            try:
+                self.server_conn.quit()
+            except:
+                try: self.server_conn.close()
+                except: pass
+            self.server_conn = None
+
+    def test_connection(self):
+        """One-off test."""
+        success, msg = self.connect()
+        self.quit()
+        return success, msg
+    
+    # Backward compatibility for existing synchronous single-calls
+    def send_email_sync(self, to_email, subject, html_content, unsubscribe_url=None):
+        connected, msg = self.connect()
+        if not connected: return False, msg
+        success, msg = self.send_message_existing_conn(to_email, subject, html_content, unsubscribe_url)
+        self.quit()
+        return success, msg
