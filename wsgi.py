@@ -1,4 +1,4 @@
-from app import create_app, db
+from app import create_app, db, socketio
 from app.models import User, Campaign, Recipient, SMTPServer, Suppression
 
 app = create_app()
@@ -14,3 +14,8 @@ def make_shell_context():
         'SMTPServer': SMTPServer,
         'Suppression': Suppression
     }
+
+
+# For Gunicorn with eventlet/gevent
+if __name__ == '__main__': 
+    socketio.run(app, debug=False, host='0.0.0.0', port=5000)
