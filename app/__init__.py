@@ -96,20 +96,6 @@ def create_app(config_name=None):
     
     # Register template context processors
     register_context_processors(app)
-
-    # --- TEMPORARY DB FIX: Reset Migration History ---
-    # This block forces the database to forget the old migration ID that is causing the error.
-    # It runs every time the app starts, which allows 'flask db upgrade' to succeed.
-    with app.app_context():
-        try:
-            from sqlalchemy import text
-            # This deletes the table that tracks migration history
-            db.session.execute(text("DROP TABLE IF EXISTS alembic_version"))
-            db.session.commit()
-            print("--- DATABASE FIX: Dropped alembic_version table to reset migration history ---")
-        except Exception as e:
-            print(f"--- NOTE: Could not drop alembic_version: {e} ---")
-    # -------------------------------------------------
     
     return app
 
@@ -182,14 +168,12 @@ def register_cli_commands(app):
     def create_admin():
         """Create an admin user."""
         from app.models import User
-        # Removed UserRole import as it might not be defined in the provided models.py
         import click
         
         username = click.prompt('Admin username')
         email = click.prompt('Admin email')
         password = click.prompt('Admin password', hide_input=True)
         
-        # Removed role argument as it was not present in the User model provided previously
         user = User(username=username, email=email)
         user.set_password(password)
         db.session.add(user)
