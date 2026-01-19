@@ -7,7 +7,7 @@ from app.models import (
     User, UserRole, Campaign, Recipient, SMTPServer, Suppression, 
     GlobalSettings, Sequence, SequenceRecipient, Tag, Segment,
     EmailTemplate, Team, APIKey, Webhook, Notification, ActivityLog,
-    DailyStats, UserSettings, ConsentRecord
+    DailyStats, HourlyStats, UserSettings, ConsentRecord  # Added HourlyStats here
 )
 from app.core_logic.deliverability import DeliverabilityHelper
 from app.core_logic.ai_handler import AIHandler
@@ -336,12 +336,6 @@ def index():
         user_id=current_user.id, 
         read=False
     ).order_by(Notification.created_at.desc()).limit(5).all()
-    
-    # Pass 'all_campaigns' as 'campaigns' for the stats counters in template
-    # Pass 'recent_campaigns' for the list loop in template
-    # NOTE: You will need to update dashboard.html slightly to loop over 'recent_campaigns' 
-    # instead of 'campaigns' OR we just pass 'all_campaigns' as 'campaigns' and handle list differently.
-    # BEST FIX: Pass 'campaigns' as the base query for stats, and 'recent_campaigns' for the list.
     
     return render_template('dashboard.html', 
                           title='Dashboard', 
