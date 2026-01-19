@@ -154,8 +154,8 @@
                             </tr>
                         </thead>
                         <tbody>
-                            <!-- Use recent_campaigns (list) if available, otherwise fallback to iterating query -->
-                            {% for campaign in recent_campaigns if recent_campaigns else campaigns.limit(20).all() %}
+                            <!-- FIXED: Removed invalid jinja syntax. Simply loop recent_campaigns -->
+                            {% for campaign in recent_campaigns %}
                             <tr>
                                 <td class="ps-4">
                                     <a href="{{ url_for('main.view_campaign', campaign_id=campaign.id) }}" class="text-decoration-none fw-bold text-dark">
