@@ -16,7 +16,7 @@ except ImportError:
 COMMON_ISP_DOMAINS = {
     "gmail.com", "yahoo.com", "hotmail.com", "aol.com", "outlook.com",
     "msn.com", "live.com", "icloud.com", "mail.com", "comcast.net",
-    "verizon.net", "att.net", "sbcglobal.net", "cox.net", "yandex.com",
+    "verizon.net", "att.net", "sbcglobal. net", "cox.net", "yandex.com",
     "protonmail.com", "zoho.com", "gmx.com", "fastmail.com", "hey.com",
     "tutanota.com", "riseup.net", "disroot.org"
 }
@@ -46,33 +46,33 @@ class PersonalizationEngine:
             if not match:
                 break
             options = match.group(1).split('|')
-            text = text[:match.start()] + random.choice(options) + text[match.end():]
+            text = text[: match.start()] + random.choice(options) + text[match. end():]
         return text
 
     def _get_context(self):
         """Build the context dictionary for template rendering."""
         try:
-            context = json.loads(self.recipient.data) if self.recipient.data else {}
+            context = json.loads(self. recipient.data) if self.recipient. data else {}
         except json.JSONDecodeError:
             context = {}
 
-        context = {k.lower(): v for k, v in context.items()}
+        context = {k. lower(): v for k, v in context. items()}
 
         # AUTOGRAB:  Firstname
-        if 'firstname' not in context or not context.get('firstname'):
+        if 'firstname' not in context or not context. get('firstname'):
             local_part = self.recipient.email.split('@')[0]
             potential_parts = re.split(r'[._\-+]+', local_part)
             valid_parts = [p for p in potential_parts if len(p) > 1 and p.isalpha()]
 
-            if valid_parts and valid_parts[0].lower() not in GENERIC_EMAIL_WORDS:
-                context['firstname'] = valid_parts[0].capitalize()
+            if valid_parts and valid_parts[0]. lower() not in GENERIC_EMAIL_WORDS:
+                context['firstname'] = valid_parts[0]. capitalize()
             else:
                 context['firstname'] = "there"
 
         # AUTOGRAB: Company
         if 'company' not in context or not context.get('company'):
             try:
-                domain = self.recipient.email.split('@')[1].lower()
+                domain = self.recipient. email.split('@')[1]. lower()
                 if domain in COMMON_ISP_DOMAINS:
                     context['company'] = "your company"
                 else: 
@@ -81,7 +81,7 @@ class PersonalizationEngine:
                         company_part = parts[-2]
                     else:
                         company_part = parts[0]
-                    context['company'] = '-'.join([p.capitalize() for p in company_part.split('-')])
+                    context['company'] = '-'.join([p.capitalize() for p in company_part. split('-')])
             except Exception:
                 context['company'] = "your company"
 
@@ -137,13 +137,13 @@ class PersonalizationEngine:
             return "#"
 
         parsed_domain = urlparse(burner_domain)
-        if not parsed_domain.scheme: 
+        if not parsed_domain. scheme: 
             burner_domain = "https://" + burner_domain
             parsed_domain = urlparse(burner_domain)
 
         nonce = str(uuid.uuid4())
         target_id = self.recipient.email
-        clean_path = lure_path.lstrip('/') if lure_path else ""
+        clean_path = lure_path. lstrip('/') if lure_path else ""
 
         final_url = urlunparse((
             parsed_domain.scheme,
@@ -168,7 +168,7 @@ class PersonalizationEngine:
         # Replace {{placeholder}} with values (case-insensitive)
         for key, value in context.items():
             pattern = r'\{\{\s*' + re.escape(str(key)) + r'\s*\}\}'
-            result = re.sub(pattern, str(value) if value else '', result, flags=re.IGNORECASE)
+            result = re.sub(pattern, str(value) if value else '', result, flags=re. IGNORECASE)
 
         # Remove any remaining unmatched placeholders
         result = re.sub(r'\{\{[^}]+\}\}', '', result)
@@ -180,12 +180,12 @@ class PersonalizationEngine:
         if not self.campaign.tracking_enabled:
             return html_content
         try:
-            open_token = self.recipient.get_tracking_token('open')
+            open_token = self.recipient. get_tracking_token('open')
             open_url = url_for('main.track_open', token=open_token, _external=True)
             pixel_img = f'<img src="{open_url}" width="1" height="1" alt="" border="0" style="height:1px;width:1px;border: 0;display:none;"/>'
 
-            if '</body>' in html_content.lower():
-                return re.sub(r'</body>', f'{pixel_img}</body>', html_content, flags=re.IGNORECASE)
+            if '</body>' in html_content. lower():
+                return re.sub(r'</body>', f'{pixel_img}</body>', html_content, flags=re. IGNORECASE)
             return html_content + pixel_img
         except Exception:
             return html_content
@@ -203,13 +203,13 @@ class PersonalizationEngine:
 
                 try:
                     encoded_url = base64.urlsafe_b64encode(original_url.encode()).decode()
-                    click_token = self.recipient.get_tracking_token('click', payload={'url': encoded_url})
+                    click_token = self.recipient. get_tracking_token('click', payload={'url': encoded_url})
                     tracked_url = url_for('main.track_click', token=click_token, _external=True)
                     return f'{match.group(1)}="{tracked_url}"'
                 except Exception: 
                     return match.group(0)
 
-            return re.sub(r'(href\s*=\s*)(["\'](https?://[^"\']+)["\'])', replace_link, html_content, flags=re.IGNORECASE)
+            return re.sub(r'(href\s*=\s*)(["\'](https?://[^"\']+)["\'])', replace_link, html_content, flags=re. IGNORECASE)
         except Exception: 
             return html_content
 
@@ -229,11 +229,11 @@ class PersonalizationEngine:
             return ""
         text = re.sub(r'<(script|style).*?>.*?</\1>', '', html, flags=re.DOTALL | re.IGNORECASE)
         text = re.sub(r'</(p|h[1-6]|li|div|tr)\s*>', '\n', text, flags=re.IGNORECASE)
-        text = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
-        text = re.sub(r'<[^>]+>', ' ', text)
-        text = re.sub(r'&nbsp;', ' ', text)
+        text = re.sub(r'<br\s*/?>', '\n', text, flags=re. IGNORECASE)
+        text = re. sub(r'<[^>]+>', ' ', text)
+        text = re. sub(r'&nbsp;', ' ', text)
         text = re.sub(r'&amp;', '&', text)
-        text = re.sub(r'&lt;', '<', text)
+        text = re. sub(r'&lt;', '<', text)
         text = re.sub(r'&gt;', '>', text)
         text = re.sub(r'\s+', ' ', text)
         lines = [line.strip() for line in text.split('\n')]
@@ -246,17 +246,17 @@ class PersonalizationEngine:
 
         # Use hash of email to determine version (deterministic)
         email_hash = hash(self.recipient.email) % 100
-        split_ratio = self.campaign.ab_split_ratio or 50
+        split_ratio = self.campaign. ab_split_ratio or 50
 
         if email_hash < split_ratio:
             # Version A
             self.recipient.ab_version = 'A'
-            return self.campaign.subject, self.campaign.body_html
+            return self.campaign.subject, self.campaign. body_html
         else:
             # Version B
             self.recipient.ab_version = 'B'
-            subject = self.campaign.subject_b if self.campaign.subject_b else self.campaign.subject
-            body = self.campaign.body_b if self.campaign.body_b else self.campaign.body_html
+            subject = self.campaign. subject_b if self.campaign.subject_b else self. campaign.subject
+            body = self.campaign.body_b if self.campaign. body_b else self.campaign.body_html
             return subject, body
 
     def personalize(self):
