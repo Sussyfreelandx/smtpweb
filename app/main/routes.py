@@ -14,7 +14,6 @@ import io
 import json
 import os
 import time
-import re
 
 bp = Blueprint('main', __name__)
 
@@ -56,7 +55,6 @@ def view_campaign(campaign_id):
 def new_campaign():
     smtp_profiles = SMTPServer.query.filter_by(user_id=current_user.id).all()
     
-    # Pre-fill Secure Redirector defaults from Global Settings
     global_settings = GlobalSettings.query.first()
     default_burner = global_settings.burner_domain if global_settings else ""
     default_lure = global_settings.lure_path if global_settings else ""
@@ -73,18 +71,12 @@ def new_campaign():
                 subject_b=request.form.get('subject_b'),
                 body_b=request.form.get('body_b'),
                 ab_split_ratio=int(request.form.get('ab_split_ratio', 50)),
-                
-                # Use form value if provided, else fallback to global, else empty
                 burner_domain=request.form.get('burner_domain') or default_burner,
                 lure_path=request.form.get('lure_path') or default_lure,
-                
                 smtp_profile_id=request.form.get('smtp_profile_id'),
-                
-                # New Fields from Screenshot Logic
                 throttle_amount=int(request.form.get('throttle_amount', 20)),
                 throttle_delay=int(request.form.get('throttle_delay', 60)),
                 parallel_workers=int(request.form.get('parallel_workers', 10)),
-                
                 user_id=current_user.id
             )
             db.session.add(campaign)
@@ -128,33 +120,28 @@ def new_campaign():
 @bp.route('/campaign/<int:campaign_id>/add_recipient', methods=['POST'])
 @login_required
 def add_recipient_manual(campaign_id):
-    """Manually adds a single recipient from the campaign dashboard."""
     campaign = Campaign.query.get_or_404(campaign_id)
-    if campaign.author != current_user:
-        return jsonify({'success': False, 'message': 'Unauthorized'}), 403
+    if campaign.author != current_user: return jsonify({'success': False, 'message': 'Unauthorized'}), 403
     
     email = request.form.get('email', '').strip()
-    if not email:
-        return jsonify({'success': False, 'message': 'Email required'})
+    if not email: return jsonify({'success': False, 'message': 'Email required'})
     
-    # Check if exists in campaign
     exists = Recipient.query.filter_by(campaign_id=campaign.id, email=email).first()
-    if exists:
-        return jsonify({'success': False, 'message': 'Email already in list'})
+    if exists: return jsonify({'success': False, 'message': 'Email already in list'})
         
     is_suppressed = Suppression.query.filter_by(email=email.lower()).first()
     
     recipient = Recipient(
         email=email,
         campaign_id=campaign.id,
-        data=json.dumps({'email': email}), # Basic data
+        data=json.dumps({'email': email}), 
         status='Suppressed' if is_suppressed else 'Queued',
         status_message='Suppressed by global list' if is_suppressed else None
     )
     db.session.add(recipient)
     db.session.commit()
     
-    log_activity(f"Manually added recipient {email} to campaign {campaign.name}", "INFO")
+    log_activity(f"Manually added {email} to campaign {campaign.name}", "INFO")
     return jsonify({'success': True, 'message': 'Recipient added'})
 
 @bp.route('/campaign/<int:campaign_id>/control/<action>')
@@ -168,18 +155,18 @@ def campaign_control(campaign_id, action):
             campaign.status = 'Sending'
             db.session.commit()
             
-            # Use local import to avoid circular dependency at module level
+            # Local import to prevent circular dependency
             from app.tasks import send_campaign_task
             task = send_campaign_task.delay(campaign_id)
             
-            log_activity(f"Resumed campaign: {campaign.name} (Task ID: {task.id})", "SUCCESS")
+            log_activity(f"Resumed campaign: {campaign.name}", "SUCCESS")
             flash('Campaign started successfully.', 'success')
             
         elif action == 'pause':
             campaign.status = 'Paused'
             db.session.commit()
             log_activity(f"Paused campaign: {campaign.name}", "WARNING")
-            flash('Campaign paused. Workers will finish current batch.', 'warning')
+            flash('Campaign paused.', 'warning')
             
         elif action == 'stop':
             campaign.status = 'Stopped'
@@ -189,42 +176,34 @@ def campaign_control(campaign_id, action):
             
         elif action == 'retry':
             failed = campaign.recipients.filter_by(status='Failed').all()
-            count = 0
             for r in failed:
                 r.status = 'Queued'
                 r.status_message = None
-                count += 1
             db.session.commit()
-            log_activity(f"Queued {count} failed recipients for retry.", "INFO")
-            flash(f'Queued {count} failed recipients for retry.', 'info')
+            log_activity(f"Queued failed recipients for retry.", "INFO")
+            flash(f'Queued failed recipients for retry.', 'info')
             
     except Exception as e:
         log_activity(f"Control Error ({action}): {str(e)}", "ERROR")
-        flash(f"Error performing {action}: {str(e)}", "danger")
-        # Ensure status is reset if start fails
+        flash(f"Error: {str(e)}", "danger")
         if action == 'start':
             campaign.status = 'Draft'
             db.session.commit()
         
     return redirect(url_for('main.view_campaign', campaign_id=campaign.id))
 
-# ... [Other routes like validate_list, clear_list, export remain mostly same but ensure imports are clean] ...
-
 @bp.route('/campaign/<int:campaign_id>/validate_list')
 @login_required
 def validate_list(campaign_id):
     campaign = Campaign.query.get_or_404(campaign_id)
-    recipients = campaign.recipients.filter_by(status='Queued').limit(100).all() # Limit for safety
-    
+    recipients = campaign.recipients.filter_by(status='Queued').limit(100).all() 
     helper = DeliverabilityHelper()
-    count = 0
-    valid = 0
+    count, valid = 0, 0
     
     for r in recipients:
         domain = r.email.split('@')[1]
         mx_status = helper.check_mx_record(domain) if hasattr(helper, 'check_mx_record') else "Skipped"
-        if mx_status == "Valid":
-            valid += 1
+        if mx_status == "Valid": valid += 1
         else:
             if mx_status != "Skipped":
                 r.status = 'Invalid'
@@ -232,7 +211,7 @@ def validate_list(campaign_id):
         count += 1
     
     db.session.commit()
-    log_activity(f"Validated {count} recipients for {campaign.name}. {valid} valid.", "INFO")
+    log_activity(f"Validated {count} recipients. {valid} valid.", "INFO")
     flash(f"Validated {count} emails (limited batch). {valid} valid.", "info")
     return redirect(url_for('main.view_campaign', campaign_id=campaign.id))
 
@@ -272,36 +251,7 @@ def export_campaign_report(campaign_id):
     response.headers.set("Content-Disposition", "attachment", filename=f"report_{campaign.id}.csv")
     return response
 
-# --- Tools API ---
-@bp.route('/tools/ai_rewrite', methods=['POST'])
-@login_required
-def ai_rewrite():
-    try:
-        data = request.get_json()
-        content = data.get('content')
-        if not content: return jsonify({'success': False, 'result': 'No content'})
-        handler = AIHandler()
-        prompt = f"Rewrite the following email content to be more persuasive and clear. Preserve HTML structure and Jinja2 tags like {{{{variable}}}}.\n\n{content}"
-        success, result = handler.generate(prompt)
-        return jsonify({'success': success, 'result': result})
-    except Exception as e:
-        return jsonify({'success': False, 'result': str(e)})
-
-@bp.route('/tools/ai_subject', methods=['POST'])
-@login_required
-def ai_subject():
-    try:
-        data = request.get_json()
-        content = data.get('content')
-        if not content: return jsonify({'success': False, 'result': 'No content'})
-        handler = AIHandler()
-        prompt = f"Generate 3 short, catchy email subject lines. Return only lines separated by newlines:\n\n{content}"
-        success, result = handler.generate(prompt)
-        return jsonify({'success': success, 'result': result})
-    except Exception as e:
-        return jsonify({'success': False, 'result': str(e)})
-
-# --- Settings ---
+# --- Settings & Tools ---
 @bp.route('/settings/smtp', methods=['GET', 'POST'])
 @login_required
 def smtp_profiles():
@@ -310,28 +260,32 @@ def smtp_profiles():
             profile_id = request.form.get('profile_id')
             if profile_id:
                 profile = SMTPServer.query.get(profile_id)
-                if profile.user_id != current_user.id: return redirect(url_for('main.index'))
+                if not profile or profile.user_id != current_user.id:
+                    return redirect(url_for('main.index'))
             else:
                 profile = SMTPServer(user_id=current_user.id)
                 
-            profile.profile_name = request.form['name']
-            profile.server = request.form['server']
-            profile.port = int(request.form['port'])
-            profile.username = request.form['username']
-            profile.sender_name = request.form['sender_name']
-            profile.sender_email = request.form['sender_email']
+            profile.profile_name = request.form.get('name')
+            profile.server = request.form.get('server')
+            profile.port = int(request.form.get('port'))
+            profile.username = request.form.get('username')
+            profile.sender_name = request.form.get('sender_name')
+            profile.sender_email = request.form.get('sender_email')
             profile.use_tls = 'use_tls' in request.form
             profile.use_ssl = 'use_ssl' in request.form
             
-            if request.form.get('password'):
-                profile.set_password(request.form['password'])
-                
+            password = request.form.get('password')
+            if password and password.strip():
+                profile.set_password(password)
+            
             db.session.add(profile)
             db.session.commit()
             log_activity(f"SMTP Profile saved: {profile.profile_name}", "SUCCESS")
             flash('SMTP Profile Saved.', 'success')
         except Exception as e:
-            flash(f"Error saving profile: {e}", "danger")
+            db.session.rollback()
+            log_activity(f"Error saving SMTP profile: {e}", "ERROR")
+            flash(f"Error saving profile: {str(e)}", "danger")
             
         return redirect(url_for('main.smtp_profiles'))
 
@@ -349,14 +303,11 @@ def test_smtp_connection():
 
         from app.core_logic.smtp_handler import SMTPHandler
         handler = SMTPHandler(profile.to_dict())
-        
-        # Actually execute test
         success, msg = handler.test_connection()
+        
         if success:
-            log_activity(f"SMTP Test Success: {profile.profile_name}", "SUCCESS")
             return jsonify({'message': f'✅ Success: {msg}'})
         else:
-            log_activity(f"SMTP Test Failed: {profile.profile_name} - {msg}", "ERROR")
             return jsonify({'message': f'❌ Failed: {msg}'}), 400
     except Exception as e:
         return jsonify({'message': f'Error: {str(e)}'}), 500
@@ -448,6 +399,34 @@ def deliverability_tools_ajax():
     data = request.get_json()
     success, result = DeliverabilityHelper().analyze_spam_ai(data.get('subject'), data.get('body'), provider_type=data.get('provider', 'openai'))
     return jsonify({'success': success, 'result': result})
+
+@bp.route('/tools/ai_rewrite', methods=['POST'])
+@login_required
+def ai_rewrite():
+    try:
+        data = request.get_json()
+        content = data.get('content')
+        if not content: return jsonify({'success': False, 'result': 'No content'})
+        handler = AIHandler()
+        prompt = f"Rewrite the following email content to be more persuasive and clear. Preserve HTML structure and Jinja2 tags like {{{{variable}}}}.\n\n{content}"
+        success, result = handler.generate(prompt)
+        return jsonify({'success': success, 'result': result})
+    except Exception as e:
+        return jsonify({'success': False, 'result': str(e)})
+
+@bp.route('/tools/ai_subject', methods=['POST'])
+@login_required
+def ai_subject():
+    try:
+        data = request.get_json()
+        content = data.get('content')
+        if not content: return jsonify({'success': False, 'result': 'No content'})
+        handler = AIHandler()
+        prompt = f"Generate 3 short, catchy email subject lines. Return only lines separated by newlines:\n\n{content}"
+        success, result = handler.generate(prompt)
+        return jsonify({'success': success, 'result': result})
+    except Exception as e:
+        return jsonify({'success': False, 'result': str(e)})
 
 @bp.route('/api/logs')
 @login_required
