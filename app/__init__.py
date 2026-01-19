@@ -3,8 +3,6 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_login import LoginManager
 from flask_wtf.csrf import CSRFProtect
-from celery import Celery
-from config import Config
 
 db = SQLAlchemy()
 migrate = Migrate()
@@ -12,10 +10,14 @@ login = LoginManager()
 login.login_view = 'main.login'
 csrf = CSRFProtect()
 
-celery = Celery(__name__, broker=Config.CELERY_BROKER_URL)
 
-def create_app(config_class=Config):
+def create_app(config_class=None):
     app = Flask(__name__)
+    
+    if config_class is None:
+        from config import Config
+        config_class = Config
+    
     app.config.from_object(config_class)
 
     db.init_app(app)
@@ -23,17 +25,8 @@ def create_app(config_class=Config):
     login.init_app(app)
     csrf.init_app(app)
 
-    celery.conf.update(app. config)
-
-    class ContextTask(celery.Task):
-        def __call__(self, *args, **kwargs):
-            with app.app_context():
-                return self.run(*args, **kwargs)
-
-    celery.Task = ContextTask
-
     from app.main import bp as main_bp
-    app. register_blueprint(main_bp)
+    app.register_blueprint(main_bp)
 
     from app.tracking import bp as tracking_bp
     app.register_blueprint(tracking_bp)
