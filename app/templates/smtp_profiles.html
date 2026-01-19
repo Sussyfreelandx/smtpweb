@@ -2,92 +2,152 @@
 
 {% block content %}
 <div class="mb-3">
-    <a href="{{ url_for('main.index') }}" class="btn btn-outline-secondary">
+    <a href="{{ url_for('main.index') }}" class="btn btn-outline-secondary btn-sm">
         <i class="fas fa-arrow-left"></i> Back to Dashboard
     </a>
 </div>
 
-<div class="d-flex justify-content-between align-items-center mb-3">
-    <h1>SMTP Profiles</h1>
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h1 class="mb-1">SMTP Profiles</h1>
+        <p class="text-muted mb-0">Manage your email sending configurations.</p>
+    </div>
     <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#profileModal" onclick="clearModal()">
         <i class="fas fa-plus-circle me-1"></i> Add New Profile
     </button>
 </div>
 
+<!-- Quick Presets -->
+<div class="card mb-4">
+    <div class="card-header py-2">
+        <i class="fas fa-magic me-2 text-info"></i> Quick Setup - Common Providers
+    </div>
+    <div class="card-body py-3">
+        <div class="d-flex flex-wrap gap-2">
+            <button type="button" class="btn btn-outline-danger btn-sm" onclick="loadPreset('gmail')">
+                <i class="fab fa-google me-1"></i> Gmail
+            </button>
+            <button type="button" class="btn btn-outline-primary btn-sm" onclick="loadPreset('outlook')">
+                <i class="fab fa-microsoft me-1"></i> Outlook/Office 365
+            </button>
+            <button type="button" class="btn btn-outline-purple btn-sm" onclick="loadPreset('yahoo')">
+                <i class="fab fa-yahoo me-1"></i> Yahoo
+            </button>
+            <button type="button" class="btn btn-outline-success btn-sm" onclick="loadPreset('zoho')">
+                <i class="fas fa-envelope me-1"></i> Zoho
+            </button>
+            <button type="button" class="btn btn-outline-warning btn-sm" onclick="loadPreset('sendgrid')">
+                <i class="fas fa-paper-plane me-1"></i> SendGrid
+            </button>
+            <button type="button" class="btn btn-outline-info btn-sm" onclick="loadPreset('mailgun')">
+                <i class="fas fa-envelope-open me-1"></i> Mailgun
+            </button>
+            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="loadPreset('ses')">
+                <i class="fab fa-aws me-1"></i> Amazon SES
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Profiles Table -->
 <div class="card">
-    <div class="card-body">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <span><i class="fas fa-server me-2"></i> Your SMTP Profiles</span>
+        <span class="badge bg-secondary">{{ profiles|length }} Profile(s)</span>
+    </div>
+    <div class="card-body p-0">
         <div class="table-responsive">
-            <table class="table align-middle">
-                <thead>
+            <table class="table table-hover align-middle mb-0">
+                <thead class="bg-light">
                     <tr>
-                        <th>Name</th>
+                        <th class="ps-4">Profile Name</th>
                         <th>Server</th>
                         <th>Username</th>
                         <th>Sender</th>
-                        <th>Status</th>
-                        <th>Daily Limit</th>
-                        <th>Priority</th>
-                        <th>Actions</th>
+                        <th class="text-center">Status</th>
+                        <th class="text-center">Daily Usage</th>
+                        <th class="text-center">Priority</th>
+                        <th class="text-end pe-4">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for profile in profiles %}
                     <tr>
-                        <td class="fw-bold">{{ profile.profile_name }}</td>
-                        <td>{{ profile.server }}:{{ profile.port }}</td>
-                        <td>{{ profile.username }}</td>
-                        <td>{{ profile. sender_name or 'N/A' }} &lt;{{ profile.sender_email or profile.username }}&gt;</td>
-                        <td>
-                            {% if profile.is_active %}
-                            <span class="badge bg-success">Active</span>
-                            {% else %}
-                            <span class="badge bg-secondary">Inactive</span>
+                        <td class="ps-4">
+                            <span class="fw-bold">{{ profile.profile_name }}</span>
+                            {% if profile.warmup_start_date %}
+                            <span class="badge bg-warning text-dark ms-1" title="In warmup mode">
+                                <i class="fas fa-fire-alt"></i>
+                            </span>
                             {% endif %}
                         </td>
-                        <td>
-                            <span class="badge bg-info">{{ profile.sent_today or 0 }}/{{ profile.daily_limit or 500 }}</span>
+                        <td class="text-muted small">
+                            {{ profile.server }}:{{ profile.port }}
+                            {% if profile.use_ssl %}
+                            <span class="badge bg-success ms-1" title="SSL">SSL</span>
+                            {% elif profile.use_tls %}
+                            <span class="badge bg-info ms-1" title="TLS">TLS</span>
+                            {% endif %}
                         </td>
-                        <td>{{ profile.priority or 1 }}</td>
-                        <td>
-                            <button class="btn btn-sm btn-secondary" title="Edit" 
-                                    onclick='editModal({
-                                        "id": {{ profile.id }},
-                                        "profile_name": "{{ profile.profile_name }}",
-                                        "server":  "{{ profile.server }}",
-                                        "port": {{ profile.port }},
-                                        "username": "{{ profile.username }}",
-                                        "sender_name": "{{ profile.sender_name or '' }}",
-                                        "sender_email": "{{ profile. sender_email or '' }}",
-                                        "use_tls": {{ 'true' if profile.use_tls else 'false' }},
-                                        "use_ssl": {{ 'true' if profile.use_ssl else 'false' }},
-                                        "is_active": {{ 'true' if profile.is_active else 'false' }},
-                                        "daily_limit": {{ profile.daily_limit or 500 }},
-                                        "priority": {{ profile.priority or 1 }},
-                                        "imap_server": "{{ profile.imap_server or '' }}",
-                                        "imap_port": {{ profile.imap_port or 993 }},
-                                        "imap_username": "{{ profile.imap_username or '' }}"
-                                    })'>
-                                <i class="fas fa-pencil-alt"></i>
-                            </button>
-                            
-                            <button class="btn btn-sm btn-info text-white" title="Test Connection" 
-                                    onclick="testConnection(this, {{ profile.id }})">
-                                <i class="fas fa-plug"></i>
-                            </button>
-                            
-                            <form method="POST" action="{{ url_for('main.delete_smtp_profile', profile_id=profile.id) }}" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete this profile?');">
-                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                <button type="submit" class="btn btn-sm btn-danger" title="Delete">
-                                    <i class="fas fa-trash"></i>
+                        <td class="small">{{ profile.username }}</td>
+                        <td class="small">
+                            {% if profile.sender_name %}
+                            <strong>{{ profile.sender_name }}</strong><br>
+                            {% endif %}
+                            <span class="text-muted">&lt;{{ profile.sender_email or profile.username }}&gt;</span>
+                        </td>
+                        <td class="text-center">
+                            {% if profile.is_active %}
+                            <span class="badge bg-success"><i class="fas fa-check-circle me-1"></i>Active</span>
+                            {% else %}
+                            <span class="badge bg-secondary"><i class="fas fa-pause-circle me-1"></i>Inactive</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-center">
+                            {% set usage_percent = ((profile.sent_today or 0) / (profile.daily_limit or 500) * 100) %}
+                            <div class="d-flex align-items-center justify-content-center">
+                                <div class="progress me-2" style="width: 60px; height: 8px;">
+                                    <div class="progress-bar {% if usage_percent > 90 %}bg-danger{% elif usage_percent > 70 %}bg-warning{% else %}bg-success{% endif %}" 
+                                         style="width: {{ usage_percent|min(100) }}%"></div>
+                                </div>
+                                <small class="text-muted">{{ profile.sent_today or 0 }}/{{ profile.daily_limit or 500 }}</small>
+                            </div>
+                        </td>
+                        <td class="text-center">
+                            <span class="badge bg-light text-dark border">{{ profile.priority or 1 }}</span>
+                        </td>
+                        <td class="text-end pe-4">
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-outline-secondary" title="Edit" 
+                                        onclick='editProfile({{ profile.id }}, "{{ profile.profile_name }}", "{{ profile.server }}", {{ profile.port }}, "{{ profile.username }}", "{{ profile.sender_name or "" }}", "{{ profile.sender_email or "" }}", {{ "true" if profile.use_tls else "false" }}, {{ "true" if profile.use_ssl else "false" }}, {{ "true" if profile.is_active else "false" }}, {{ profile.daily_limit or 500 }}, {{ profile.priority or 1 }}, "{{ profile.imap_server or "" }}", {{ profile.imap_port or 993 }}, "{{ profile.imap_username or "" }}")'>
+                                    <i class="fas fa-pencil-alt"></i>
                                 </button>
-                            </form>
+                                
+                                <button class="btn btn-outline-info" title="Test Connection" 
+                                        onclick="testConnection(this, {{ profile.id }})" id="test-btn-{{ profile.id }}">
+                                    <i class="fas fa-plug"></i>
+                                </button>
+                                
+                                <form method="POST" action="{{ url_for('main.delete_smtp_profile', profile_id=profile.id) }}" 
+                                      style="display: inline;" 
+                                      onsubmit="return confirm('Are you sure you want to delete the profile \'{{ profile.profile_name }}\'?  This cannot be undone.');">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <button type="submit" class="btn btn-outline-danger" title="Delete">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                </form>
+                            </div>
                         </td>
                     </tr>
                     {% else %}
                     <tr>
-                        <td colspan="8" class="text-center text-muted py-4">
-                            <i class="fas fa-server fa-2x mb-2 d-block"></i>
-                            No SMTP profiles found.  Click "Add New Profile" to create one. 
+                        <td colspan="8" class="text-center py-5 text-muted">
+                            <i class="fas fa-server fa-3x mb-3 d-block"></i>
+                            <h5>No SMTP profiles yet</h5>
+                            <p class="mb-3">Add your first SMTP profile to start sending emails.</p>
+                            <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#profileModal" onclick="clearModal()">
+                                <i class="fas fa-plus-circle me-1"></i> Add New Profile
+                            </button>
                         </td>
                     </tr>
                     {% endfor %}
@@ -97,120 +157,194 @@
     </div>
 </div>
 
+<!-- Help Card -->
+<div class="card mt-4">
+    <div class="card-header">
+        <i class="fas fa-question-circle me-2 text-info"></i> SMTP Configuration Help
+    </div>
+    <div class="card-body">
+        <div class="row">
+            <div class="col-md-4 mb-3 mb-md-0">
+                <h6><i class="fab fa-google me-2 text-danger"></i>Gmail</h6>
+                <ul class="small text-muted ps-3 mb-0">
+                    <li>Enable 2-Factor Authentication</li>
+                    <li>Generate an <a href="https://myaccount.google.com/apppasswords" target="_blank">App Password</a></li>
+                    <li>Use App Password (not your regular password)</li>
+                    <li>Server: smtp.gmail.com, Port: 587</li>
+                </ul>
+            </div>
+            <div class="col-md-4 mb-3 mb-md-0">
+                <h6><i class="fab fa-microsoft me-2 text-primary"></i>Outlook/Office 365</h6>
+                <ul class="small text-muted ps-3 mb-0">
+                    <li>Enable SMTP AUTH in admin settings</li>
+                    <li>May need App Password with 2FA</li>
+                    <li>Server: smtp.office365.com, Port: 587</li>
+                    <li>Use your full email as username</li>
+                </ul>
+            </div>
+            <div class="col-md-4">
+                <h6><i class="fas fa-shield-alt me-2 text-success"></i>Best Practices</h6>
+                <ul class="small text-muted ps-3 mb-0">
+                    <li>Start with low daily limits (warmup)</li>
+                    <li>Use dedicated sending domains</li>
+                    <li>Configure SPF, DKIM, DMARC</li>
+                    <li>Monitor bounce rates closely</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Add/Edit Modal -->
 <div class="modal fade" id="profileModal" tabindex="-1" aria-labelledby="modalTitle" aria-hidden="true">
     <div class="modal-dialog modal-lg">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title" id="modalTitle">Add SMTP Profile</h5>
+                <h5 class="modal-title" id="modalTitle">
+                    <i class="fas fa-plus-circle me-2"></i> Add SMTP Profile
+                </h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <form id="profileForm" method="POST" action="{{ url_for('main.smtp_profiles') }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <input type="hidden" id="profile_id" name="profile_id">
+                <input type="hidden" id="profile_id" name="profile_id" value="">
                 
                 <div class="modal-body">
                     <!-- Basic Info -->
-                    <h6 class="text-muted mb-3"><i class="fas fa-info-circle me-1"></i> Basic Information</h6>
-                    <div class="row">
-                        <div class="col-md-8 mb-3">
-                            <label class="form-label">Profile Name <span class="text-danger">*</span></label>
-                            <input type="text" class="form-control" id="name" name="name" placeholder="e.g., Gmail Main Account" required>
-                        </div>
-                        <div class="col-md-4 mb-3">
-                            <label class="form-label">Priority</label>
-                            <input type="number" class="form-control" id="priority" name="priority" value="1" min="1" max="100">
-                            <small class="text-muted">Lower = Higher priority</small>
+                    <div class="border-bottom pb-3 mb-3">
+                        <h6 class="text-muted mb-3"><i class="fas fa-info-circle me-1"></i> Basic Information</h6>
+                        <div class="row">
+                            <div class="col-md-8 mb-3">
+                                <label class="form-label">Profile Name <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="name" name="name" 
+                                       placeholder="e.g., Gmail Main Account" required>
+                                <div class="form-text">A friendly name to identify this profile</div>
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <label class="form-label">Priority</label>
+                                <input type="number" class="form-control" id="priority" name="priority" 
+                                       value="1" min="1" max="100">
+                                <div class="form-text">Lower = Higher priority</div>
+                            </div>
                         </div>
                     </div>
                     
                     <!-- SMTP Settings -->
-                    <h6 class="text-muted mb-3 mt-3"><i class="fas fa-server me-1"></i> SMTP Server Settings</h6>
-                    <div class="row">
-                        <div class="col-md-8 mb-3">
-                            <label class="form-label">SMTP Server <span class="text-danger">*</span></label>
-                            <input type="text" class="form-control" id="server" name="server" placeholder="smtp. gmail.com" required>
+                    <div class="border-bottom pb-3 mb-3">
+                        <h6 class="text-muted mb-3"><i class="fas fa-server me-1"></i> SMTP Server Settings</h6>
+                        <div class="row">
+                            <div class="col-md-8 mb-3">
+                                <label class="form-label">SMTP Server <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="server" name="server" 
+                                       placeholder="smtp.gmail.com" required>
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <label class="form-label">Port <span class="text-danger">*</span></label>
+                                <input type="number" class="form-control" id="port" name="port" 
+                                       value="587" required>
+                            </div>
                         </div>
-                        <div class="col-md-4 mb-3">
-                            <label class="form-label">Port <span class="text-danger">*</span></label>
-                            <input type="number" class="form-control" id="port" name="port" value="587" required>
-                        </div>
-                    </div>
-                    
-                    <div class="row">
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label">Username <span class="text-danger">*</span></label>
-                            <input type="text" class="form-control" id="username" name="username" placeholder="your@email.com" required>
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label">Password</label>
-                            <input type="password" class="form-control" id="password" name="password" placeholder="Leave blank to keep current">
-                            <small class="text-muted">For Gmail, use an App Password</small>
-                        </div>
-                    </div>
-                    
-                    <div class="row">
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label">Sender Name</label>
-                            <input type="text" class="form-control" id="sender_name" name="sender_name" placeholder="John Doe">
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label">Sender Email</label>
-                            <input type="email" class="form-control" id="sender_email" name="sender_email" placeholder="john@company.com">
-                            <small class="text-muted">Leave blank to use username</small>
-                        </div>
-                    </div>
-                    
-                    <div class="row">
-                        <div class="col-md-4 mb-3">
-                            <label class="form-label">Daily Limit</label>
-                            <input type="number" class="form-control" id="daily_limit" name="daily_limit" value="500" min="1">
-                            <small class="text-muted">Max emails per day</small>
-                        </div>
-                        <div class="col-md-8 mb-3">
-                            <label class="form-label">Security & Status</label>
-                            <div class="d-flex flex-wrap gap-3 mt-2">
-                                <div class="form-check">
-                                    <input class="form-check-input" type="checkbox" id="use_tls" name="use_tls" checked>
-                                    <label class="form-check-label" for="use_tls">Use TLS</label>
+                        
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Username <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="username" name="username" 
+                                       placeholder="your@email.com" required>
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Password</label>
+                                <div class="input-group">
+                                    <input type="password" class="form-control" id="password" name="password" 
+                                           placeholder="Leave blank to keep current">
+                                    <button class="btn btn-outline-secondary" type="button" onclick="togglePasswordVisibility('password')">
+                                        <i class="fas fa-eye" id="password-toggle-icon"></i>
+                                    </button>
                                 </div>
-                                <div class="form-check">
-                                    <input class="form-check-input" type="checkbox" id="use_ssl" name="use_ssl">
-                                    <label class="form-check-label" for="use_ssl">Use SSL</label>
-                                </div>
-                                <div class="form-check">
-                                    <input class="form-check-input" type="checkbox" id="is_active" name="is_active" checked>
-                                    <label class="form-check-label" for="is_active">Active</label>
+                                <div class="form-text">For Gmail/Outlook with 2FA, use an App Password</div>
+                            </div>
+                        </div>
+                        
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Sender Name</label>
+                                <input type="text" class="form-control" id="sender_name" name="sender_name" 
+                                       placeholder="John Doe">
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Sender Email</label>
+                                <input type="email" class="form-control" id="sender_email" name="sender_email" 
+                                       placeholder="john@company.com">
+                                <div class="form-text">Leave blank to use username</div>
+                            </div>
+                        </div>
+                        
+                        <div class="row">
+                            <div class="col-md-4 mb-3">
+                                <label class="form-label">Daily Limit</label>
+                                <input type="number" class="form-control" id="daily_limit" name="daily_limit" 
+                                       value="500" min="1" max="10000">
+                                <div class="form-text">Max emails per day</div>
+                            </div>
+                            <div class="col-md-8 mb-3">
+                                <label class="form-label">Security & Status</label>
+                                <div class="d-flex flex-wrap gap-3 mt-2">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="use_tls" name="use_tls" checked>
+                                        <label class="form-check-label" for="use_tls">
+                                            <i class="fas fa-lock me-1 text-info"></i> Use TLS
+                                        </label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="use_ssl" name="use_ssl">
+                                        <label class="form-check-label" for="use_ssl">
+                                            <i class="fas fa-shield-alt me-1 text-success"></i> Use SSL
+                                        </label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="is_active" name="is_active" checked>
+                                        <label class="form-check-label" for="is_active">
+                                            <i class="fas fa-check-circle me-1 text-success"></i> Active
+                                        </label>
+                                    </div>
                                 </div>
                             </div>
                         </div>
                     </div>
                     
                     <!-- IMAP Settings (Collapsible) -->
-                    <div class="mt-3">
-                        <a class="text-decoration-none" data-bs-toggle="collapse" href="#imapSettings" role="button" aria-expanded="false">
-                            <h6 class="text-muted"><i class="fas fa-envelope-open me-1"></i> IMAP Settings (Optional - for reply tracking) <i class="fas fa-chevron-down ms-1"></i></h6>
+                    <div>
+                        <a class="text-decoration-none d-flex align-items-center" data-bs-toggle="collapse" href="#imapSettings" role="button" aria-expanded="false">
+                            <h6 class="text-muted mb-0">
+                                <i class="fas fa-envelope-open me-1"></i> IMAP Settings (Optional)
+                            </h6>
+                            <i class="fas fa-chevron-down ms-2 text-muted"></i>
                         </a>
+                        <small class="text-muted d-block mb-2">For reply tracking functionality</small>
+                        
                         <div class="collapse" id="imapSettings">
                             <div class="border rounded p-3 mt-2 bg-light">
                                 <div class="row">
                                     <div class="col-md-6 mb-3">
                                         <label class="form-label">IMAP Server</label>
-                                        <input type="text" class="form-control" id="imap_server" name="imap_server" placeholder="imap.gmail.com">
+                                        <input type="text" class="form-control" id="imap_server" name="imap_server" 
+                                               placeholder="imap.gmail.com">
                                     </div>
                                     <div class="col-md-6 mb-3">
                                         <label class="form-label">IMAP Port</label>
-                                        <input type="number" class="form-control" id="imap_port" name="imap_port" value="993">
+                                        <input type="number" class="form-control" id="imap_port" name="imap_port" 
+                                               value="993">
                                     </div>
                                 </div>
                                 <div class="row">
                                     <div class="col-md-6 mb-3">
                                         <label class="form-label">IMAP Username</label>
-                                        <input type="text" class="form-control" id="imap_username" name="imap_username" placeholder="Same as SMTP username">
+                                        <input type="text" class="form-control" id="imap_username" name="imap_username" 
+                                               placeholder="Same as SMTP username">
                                     </div>
                                     <div class="col-md-6 mb-3">
                                         <label class="form-label">IMAP Password</label>
-                                        <input type="password" class="form-control" id="imap_password" name="imap_password" placeholder="Leave blank to keep current">
+                                        <input type="password" class="form-control" id="imap_password" name="imap_password" 
+                                               placeholder="Leave blank to keep current">
                                     </div>
                                 </div>
                             </div>
@@ -219,7 +353,12 @@
                 </div>
                 
                 <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">
+                        <i class="fas fa-times me-1"></i> Cancel
+                    </button>
+                    <button type="button" class="btn btn-info" onclick="testCurrentSettings()">
+                        <i class="fas fa-plug me-1"></i> Test Connection
+                    </button>
                     <button type="submit" class="btn btn-primary">
                         <i class="fas fa-save me-1"></i> Save Profile
                     </button>
@@ -228,17 +367,102 @@
         </div>
     </div>
 </div>
+
+<!-- Test Result Modal -->
+<div class="modal fade" id="testResultModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-sm">
+        <div class="modal-content">
+            <div class="modal-header" id="testResultHeader">
+                <h5 class="modal-title" id="testResultTitle">Connection Test</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body text-center py-4" id="testResultBody">
+                <!-- Content will be injected by JavaScript -->
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-    const modal = new bootstrap.Modal(document.getElementById('profileModal'));
-    const modalTitle = document.getElementById('modalTitle');
-    const profileForm = document.getElementById('profileForm');
+    // Initialize modal
+    const profileModal = new bootstrap.Modal(document.getElementById('profileModal'));
+    const testResultModal = new bootstrap.Modal(document.getElementById('testResultModal'));
+    
+    // SMTP Presets
+    const smtpPresets = {
+        'gmail': { 
+            server: 'smtp.gmail.com', 
+            port: 587, 
+            tls: true, 
+            ssl: false, 
+            imap_server: 'imap.gmail.com', 
+            imap_port: 993,
+            name: 'Gmail'
+        },
+        'outlook': { 
+            server: 'smtp.office365.com', 
+            port: 587, 
+            tls: true, 
+            ssl: false, 
+            imap_server: 'outlook.office365.com', 
+            imap_port: 993,
+            name: 'Outlook/Office 365'
+        },
+        'yahoo': { 
+            server: 'smtp.mail.yahoo.com', 
+            port: 587, 
+            tls: true, 
+            ssl: false, 
+            imap_server: 'imap.mail.yahoo.com', 
+            imap_port: 993,
+            name: 'Yahoo Mail'
+        },
+        'zoho': { 
+            server: 'smtp.zoho.com', 
+            port: 587, 
+            tls: true, 
+            ssl: false, 
+            imap_server: 'imap.zoho.com', 
+            imap_port: 993,
+            name: 'Zoho Mail'
+        },
+        'sendgrid': { 
+            server: 'smtp.sendgrid.net', 
+            port: 587, 
+            tls: true, 
+            ssl: false, 
+            imap_server: '', 
+            imap_port: 993,
+            name: 'SendGrid'
+        },
+        'mailgun': { 
+            server: 'smtp.mailgun.org', 
+            port: 587, 
+            tls: true, 
+            ssl: false, 
+            imap_server: '', 
+            imap_port: 993,
+            name: 'Mailgun'
+        },
+        'ses': { 
+            server: 'email-smtp.us-east-1.amazonaws.com', 
+            port: 587, 
+            tls: true, 
+            ssl: false, 
+            imap_server: '', 
+            imap_port: 993,
+            name: 'Amazon SES'
+        }
+    };
 
     function clearModal() {
-        modalTitle.innerText = "Add SMTP Profile";
-        profileForm.reset();
+        document.getElementById('modalTitle').innerHTML = '<i class="fas fa-plus-circle me-2"></i> Add SMTP Profile';
+        document.getElementById('profileForm').reset();
         document.getElementById('profile_id').value = '';
         document.getElementById('use_tls').checked = true;
         document.getElementById('use_ssl').checked = false;
@@ -247,38 +471,66 @@
         document.getElementById('daily_limit').value = '500';
         document.getElementById('priority').value = '1';
         document.getElementById('imap_port').value = '993';
+        document.getElementById('password').placeholder = 'Enter password';
+        document.getElementById('imap_password').placeholder = 'Enter IMAP password';
     }
 
-    function editModal(data) {
-        modalTitle.innerText = "Edit SMTP Profile";
+    function loadPreset(presetName) {
+        const preset = smtpPresets[presetName];
+        if (!preset) return;
         
-        document.getElementById('profile_id').value = data.id;
-        document.getElementById('name').value = data.profile_name || '';
-        document.getElementById('server').value = data.server || '';
-        document.getElementById('port').value = data.port || 587;
-        document.getElementById('username').value = data.username || '';
-        document.getElementById('sender_name').value = data.sender_name || '';
-        document.getElementById('sender_email').value = data.sender_email || '';
-        document.getElementById('use_tls').checked = data.use_tls;
-        document.getElementById('use_ssl').checked = data.use_ssl;
-        document.getElementById('is_active').checked = data.is_active;
-        document.getElementById('daily_limit').value = data.daily_limit || 500;
-        document.getElementById('priority').value = data.priority || 1;
-        document.getElementById('imap_server').value = data.imap_server || '';
-        document.getElementById('imap_port').value = data.imap_port || 993;
-        document.getElementById('imap_username').value = data.imap_username || '';
+        clearModal();
         
-        // Clear password fields (they shouldn't be pre-filled for security)
+        document.getElementById('name').value = preset.name + ' Profile';
+        document.getElementById('server').value = preset.server;
+        document.getElementById('port').value = preset.port;
+        document.getElementById('use_tls').checked = preset.tls;
+        document.getElementById('use_ssl').checked = preset.ssl;
+        document.getElementById('imap_server').value = preset.imap_server;
+        document.getElementById('imap_port').value = preset.imap_port;
+        
+        profileModal.show();
+        
+        // Focus on username field
+        setTimeout(() => {
+            document.getElementById('username').focus();
+        }, 500);
+    }
+
+    function editProfile(id, profileName, server, port, username, senderName, senderEmail, useTls, useSsl, isActive, dailyLimit, priority, imapServer, imapPort, imapUsername) {
+        document.getElementById('modalTitle').innerHTML = '<i class="fas fa-pencil-alt me-2"></i> Edit SMTP Profile';
+        
+        document.getElementById('profile_id').value = id;
+        document.getElementById('name').value = profileName || '';
+        document.getElementById('server').value = server || '';
+        document.getElementById('port').value = port || 587;
+        document.getElementById('username').value = username || '';
+        document.getElementById('sender_name').value = senderName || '';
+        document.getElementById('sender_email').value = senderEmail || '';
+        document.getElementById('use_tls').checked = useTls;
+        document.getElementById('use_ssl').checked = useSsl;
+        document.getElementById('is_active').checked = isActive;
+        document.getElementById('daily_limit').value = dailyLimit || 500;
+        document.getElementById('priority').value = priority || 1;
+        document.getElementById('imap_server').value = imapServer || '';
+        document.getElementById('imap_port').value = imapPort || 993;
+        document.getElementById('imap_username').value = imapUsername || '';
+        
+        // Clear password fields (security)
         document.getElementById('password').value = '';
+        document.getElementById('password').placeholder = 'Leave blank to keep current';
         document.getElementById('imap_password').value = '';
+        document.getElementById('imap_password').placeholder = 'Leave blank to keep current';
         
-        modal.show();
+        profileModal.show();
     }
 
     function testConnection(btn, profileId) {
         const originalHtml = btn.innerHTML;
         btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status"></span>';
         btn.disabled = true;
+        btn.classList.remove('btn-outline-info', 'btn-outline-success', 'btn-outline-danger');
+        btn.classList.add('btn-outline-secondary');
 
         fetch("{{ url_for('main.test_smtp_connection') }}", {
             method: "POST",
@@ -288,63 +540,208 @@
             },
             body: JSON.stringify({ profile_id: profileId })
         })
-        .then(response => {
-            if (!response.ok) {
-                return response.json().then(data => {
-                    throw new Error(data.message || 'Unknown error');
-                });
-            }
-            return response.json();
-        })
+        .then(response => response.json())
         .then(data => {
+            btn.innerHTML = originalHtml;
+            btn.disabled = false;
+            btn.classList.remove('btn-outline-secondary');
+            
+            // Show result in modal
+            const resultHeader = document.getElementById('testResultHeader');
+            const resultBody = document.getElementById('testResultBody');
+            
             if (data.success) {
-                alert('✅ ' + data.message);
-                btn.classList.remove('btn-info');
-                btn.classList.add('btn-success');
+                btn.classList.add('btn-outline-success');
+                resultHeader.className = 'modal-header bg-success text-white';
+                document.getElementById('testResultTitle').textContent = 'Connection Successful';
+                resultBody.innerHTML = `
+                    <i class="fas fa-check-circle fa-4x text-success mb-3"></i>
+                    <h5 class="text-success">Connected!</h5>
+                    <p class="text-muted mb-0">${data.message}</p>
+                `;
             } else {
-                alert('❌ ' + data.message);
-                btn.classList.remove('btn-info');
-                btn.classList.add('btn-danger');
+                btn.classList.add('btn-outline-danger');
+                resultHeader.className = 'modal-header bg-danger text-white';
+                document.getElementById('testResultTitle').textContent = 'Connection Failed';
+                resultBody.innerHTML = `
+                    <i class="fas fa-times-circle fa-4x text-danger mb-3"></i>
+                    <h5 class="text-danger">Failed</h5>
+                    <p class="text-muted mb-0">${data.message}</p>
+                `;
             }
+            
+            testResultModal.show();
+            
+            // Reset button color after 5 seconds
+            setTimeout(() => {
+                btn.classList.remove('btn-outline-success', 'btn-outline-danger');
+                btn.classList.add('btn-outline-info');
+            }, 5000);
         })
         .catch(err => {
             console.error(err);
-            alert('❌ Connection Test Failed:  ' + err.message);
-            btn.classList.remove('btn-info');
-            btn.classList.add('btn-danger');
-        })
-        .finally(() => {
             btn.innerHTML = originalHtml;
             btn.disabled = false;
-            // Reset button color after 3 seconds
+            btn.classList.remove('btn-outline-secondary');
+            btn.classList.add('btn-outline-danger');
+            
+            const resultHeader = document.getElementById('testResultHeader');
+            const resultBody = document.getElementById('testResultBody');
+            resultHeader.className = 'modal-header bg-danger text-white';
+            document.getElementById('testResultTitle').textContent = 'Error';
+            resultBody.innerHTML = `
+                <i class="fas fa-exclamation-triangle fa-4x text-danger mb-3"></i>
+                <h5 class="text-danger">Request Failed</h5>
+                <p class="text-muted mb-0">${err.message || 'Unknown error occurred'}</p>
+            `;
+            
+            testResultModal.show();
+            
             setTimeout(() => {
-                btn.classList.remove('btn-success', 'btn-danger');
-                btn.classList.add('btn-info');
-            }, 3000);
+                btn.classList.remove('btn-outline-danger');
+                btn.classList.add('btn-outline-info');
+            }, 5000);
         });
     }
 
-    // Common SMTP presets
-    const smtpPresets = {
-        'gmail': { server: 'smtp.gmail.com', port: 587, tls: true, ssl: false, imap_server: 'imap.gmail.com', imap_port: 993 },
-        'outlook': { server: 'smtp.office365.com', port: 587, tls: true, ssl:  false, imap_server: 'outlook.office365.com', imap_port: 993 },
-        'yahoo':  { server: 'smtp.mail.yahoo.com', port: 587, tls: true, ssl:  false, imap_server: 'imap.mail.yahoo.com', imap_port: 993 },
-        'zoho': { server:  'smtp.zoho.com', port: 587, tls: true, ssl: false, imap_server: 'imap.zoho.com', imap_port: 993 }
-    };
+    function testCurrentSettings() {
+        const server = document.getElementById('server').value;
+        const port = document.getElementById('port').value;
+        const username = document.getElementById('username').value;
+        const password = document.getElementById('password').value;
+        
+        if (!server || !port || !username) {
+            alert('Please fill in Server, Port, and Username before testing.');
+            return;
+        }
+        
+        if (!password && !document.getElementById('profile_id').value) {
+            alert('Please enter a password to test the connection.');
+            return;
+        }
+        
+        const btn = event.target;
+        const originalHtml = btn.innerHTML;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Testing...';
+        btn.disabled = true;
+        
+        // If editing existing profile, use the profile ID
+        const profileId = document.getElementById('profile_id').value;
+        
+        if (profileId) {
+            // Test existing profile
+            fetch("{{ url_for('main.test_smtp_connection') }}", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-CSRFToken": "{{ csrf_token() }}"
+                },
+                body: JSON.stringify({ profile_id: parseInt(profileId) })
+            })
+            .then(response => response.json())
+            .then(data => {
+                btn.innerHTML = originalHtml;
+                btn.disabled = false;
+                
+                if (data.success) {
+                    alert('✅ Connection successful!\n\n' + data.message);
+                } else {
+                    alert('❌ Connection failed!\n\n' + data.message);
+                }
+            })
+            .catch(err => {
+                btn.innerHTML = originalHtml;
+                btn.disabled = false;
+                alert('❌ Error: ' + err.message);
+            });
+        } else {
+            // For new profiles, just show a message
+            btn.innerHTML = originalHtml;
+            btn.disabled = false;
+            alert('Please save the profile first, then test the connection from the main list.');
+        }
+    }
+
+    function togglePasswordVisibility(inputId) {
+        const input = document.getElementById(inputId);
+        const icon = document.getElementById(inputId + '-toggle-icon');
+        
+        if (input.type === 'password') {
+            input.type = 'text';
+            if (icon) {
+                icon.classList.remove('fa-eye');
+                icon.classList.add('fa-eye-slash');
+            }
+        } else {
+            input.type = 'password';
+            if (icon) {
+                icon.classList.remove('fa-eye-slash');
+                icon.classList.add('fa-eye');
+            }
+        }
+    }
 
     // Auto-detect preset when server is entered
     document.getElementById('server').addEventListener('blur', function() {
         const server = this.value.toLowerCase();
+        
         for (const [key, preset] of Object.entries(smtpPresets)) {
-            if (server.includes(key)) {
-                document.getElementById('port').value = preset.port;
+            if (server.includes(key) || server.includes(preset.server.split('.')[1])) {
+                // Auto-fill related settings
+                if (!document.getElementById('port').value || document.getElementById('port').value === '587') {
+                    document.getElementById('port').value = preset.port;
+                }
                 document.getElementById('use_tls').checked = preset.tls;
                 document.getElementById('use_ssl').checked = preset.ssl;
-                document.getElementById('imap_server').value = preset.imap_server;
-                document.getElementById('imap_port').value = preset.imap_port;
+                
+                if (preset.imap_server && !document.getElementById('imap_server').value) {
+                    document.getElementById('imap_server').value = preset.imap_server;
+                    document.getElementById('imap_port').value = preset.imap_port;
+                }
                 break;
             }
         }
     });
+
+    // TLS/SSL mutual exclusivity
+    document.getElementById('use_tls').addEventListener('change', function() {
+        if (this.checked) {
+            document.getElementById('use_ssl').checked = false;
+            if (document.getElementById('port').value === '465') {
+                document.getElementById('port').value = '587';
+            }
+        }
+    });
+
+    document.getElementById('use_ssl').addEventListener('change', function() {
+        if (this.checked) {
+            document.getElementById('use_tls').checked = false;
+            document.getElementById('port').value = '465';
+        }
+    });
+
+    // Port auto-adjust
+    document.getElementById('port').addEventListener('change', function() {
+        const port = parseInt(this.value);
+        if (port === 465) {
+            document.getElementById('use_ssl').checked = true;
+            document.getElementById('use_tls').checked = false;
+        } else if (port === 587 || port === 25) {
+            document.getElementById('use_tls').checked = true;
+            document.getElementById('use_ssl').checked = false;
+        }
+    });
 </script>
+
+<style>
+    .btn-outline-purple {
+        color: #6f42c1;
+        border-color: #6f42c1;
+    }
+    .btn-outline-purple:hover {
+        color: #fff;
+        background-color: #6f42c1;
+        border-color: #6f42c1;
+    }
+</style>
 {% endblock %}
