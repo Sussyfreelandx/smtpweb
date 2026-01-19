@@ -1,11 +1,11 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="container py-4">
+<div class="container-fluid py-4">
     <!-- Navigation Back -->
     <div class="mb-3">
         <a href="{{ url_for('main.index') }}" class="btn btn-outline-secondary btn-sm">
-            <i class="fas fa-arrow-left"></i> Back to Dashboard
+            <i class="fas fa-arrow-left me-1"></i> Back to Dashboard
         </a>
     </div>
 
@@ -13,85 +13,174 @@
     <div class="d-flex justify-content-between align-items-center mb-4">
         <div>
             <h2 class="mb-0">{{ campaign.name }}</h2>
-            <div class="text-muted small">Created: {{ campaign.timestamp.strftime('%Y-%m-%d %H:%M') }}</div>
+            <div class="text-muted small">
+                Created: {{ campaign.timestamp.strftime('%Y-%m-%d %H:%M') }}
+                {% if campaign.scheduled_at %}
+                | Scheduled: {{ campaign.scheduled_at.strftime('%Y-%m-%d %H:%M') }}
+                {% endif %}
+            </div>
         </div>
-        <div class="badge fs-5 {% if campaign.status == 'Sending' %}bg-success{% elif campaign.status == 'Paused' %}bg-warning{% elif campaign.status == 'Completed' %}bg-primary{% else %}bg-secondary{% endif %}">
+        <div class="campaign-status campaign-{{ campaign.status|lower }}">
             {{ campaign.status }}
         </div>
     </div>
 
+    <!-- Analytics Cards -->
+    <div class="row mb-4">
+        <div class="col-md-2">
+            <div class="stat-card">
+                <div class="value text-primary">{{ analytics.total }}</div>
+                <div class="label">Total Recipients</div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="stat-card">
+                <div class="value text-success">{{ analytics.sent }}</div>
+                <div class="label">Sent</div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="stat-card">
+                <div class="value text-info">{{ analytics.opened }}</div>
+                <div class="label">Opened</div>
+                <div class="percentage">({{ analytics.open_rate }}%)</div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="stat-card">
+                <div class="value text-warning">{{ analytics.clicked }}</div>
+                <div class="label">Clicked</div>
+                <div class="percentage">({{ analytics.click_rate }}%)</div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="stat-card">
+                <div class="value text-danger">{{ analytics.failed }}</div>
+                <div class="label">Failed</div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="stat-card">
+                <div class="value text-secondary">{{ analytics.queued }}</div>
+                <div class="label">Queued</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- A/B Testing Stats -->
+    {% if campaign.ab_testing_enabled and ab_stats %}
+    <div class="card mb-4">
+        <div class="card-header bg-info text-white">
+            <i class="fas fa-flask me-2"></i> A/B Testing Results
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6">
+                    <h6>Version A</h6>
+                    <p class="small text-muted mb-2">Subject: {{ campaign.subject }}</p>
+                    <div class="d-flex justify-content-between">
+                        <span>Sent: {{ ab_stats.a_sent }}</span>
+                        <span>Opens: {{ ab_stats.a_opened }} ({{ ab_stats.a_open_rate }}%)</span>
+                        <span>Clicks: {{ ab_stats.a_clicked }} ({{ ab_stats.a_click_rate }}%)</span>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <h6>Version B</h6>
+                    <p class="small text-muted mb-2">Subject: {{ campaign.subject_b or campaign.subject }}</p>
+                    <div class="d-flex justify-content-between">
+                        <span>Sent:  {{ ab_stats.b_sent }}</span>
+                        <span>Opens: {{ ab_stats.b_opened }} ({{ ab_stats.b_open_rate }}%)</span>
+                        <span>Clicks: {{ ab_stats.b_clicked }} ({{ ab_stats.b_click_rate }}%)</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
     <!-- MAIN CONTROLS -->
     <div class="card mb-4 shadow-sm border-0">
         <div class="card-body p-2 bg-light rounded d-flex flex-wrap gap-2">
-            <!-- Start/Restart Button -->
             {% if campaign.status == 'Sending' %}
-                <a href="{{ url_for('main.campaign_control', campaign_id=campaign.id, action='start') }}" 
+                <a href="{{ url_for('main.campaign_control', campaign_id=campaign.id, action='start') }}"
                    class="btn btn-success fw-bold text-white"
-                   onclick="return confirm('Campaign is marked as Sending. Force restart task?')">
+                   onclick="return confirm('Campaign is currently sending. Force restart?')">
                     <i class="fas fa-sync me-1"></i> RESTART
                 </a>
             {% else %}
-                <a href="{{ url_for('main.campaign_control', campaign_id=campaign.id, action='start') }}" 
+                <a href="{{ url_for('main.campaign_control', campaign_id=campaign.id, action='start') }}"
                    class="btn btn-success fw-bold text-white">
                     <i class="fas fa-play me-1"></i> START
                 </a>
             {% endif %}
-            
-            <a href="{{ url_for('main.campaign_control', campaign_id=campaign.id, action='pause') }}" 
-               class="btn btn-warning text-white fw-bold {% if campaign.status != 'Sending' %}disabled{% endif %}">
+
+            <a href="{{ url_for('main.campaign_control', campaign_id=campaign.id, action='pause') }}"
+               class="btn btn-warning text-dark fw-bold {% if campaign.status != 'Sending' %}disabled{% endif %}">
                 <i class="fas fa-pause me-1"></i> PAUSE
             </a>
-            
-            <a href="{{ url_for('main.campaign_control', campaign_id=campaign.id, action='stop') }}" 
-               class="btn btn-danger fw-bold text-white {% if campaign.status == 'Completed' or campaign.status == 'Stopped' %}disabled{% endif %}">
+
+            <a href="{{ url_for('main.campaign_control', campaign_id=campaign.id, action='stop') }}"
+               class="btn btn-danger fw-bold text-white {% if campaign.status in ['Completed', 'Stopped', 'Draft'] %}disabled{% endif %}">
                 <i class="fas fa-stop me-1"></i> STOP
             </a>
-            
-            <button class="btn btn-info text-white fw-bold" onclick="alert('Scheduler is currently in beta. Please use instant start.')">
-                <i class="fas fa-calendar-alt me-1"></i> SCHEDULE
-            </button>
-            
-            <a href="{{ url_for('main.export_campaign_report', campaign_id=campaign.id) }}" class="btn btn-purple text-white fw-bold" style="background-color: #8e44ad;">
-                <i class="fas fa-file-export me-1"></i> EXPORT
+
+            <a href="{{ url_for('main.export_campaign_report', campaign_id=campaign.id) }}"
+               class="btn btn-purple text-white fw-bold">
+                <i class="fas fa-file-export me-1"></i> EXPORT CSV
             </a>
+
+            <form method="POST" action="{{ url_for('main.delete_campaign', campaign_id=campaign.id) }}"
+                  class="d-inline" onsubmit="return confirm('Are you sure you want to delete this campaign?  This cannot be undone.');">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-outline-danger fw-bold">
+                    <i class="fas fa-trash me-1"></i> DELETE
+                </button>
+            </form>
         </div>
     </div>
 
     <!-- LIST TOOLS -->
     <div class="card mb-4 shadow-sm">
-        <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center flex-wrap">
-            <span class="me-auto"><i class="fas fa-users me-2"></i> Recipients</span>
-            
+        <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <span><i class="fas fa-users me-2"></i> Recipients</span>
+
             <!-- Manual Add Input -->
-            <div class="input-group input-group-sm w-auto me-2">
-                <input type="email" id="newRecipientEmail" class="form-control" placeholder="manual@add.com">
-                <button class="btn btn-success" type="button" onclick="addRecipient()"><i class="fas fa-plus"></i></button>
-            </div>
+            <form class="d-flex" id="addRecipientForm">
+                <div class="input-group input-group-sm">
+                    <input type="email" id="newRecipientEmail" class="form-control" placeholder="email@example.com" required>
+                    <button class="btn btn-success" type="submit"><i class="fas fa-plus"></i> Add</button>
+                </div>
+            </form>
 
             <!-- Toolbar -->
             <div class="btn-group btn-group-sm">
                 <a href="{{ url_for('main.validate_list', campaign_id=campaign.id) }}" class="btn btn-warning text-dark">
-                    <i class="fas fa-check-double"></i> Validate List
+                    <i class="fas fa-check-double me-1"></i> Validate List
                 </a>
-                <a href="{{ url_for('main.campaign_control', campaign_id=campaign.id, action='retry') }}" class="btn btn-warning text-dark border-start">
-                    <i class="fas fa-redo"></i> Retry Failed
+                <a href="{{ url_for('main.campaign_control', campaign_id=campaign.id, action='retry') }}" class="btn btn-info text-white">
+                    <i class="fas fa-redo me-1"></i> Retry Failed
                 </a>
-                <a href="{{ url_for('main.clear_recipient_list', campaign_id=campaign.id) }}" class="btn btn-danger" onclick="return confirm('Clear entire list?')">
-                    <i class="fas fa-trash"></i> Clear List
+                <a href="{{ url_for('main.clear_recipient_list', campaign_id=campaign.id) }}"
+                   class="btn btn-danger" onclick="return confirm('Clear entire recipient list?')">
+                    <i class="fas fa-trash me-1"></i> Clear List
                 </a>
             </div>
         </div>
-        
+
         <div class="table-responsive">
-            <table class="table table-hover align-middle mb-0 table-striped">
+            <table class="table table-hover table-recipients align-middle mb-0 table-striped">
                 <thead class="bg-light">
                     <tr>
                         <th class="ps-3">Email</th>
                         <th>Status</th>
+                        {% if campaign.ab_testing_enabled %}
+                        <th>Version</th>
+                        {% endif %}
                         <th>Sent At</th>
                         <th class="text-center">Opened</th>
                         <th class="text-center">Clicked</th>
-                        <th>Reason</th>
+                        <th>Attempts</th>
+                        <th>Message</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -99,38 +188,66 @@
                     <tr>
                         <td class="ps-3 fw-bold">{{ r.email }}</td>
                         <td>
-                            <span class="badge 
-                                {% if r.status == 'Sent' %}bg-success
-                                {% elif r.status == 'Failed' %}bg-danger
-                                {% elif r.status == 'Sending' %}bg-warning text-dark
-                                {% elif r.status == 'Invalid' %}bg-danger
-                                {% elif r.status == 'Unsubscribed' %}bg-dark
-                                {% else %}bg-secondary{% endif %}">
+                            <span class="status-badge status-{{ r.status|lower|replace(' ', '-') }}">
                                 {{ r.status }}
                             </span>
                         </td>
+                        {% if campaign.ab_testing_enabled %}
+                        <td>
+                            {% if r.ab_version %}
+                            <span class="badge bg-{{ 'primary' if r.ab_version == 'A' else 'secondary' }}">{{ r.ab_version }}</span>
+                            {% else %}
+                            -
+                            {% endif %}
+                        </td>
+                        {% endif %}
                         <td class="small">{{ r.sent_at.strftime('%H:%M:%S') if r.sent_at else '-' }}</td>
-                        <td class="text-center">{{ '✅' if r.opened_at else '-' }}</td>
-                        <td class="text-center">{{ '✅' if r.clicked_at else '-' }}</td>
-                        <td class="small text-muted text-truncate" style="max-width: 250px;">{{ r.status_message or '' }}</td>
+                        <td class="text-center">
+                            {% if r.opened_at %}
+                            <span class="text-success" title="{{ r.opened_at }}">✅ {{ r.open_count or 1 }}</span>
+                            {% else %}
+                            -
+                            {% endif %}
+                        </td>
+                        <td class="text-center">
+                            {% if r.clicked_at %}
+                            <span class="text-success" title="{{ r.clicked_at }}">✅ {{ r.click_count or 1 }}</span>
+                            {% else %}
+                            -
+                            {% endif %}
+                        </td>
+                        <td>{{ r.attempts }}</td>
+                        <td class="small text-muted text-truncate" style="max-width: 200px;" title="{{ r.status_message or '' }}">
+                            {{ r.status_message or '' }}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="{% if campaign.ab_testing_enabled %}8{% else %}7{% endif %}" class="text-center py-4 text-muted">
+                            No recipients yet. Add recipients using the form above or upload a CSV file.
+                        </td>
                     </tr>
                     {% endfor %}
                 </tbody>
             </table>
         </div>
-        
+
         <!-- Pagination -->
         {% if recipients.pages > 1 %}
         <div class="card-footer bg-white">
             <nav>
                 <ul class="pagination justify-content-center mb-0">
                     <li class="page-item {% if not recipients.has_prev %}disabled{% endif %}">
-                        <a class="page-link" href="{{ url_for('main.view_campaign', campaign_id=campaign.id, page=recipients.prev_num) }}">Prev</a>
+                        <a class="page-link" href="{{ url_for('main.view_campaign', campaign_id=campaign.id, page=recipients.prev_num) }}">Previous</a>
                     </li>
-                    {% for p in recipients.iter_pages() %}
+                    {% for p in recipients.iter_pages(left_edge=1, right_edge=1, left_current=2, right_current=2) %}
+                        {% if p %}
                         <li class="page-item {% if p == recipients.page %}active{% endif %}">
                             <a class="page-link" href="{{ url_for('main.view_campaign', campaign_id=campaign.id, page=p) }}">{{ p }}</a>
                         </li>
+                        {% else %}
+                        <li class="page-item disabled"><span class="page-link">...</span></li>
+                        {% endif %}
                     {% endfor %}
                     <li class="page-item {% if not recipients.has_next %}disabled{% endif %}">
                         <a class="page-link" href="{{ url_for('main.view_campaign', campaign_id=campaign.id, page=recipients.next_num) }}">Next</a>
@@ -141,32 +258,55 @@
         {% endif %}
     </div>
 </div>
+{% endblock %}
 
+{% block scripts %}
 <script>
-function addRecipient() {
+document.getElementById('addRecipientForm').addEventListener('submit', function(e) {
+    e.preventDefault();
     const email = document.getElementById('newRecipientEmail').value;
     if(!email) return;
-    
-    const btn = event.target.closest('button');
+
+    const btn = this.querySelector('button[type="submit"]');
     btn.disabled = true;
-    
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+
     fetch("{{ url_for('main.add_recipient_manual', campaign_id=campaign.id) }}", {
         method: "POST",
-        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'X-CSRFToken': '{{ csrf_token() }}'
+        },
         body: `email=${encodeURIComponent(email)}`
     })
     .then(r => r.json())
     .then(data => {
-        if(data.success) location.reload();
-        else {
+        if(data.success) {
+            location.reload();
+        } else {
             alert(data.message);
             btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-plus"></i> Add';
         }
     })
     .catch(e => {
         alert("Error: " + e);
         btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-plus"></i> Add';
     });
-}
+});
+
+// Auto-refresh status if campaign is sending
+{% if campaign.status == 'Sending' %}
+setInterval(function() {
+    fetch("{{ url_for('main.api_campaign_status', campaign_id=campaign.id) }}")
+        .then(r => r.json())
+        .then(data => {
+            if(data.status !== 'Sending') {
+                location.reload();
+            }
+        });
+}, 5000);
+{% endif %}
 </script>
 {% endblock %}
