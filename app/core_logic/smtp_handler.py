@@ -5,6 +5,8 @@ import re
 import time
 import threading
 import os
+import socks  # Requires: pip install PySocks
+import socket
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
@@ -17,10 +19,28 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 log = logging.getLogger(__name__)
 
+# --- GLOBAL PROXY CONFIGURATION ---
+# Checks for Render Environment Variables
+PROXY_HOST = os.environ.get('SMTP_PROXY_HOST')
+PROXY_PORT = int(os.environ.get('SMTP_PROXY_PORT', 1080))
+PROXY_USER = os.environ.get('SMTP_PROXY_USER')
+PROXY_PASS = os.environ.get('SMTP_PROXY_PASS')
+
+# If proxy vars are set, patch smtplib to route through the VPS
+if PROXY_HOST:
+    log.info(f"🔌 SMTP Proxy Active: Tunneling via {PROXY_HOST}:{PROXY_PORT}")
+    if PROXY_USER and PROXY_PASS:
+        socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT, username=PROXY_USER, password=PROXY_PASS)
+    else:
+        socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT)
+    
+    # This line forces all SMTP traffic through the proxy
+    socks.wrap_module(smtplib)
+
 class SMTPHandler:
     """
     Robust SMTP Handler integrated from Paris Sender Desktop logic.
-    Supports connection pooling, multi-threaded bulk sending, and warmup.
+    Supports connection pooling, multi-threaded bulk sending, warmup, and SOCKS5 Proxying.
     """
     
     def __init__(self, smtp_config):
@@ -48,9 +68,16 @@ class SMTPHandler:
         self.retry_delay = 5
     
     def _create_secure_ssl_context(self):
-        """Create a secure SSL context enforcing TLS 1.2+."""
+        """Create a secure SSL context."""
         context = ssl.create_default_context()
-        context.minimum_version = ssl.TLSVersion.TLSv1_2
+        
+        # If proxying, we must relax hostname checks because the tunnel resolves IPs differently
+        if PROXY_HOST:
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+        else:
+            context.minimum_version = ssl.TLSVersion.TLSv1_2
+            
         return context
     
     def _html_to_text(self, html):
@@ -118,18 +145,21 @@ class SMTPHandler:
         return msg_root
 
     def connect(self):
-        """Establish connection to SMTP server."""
+        """Establish connection to SMTP server (Proxied automatically via socks.wrap_module)."""
         with self._lock:
             try:
                 context = self._create_secure_ssl_context()
                 
+                # Force shorter timeouts for cloud environments to fail fast if proxy is stuck
+                timeout_val = 30
+                
                 if self.use_ssl or self.smtp_port == 465:
                     self._connection = smtplib.SMTP_SSL(
-                        self.smtp_server, self.smtp_port, context=context, timeout=20
+                        self.smtp_server, self.smtp_port, context=context, timeout=timeout_val
                     )
                 else: 
                     self._connection = smtplib.SMTP(
-                        self.smtp_server, self.smtp_port, timeout=20
+                        self.smtp_server, self.smtp_port, timeout=timeout_val
                     )
                 
                 # Handshake
@@ -147,12 +177,14 @@ class SMTPHandler:
                 self._connection.login(self.username, self.password)
                 self._connection_time = datetime.utcnow()
                 
-                return True, "Connected successfully"
+                status_msg = "Connected via Proxy" if PROXY_HOST else "Connected Direct"
+                return True, status_msg
             
             except smtplib.SMTPAuthenticationError as e:
                 error_msg = e.smtp_error.decode() if isinstance(e.smtp_error, bytes) else str(e.smtp_error)
                 return False, f"Auth Failed: {error_msg}"
             except Exception as e:
+                log.error(f"Connection Error: {e}")
                 return False, f"Connection Error: {str(e)}"
 
     def disconnect(self):
@@ -185,20 +217,16 @@ class SMTPHandler:
         Send a single email synchronously. 
         Re-establishes connection if needed.
         """
-        mime_message = self._create_mime_message(
-            to_email, subject, html_content, plain_content,
-            unsubscribe_url, attachments, custom_headers
-        )
-        
-        # Use a fresh connection for single sync sends to avoid timeout issues
+        # Always create a fresh connection for threaded tasks when proxying to prevent socket pipe errors
         server = None
         try:
             context = self._create_secure_ssl_context()
+            timeout_val = 30
             
             if self.use_ssl or self.smtp_port == 465:
-                server = smtplib.SMTP_SSL(self.smtp_server, self.smtp_port, context=context, timeout=20)
+                server = smtplib.SMTP_SSL(self.smtp_server, self.smtp_port, context=context, timeout=timeout_val)
             else:
-                server = smtplib.SMTP(self.smtp_server, self.smtp_port, timeout=20)
+                server = smtplib.SMTP(self.smtp_server, self.smtp_port, timeout=timeout_val)
             
             with server:
                 try: server.ehlo()
@@ -209,6 +237,12 @@ class SMTPHandler:
                     server.ehlo()
                 
                 server.login(self.username, self.password)
+                
+                mime_message = self._create_mime_message(
+                    to_email, subject, html_content, plain_content,
+                    unsubscribe_url, attachments, custom_headers
+                )
+                
                 server.send_message(mime_message)
             
             self._recent_sends.append(datetime.utcnow())
@@ -224,14 +258,7 @@ class SMTPHandler:
     def send_bulk_threaded(self, email_tasks, max_workers=5):
         """
         Send a batch of emails using multiple threads.
-        
-        Args:
-            email_tasks: List of dicts containing:
-                         {'to_email', 'subject', 'html_content', 'plain_content', etc.}
-            max_workers: Number of parallel threads
-            
-        Returns:
-            List of results: [{'email': '...', 'success': True/False, 'error': '...'}]
+        When PROXY_HOST is set, all threads automatically use the proxy tunnel.
         """
         results = []
         
@@ -270,10 +297,7 @@ class SMTPHandler:
         return sum(1 for t in self._recent_sends if t > cutoff)
 
     def classify_failure(self, error_message):
-        """
-        Classify the failure type based on the exception message.
-        Logic adapted from Paris Sender Desktop.
-        """
+        """Classify the failure type based on the exception message."""
         msg = str(error_message).lower()
         
         if any(s in msg for s in ["mailbox unavailable", "user unknown", "no such user", "recipient rejected", "invalid address"]):
@@ -286,6 +310,8 @@ class SMTPHandler:
             return "spam_block"
         elif "authentication" in msg or "credentials" in msg:
             return "auth_error"
+        elif "socks" in msg or "proxy" in msg:
+            return "proxy_error"
         elif "timeout" in msg or "connection" in msg:
             return "connection_error"
         else:
@@ -310,21 +336,17 @@ class SMTPRotationManager:
             
             attempts = 0
             while attempts < len(self.profiles):
-                # Round-robin selection
                 profile = self.profiles[self.current_index]
                 self.current_index = (self.current_index + 1) % len(self.profiles)
                 
                 profile_id = profile.get('id') or profile.get('username')
                 
-                # Skip marked failed profiles
                 if profile_id in self.failed_profiles:
                     attempts += 1
                     continue
                 
-                # Check limits
                 if self._check_limits(profile):
                     if profile_id not in self.handlers:
-                        # Initialize handler if not exists
                         self.handlers[profile_id] = SMTPHandler(profile)
                     
                     return self.handlers[profile_id], None
@@ -334,7 +356,6 @@ class SMTPRotationManager:
             return None, "All SMTP profiles exhausted or at limit"
     
     def _check_limits(self, profile):
-        """Check if profile has exceeded daily or hourly limits."""
         daily_limit = profile.get('daily_limit', 500)
         sent_today = profile.get('sent_today', 0)
         
@@ -350,7 +371,6 @@ class SMTPRotationManager:
         return True
     
     def mark_profile_failed(self, profile_id):
-        """Temporarily mark a profile as failed to skip it in rotation."""
         with self._lock:
             self.failed_profiles.add(profile_id)
             log.warning(f"SMTP Profile {profile_id} marked as failed.")
@@ -358,6 +378,13 @@ class SMTPRotationManager:
     def reset_failed_profiles(self):
         with self._lock:
             self.failed_profiles.clear()
+            
+    def close_all(self):
+        with self._lock:
+            for handler in self.handlers.values():
+                try: handler.disconnect()
+                except: pass
+            self.handlers.clear()
 
 
 class WarmupManager:
@@ -379,7 +406,6 @@ class WarmupManager:
         self.schedule = custom_schedule or self.DEFAULT_SCHEDULE
     
     def get_daily_limit(self, start_date, current_date=None):
-        """Calculate allowed emails for today based on account age."""
         if current_date is None:
             current_date = datetime.utcnow().date()
         
@@ -390,8 +416,6 @@ class WarmupManager:
             return self.schedule[0]['limit']
 
         days_since_start = (current_date - start_date).days + 1
-        
-        # Default to highest limit if past schedule
         limit = self.schedule[-1]['limit']
         
         for tier in self.schedule:
