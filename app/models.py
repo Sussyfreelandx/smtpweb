@@ -45,7 +45,7 @@ class SMTPServer(db.Model):
     sender_name = db.Column(db.String(100))
     sender_email = db.Column(db.String(100))
     
-    # IMAP settings for reply tracking
+    # IMAP settings
     imap_server = db.Column(db.String(100))
     imap_port = db.Column(db.Integer, default=993)
     imap_username = db.Column(db.String(100))
@@ -62,7 +62,6 @@ class SMTPServer(db.Model):
     user = db.relationship('User', backref='smtp_profiles')
 
     def _get_fernet_key(self):
-        """Generates a safe URL-safe base64-encoded 32-byte key from the app SECRET_KEY."""
         secret = current_app.config['SECRET_KEY']
         digest = hashlib.sha256(secret.encode()).digest()
         return base64.urlsafe_b64encode(digest)
@@ -108,7 +107,6 @@ class SMTPServer(db.Model):
             return None
 
     def reset_daily_count_if_needed(self):
-        """Reset daily count if it's a new day."""
         today = date.today()
         if self.last_reset_date != today:
             self.sent_today = 0
@@ -124,11 +122,8 @@ class SMTPServer(db.Model):
             'sender_name': self.sender_name or '',
             'sender_email': self.sender_email or self.username,
             'use_tls': self.use_tls,
-            'use_ssl':  self.use_ssl
+            'use_ssl': self.use_ssl
         }
-
-    def __repr__(self):
-        return f'<SMTPServer {self.profile_name}>'
 
 
 class Campaign(db.Model):
@@ -158,7 +153,7 @@ class Campaign(db.Model):
     warmup_mode = db.Column(db.Boolean, default=False)
     smtp_rotation_enabled = db.Column(db.Boolean, default=False)
     
-    # Status tracking
+    # Status
     status = db.Column(db.String(20), default='Draft')
     
     # Timestamps
@@ -167,7 +162,7 @@ class Campaign(db.Model):
     started_at = db.Column(db.DateTime, nullable=True)
     completed_at = db.Column(db.DateTime, nullable=True)
     
-    # Attachments (JSON array of file paths)
+    # Attachments
     attachments_json = db.Column(db.Text)
     
     # Foreign Keys
@@ -187,9 +182,6 @@ class Campaign(db.Model):
 
     def set_attachments(self, attachments):
         self.attachments_json = json.dumps(attachments) if attachments else None
-
-    def __repr__(self):
-        return f'<Campaign {self.name}>'
 
 
 class Recipient(db.Model):
@@ -213,7 +205,7 @@ class Recipient(db.Model):
     click_count = db.Column(db.Integer, default=0)
     attempts = db.Column(db.Integer, default=0)
     
-    # Additional tracking info
+    # Additional tracking
     user_agent = db.Column(db.String(500))
     ip_address = db.Column(db.String(50))
     clicked_links = db.Column(db.Text)
@@ -223,15 +215,15 @@ class Recipient(db.Model):
     def get_data(self):
         if not self.data:
             return {}
-        try: 
+        try:
             return json.loads(self.data)
-        except: 
+        except:
             return {}
 
     def add_clicked_link(self, url):
         try:
             links = json.loads(self.clicked_links) if self.clicked_links else []
-            if url not in links:
+            if url not in links: 
                 links.append(url)
             self.clicked_links = json.dumps(links)
         except:
@@ -244,18 +236,12 @@ class Recipient(db.Model):
             data.update(payload)
         return s.dumps(data, salt='track')
 
-    def __repr__(self):
-        return f'<Recipient {self.email}>'
-
 
 class Suppression(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(120), unique=True, index=True)
     reason = db.Column(db.String(100))
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
-
-    def __repr__(self):
-        return f'<Suppression {self.email}>'
 
 
 class GlobalSettings(db.Model):
@@ -265,6 +251,3 @@ class GlobalSettings(db.Model):
     template_pdf_path = db.Column(db.String(500))
     default_throttle_amount = db.Column(db.Integer, default=20)
     default_throttle_delay = db.Column(db.Integer, default=60)
-
-    def __repr__(self):
-        return f'<GlobalSettings {self.id}>'
