@@ -429,7 +429,7 @@ def new_campaign():
                            default_throttle_delay=default_throttle_delay)
 
 
-@bp.route('/campaign/<int: campaign_id>/add_recipient', methods=['POST'])
+@bp.route('/campaign/<int:campaign_id>/add_recipient', methods=['POST'])
 @login_required
 def add_recipient_manual(campaign_id):
     """Manually add a recipient to campaign."""
@@ -531,7 +531,7 @@ def campaign_control(campaign_id, action):
             campaign.status = 'Draft'
             db. session.commit()
 
-    return redirect(url_for('main.view_campaign', campaign_id=campaign. id))
+    return redirect(url_for('main.view_campaign', campaign_id=campaign.id))
 
 
 @bp.route('/campaign/<int:campaign_id>/validate_list')
@@ -565,7 +565,7 @@ def validate_list(campaign_id):
     db.session.commit()
     log_activity(f"Validated {count} recipients.  {valid} valid, {invalid} invalid.", "INFO")
     flash(f"Validated {count} emails. {valid} valid, {invalid} invalid.", "info")
-    return redirect(url_for('main.view_campaign', campaign_id=campaign. id))
+    return redirect(url_for('main.view_campaign', campaign_id=campaign.id))
 
 
 @bp.route('/campaign/<int:campaign_id>/clear_list')
@@ -582,7 +582,7 @@ def clear_recipient_list(campaign_id):
         flash("Recipient list cleared.", "success")
     except Exception as e:
         flash(f"Error:  {e}", "danger")
-    return redirect(url_for('main.view_campaign', campaign_id=campaign. id))
+    return redirect(url_for('main.view_campaign', campaign_id=campaign.id))
 
 
 @bp.route('/campaign/<int:campaign_id>/export')
@@ -611,11 +611,11 @@ def export_campaign_report(campaign_id):
             data.truncate(0)
 
     response = Response(generate(), mimetype='text/csv')
-    response.headers. set("Content-Disposition", "attachment", filename=f"report_{campaign.id}.csv")
+    response.headers. set("Content-Disposition", "attachment", filename=f"report_{campaign.id}. csv")
     return response
 
 
-@bp. route('/campaign/<int:campaign_id>/delete', methods=['POST'])
+@bp.route('/campaign/<int:campaign_id>/delete', methods=['POST'])
 @login_required
 def delete_campaign(campaign_id):
     """Delete a campaign."""
@@ -689,7 +689,7 @@ def smtp_profiles():
         return redirect(url_for('main.smtp_profiles'))
 
     profiles = SMTPServer. query.filter_by(user_id=current_user.id).all()
-    return render_template('smtp_profiles.html', title='SMTP Profiles', profiles=profiles)
+    return render_template('smtp_profiles. html', title='SMTP Profiles', profiles=profiles)
 
 
 @bp.route('/settings/smtp/test', methods=['POST'])
@@ -764,7 +764,7 @@ def suppression_list():
         return redirect(url_for('main.suppression_list'))
     page = request.args. get('page', 1, type=int)
     pagination = Suppression. query.order_by(Suppression. timestamp.desc()).paginate(page=page, per_page=50)
-    return render_template('suppression.html', title='Suppression List', form=form, pagination=pagination)
+    return render_template('suppression. html', title='Suppression List', form=form, pagination=pagination)
 
 
 @bp.route('/settings/suppression/delete/<int:suppressed_id>', methods=['POST'])
@@ -804,7 +804,7 @@ def import_suppression_list():
     except Exception as e:
         flash(f'Error importing:  {e}', 'danger')
     
-    return redirect(url_for('main.suppression_list'))
+    return redirect(url_for('main. suppression_list'))
 
 
 @bp.route('/settings/suppression/export')
@@ -827,7 +827,7 @@ def export_suppression_list():
             data.truncate(0)
 
     response = Response(generate(), mimetype='text/csv')
-    response.headers.set("Content-Disposition", "attachment", filename="suppression_list.csv")
+    response.headers.set("Content-Disposition", "attachment", filename="suppression_list. csv")
     return response
 
 
@@ -884,7 +884,7 @@ def deliverability_tools():
         elif form.check_blacklist.data:
             results = {'type': 'blacklist', 'target':  target, 'blacklist': helper.check_blacklist(target)}
     
-    return render_template('deliverability.html', title='Deliverability Tools', form=form, results=results)
+    return render_template('deliverability. html', title='Deliverability Tools', form=form, results=results)
 
 
 @bp.route('/tools/spam_check', methods=['POST'])
@@ -997,7 +997,7 @@ def css_inline():
 
 # ==================== ANALYTICS ====================
 
-@bp. route('/analytics')
+@bp.route('/analytics')
 @login_required
 def analytics_dashboard():
     """Analytics dashboard."""
@@ -1173,7 +1173,7 @@ def track_open(token):
     return response
 
 
-@bp. route('/track/click/<token>')
+@bp.route('/track/click/<token>')
 def track_click(token):
     """Track link clicks."""
     redirect_url = request. args.get('url', '#')
@@ -1216,7 +1216,7 @@ def track_click(token):
 
 # ==================== AUTHENTICATION ====================
 
-@bp. route('/login', methods=['GET', 'POST'])
+@bp.route('/login', methods=['GET', 'POST'])
 def login():
     """User login."""
     if current_user.is_authenticated:
@@ -1228,7 +1228,7 @@ def login():
             next_page = request. args.get('next')
             return redirect(next_page or url_for('main.index'))
         flash('Invalid username or password', 'danger')
-    return render_template('login.html', title='Sign In')
+    return render_template('login. html', title='Sign In')
 
 
 @bp.route('/logout')
@@ -1261,4 +1261,4 @@ def register():
         db.session.commit()
         flash('Registration successful!  Please login.', 'success')
         return redirect(url_for('main.login'))
-    return render_template('register.html', title='Register')
+    return render_template('register. html', title='Register')
