@@ -7,18 +7,30 @@
     </a>
 </div>
 
-<div class="d-flex justify-content-between align-items-center">
-    <h1>Suppression List</h1>
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <h1 class="mb-1">Suppression List</h1>
+        <p class="text-muted mb-0">Emails on this list will be automatically excluded from all campaigns.</p>
+    </div>
+    <div>
+        <a href="{{ url_for('main.export_suppression_list') }}" class="btn btn-outline-primary">
+            <i class="fas fa-download me-1"></i> Export CSV
+        </a>
+    </div>
 </div>
-<p class="text-muted">Emails on this list will be automatically excluded from all future campaigns.</p>
 
 <div class="row">
+    <!-- Suppression List Table -->
     <div class="col-md-8">
         <div class="card">
-            <div class="card-body">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span><i class="fas fa-ban me-2"></i> Suppressed Emails</span>
+                <span class="badge bg-secondary">{{ pagination.total }} Total</span>
+            </div>
+            <div class="card-body p-0">
                 <div class="table-responsive">
-                    <table class="table">
-                        <thead>
+                    <table class="table table-hover mb-0">
+                        <thead class="bg-light">
                             <tr>
                                 <th>Email</th>
                                 <th>Reason</th>
@@ -29,54 +41,96 @@
                         <tbody>
                             {% for item in pagination.items %}
                             <tr>
-                                <td>{{ item.email }}</td>
+                                <td class="fw-bold">{{ item.email }}</td>
                                 <td><span class="badge bg-secondary">{{ item.reason }}</span></td>
-                                <td>{{ item.timestamp.strftime('%Y-%m-%d') }}</td>
+                                <td class="text-muted">{{ item.timestamp.strftime('%Y-%m-%d %H:%M') }}</td>
                                 <td>
-                                    <form method="POST" action="{{ url_for('main.delete_suppressed_email', suppressed_id=item.id) }}" onsubmit="return confirm('Are you sure?');">
-                                        <button type="submit" class="btn btn-sm btn-danger" title="Remove"><i class="fas fa-trash"></i></button>
+                                    <form method="POST" action="{{ url_for('main.delete_suppressed_email', suppressed_id=item.id) }}" style="display: inline;" onsubmit="return confirm('Remove this email from suppression list?');">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <button type="submit" class="btn btn-sm btn-outline-danger" title="Remove">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
                                     </form>
                                 </td>
                             </tr>
                             {% else %}
                             <tr>
-                                <td colspan="4" class="text-center">The suppression list is empty.</td>
+                                <td colspan="4" class="text-center py-4 text-muted">
+                                    <i class="fas fa-check-circle fa-2x mb-2 d-block text-success"></i>
+                                    The suppression list is empty. 
+                                </td>
                             </tr>
                             {% endfor %}
                         </tbody>
                     </table>
                 </div>
             </div>
-             {% if pagination.pages > 1 %}
-            <div class="card-footer">
-               <nav>
+            
+            {% if pagination.pages > 1 %}
+            <div class="card-footer bg-white">
+                <nav>
                     <ul class="pagination justify-content-center mb-0">
-                        <li class="page-item {% if not pagination.has_prev %}disabled{% endif %}"><a class="page-link" href="{{ url_for('main.suppression_list', page=pagination.prev_num) }}">Previous</a></li>
-                        {% for page_num in pagination.iter_pages() %}
-                            <li class="page-item {% if page_num == pagination.page %}active{% endif %}"><a class="page-link" href="{{ url_for('main.suppression_list', page=page_num) }}">{{ page_num }}</a></li>
+                        <li class="page-item {% if not pagination.has_prev %}disabled{% endif %}">
+                            <a class="page-link" href="{{ url_for('main.suppression_list', page=pagination.prev_num) }}">Previous</a>
+                        </li>
+                        {% for page_num in pagination.iter_pages(left_edge=1, right_edge=1, left_current=2, right_current=2) %}
+                            {% if page_num %}
+                            <li class="page-item {% if page_num == pagination.page %}active{% endif %}">
+                                <a class="page-link" href="{{ url_for('main.suppression_list', page=page_num) }}">{{ page_num }}</a>
+                            </li>
+                            {% else %}
+                            <li class="page-item disabled"><span class="page-link">...</span></li>
+                            {% endif %}
                         {% endfor %}
-                        <li class="page-item {% if not pagination.has_next %}disabled{% endif %}"><a class="page-link" href="{{ url_for('main.suppression_list', page=pagination.next_num) }}">Next</a></li>
+                        <li class="page-item {% if not pagination.has_next %}disabled{% endif %}">
+                            <a class="page-link" href="{{ url_for('main.suppression_list', page=pagination.next_num) }}">Next</a>
+                        </li>
                     </ul>
                 </nav>
             </div>
             {% endif %}
         </div>
     </div>
+    
+    <!-- Add Email / Import -->
     <div class="col-md-4">
-        <div class="card">
-            <div class="card-header">Add Email to List</div>
+        <!-- Manual Add -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <i class="fas fa-plus-circle me-2"></i> Add Email Manually
+            </div>
             <div class="card-body">
                 <form method="POST" action="{{ url_for('main.suppression_list') }}">
                     {{ form.hidden_tag() }}
                     <div class="mb-3">
                         {{ form.email.label(class="form-label") }}
-                        {{ form.email(class="form-control", placeholder="name@example.com") }}
+                        {{ form.email(class="form-control", placeholder="email@example.com") }}
                     </div>
                     <div class="mb-3">
                         {{ form.reason.label(class="form-label") }}
-                        {{ form.reason(class="form-control", placeholder="e.g. Unsubscribe request") }}
+                        {{ form.reason(class="form-control", placeholder="e.g., Unsubscribe request") }}
                     </div>
                     {{ form.submit(class="btn btn-primary w-100") }}
+                </form>
+            </div>
+        </div>
+        
+        <!-- Import CSV -->
+        <div class="card">
+            <div class="card-header">
+                <i class="fas fa-file-upload me-2"></i> Import from CSV
+            </div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('main.import_suppression_list') }}" enctype="multipart/form-data">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="mb-3">
+                        <label class="form-label">CSV File</label>
+                        <input type="file" class="form-control" name="file" accept=".csv" required>
+                        <small class="text-muted">First column should be email addresses</small>
+                    </div>
+                    <button type="submit" class="btn btn-outline-primary w-100">
+                        <i class="fas fa-upload me-1"></i> Import
+                    </button>
                 </form>
             </div>
         </div>
