@@ -1,4 +1,7 @@
-from app import create_app
+from app import create_app, db
+from app.models import User, Campaign, Recipient, SMTPServer, Suppression
 
-# The application factory creates the app instance
 app = create_app()
+
+if __name__ == "__main__":
+    app.run()
