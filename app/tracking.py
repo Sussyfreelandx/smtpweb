@@ -57,13 +57,13 @@ def unsubscribe(campaign_id, recipient_id):
     """Handles unsubscribe requests."""
     try:
         recipient = Recipient.query.get(recipient_id)
-        if recipient and recipient. campaign_id == campaign_id: 
+        if recipient and recipient.campaign_id == campaign_id:
             recipient.status = 'Unsubscribed'
             db.session.commit()
             
-            if not Suppression. query.filter_by(email=recipient.email).first():
-                suppression = Suppression(email=recipient.email, reason='Unsubscribed')
-                db.session.add(suppression)
+            if not Suppression.query.filter_by(email=recipient.email).first():
+                suppression = Suppression(email=recipient. email, reason='Unsubscribed')
+                db.session. add(suppression)
                 db.session.commit()
             
             flash("You have been successfully unsubscribed.", "info")
