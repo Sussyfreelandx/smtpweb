@@ -7,7 +7,7 @@ from app.models import (
     User, UserRole, Campaign, Recipient, SMTPServer, Suppression, 
     GlobalSettings, Sequence, SequenceRecipient, Tag, Segment,
     EmailTemplate, Team, APIKey, Webhook, Notification, ActivityLog,
-    DailyStats, HourlyStats, UserSettings, ConsentRecord  # Added HourlyStats here
+    DailyStats, HourlyStats, UserSettings, ConsentRecord
 )
 from app.core_logic.deliverability import DeliverabilityHelper
 from app.core_logic.ai_handler import AIHandler
@@ -1453,6 +1453,30 @@ def api_get_logs():
         })
         
     return jsonify(log_list)
+
+
+# ==================== CAMPAIGN STATUS API ====================
+
+@bp.route('/api/campaign/<int:campaign_id>/status')
+@login_required
+def api_campaign_status(campaign_id):
+    """Get live status of a campaign."""
+    campaign = Campaign.query.get_or_404(campaign_id)
+    
+    if campaign.user_id != current_user.id:
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    total = campaign.total_recipients
+    sent = campaign.recipients.filter_by(status='Sent').count()
+    failed = campaign.recipients.filter_by(status='Failed').count()
+    
+    return jsonify({
+        'status': campaign.status,
+        'sent': sent,
+        'failed': failed,
+        'total': total,
+        'progress': round((sent / total * 100) if total > 0 else 0)
+    })
 
 
 # ==================== ANALYTICS ====================
