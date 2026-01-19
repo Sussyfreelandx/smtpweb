@@ -1,0 +1,208 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="mb-3">
+    <a href="{{ url_for('main.index') }}" class="btn btn-outline-secondary">
+        <i class="fas fa-arrow-left"></i> Back to Dashboard
+    </a>
+</div>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h1 class="mb-1">API Keys</h1>
+        <p class="text-muted mb-0">Manage API keys for programmatic access to your account.</p>
+    </div>
+    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createKeyModal">
+        <i class="fas fa-plus-circle me-1"></i> Create API Key
+    </button>
+</div>
+
+<!-- Active Keys -->
+<div class="card mb-4">
+    <div class="card-header">
+        <i class="fas fa-key me-2"></i> Active API Keys
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead class="bg-light">
+                    <tr>
+                        <th>Name</th>
+                        <th>Key Prefix</th>
+                        <th>Scopes</th>
+                        <th>Created</th>
+                        <th>Last Used</th>
+                        <th>Requests</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for key in api_keys %}
+                    <tr>
+                        <td class="fw-bold">{{ key.name }}</td>
+                        <td>
+                            <code>{{ key.key_prefix }}...</code>
+                        </td>
+                        <td>
+                            {% for scope in key.get_scopes() %}
+                            <span class="badge bg-secondary me-1">{{ scope }}</span>
+                            {% endfor %}
+                        </td>
+                        <td class="text-muted small">{{ key.created_at.strftime('%Y-%m-%d') }}</td>
+                        <td class="text-muted small">
+                            {{ key.last_used_at.strftime('%Y-%m-%d %H:%M') if key.last_used_at else 'Never' }}
+                        </td>
+                        <td>{{ key.request_count }}</td>
+                        <td>
+                            <form method="POST" action="{{ url_for('main.revoke_api_key', key_id=key.id) }}" 
+                                  style="display: inline;" 
+                                  onsubmit="return confirm('Are you sure you want to revoke this API key? This action cannot be undone.');">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button type="submit" class="btn btn-sm btn-outline-danger" title="Revoke">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="7" class="text-center py-4 text-muted">
+                            <i class="fas fa-key fa-2x mb-2 d-block"></i>
+                            No API keys yet. Create one to get started.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- API Documentation -->
+<div class="card">
+    <div class="card-header">
+        <i class="fas fa-book me-2"></i> Quick Start
+    </div>
+    <div class="card-body">
+        <h6>Authentication</h6>
+        <p class="small text-muted">Include your API key in the request header:</p>
+        <pre class="bg-dark text-light p-3 rounded"><code>Authorization: Bearer YOUR_API_KEY</code></pre>
+        
+        <h6 class="mt-4">Example Request</h6>
+        <pre class="bg-dark text-light p-3 rounded"><code>curl -X GET "{{ request.url_root }}api/v1/campaigns" \
+     -H "Authorization: Bearer YOUR_API_KEY" \
+     -H "Content-Type: application/json"</code></pre>
+        
+        <h6 class="mt-4">Available Endpoints</h6>
+        <ul class="small">
+            <li><code>GET /api/v1/campaigns</code> - List campaigns</li>
+            <li><code>POST /api/v1/campaigns</code> - Create campaign</li>
+            <li><code>GET /api/v1/campaigns/{id}</code> - Get campaign details</li>
+            <li><code>POST /api/v1/campaigns/{id}/start</code> - Start campaign</li>
+            <li><code>GET /api/v1/suppression</code> - List suppressions</li>
+            <li><code>POST /api/v1/suppression</code> - Add to suppression list</li>
+        </ul>
+    </div>
+</div>
+
+<!-- Create Key Modal -->
+<div class="modal fade" id="createKeyModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Create API Key</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="POST" action="{{ url_for('main.create_api_key') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Key Name <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" name="name" required placeholder="e.g., Production API">
+                        <small class="text-muted">A descriptive name for this key</small>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Scopes</label>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" name="scopes" value="read" id="scope_read" checked>
+                            <label class="form-check-label" for="scope_read">
+                                <strong>read</strong> - Read campaigns, analytics, suppressions
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" name="scopes" value="write" id="scope_write">
+                            <label class="form-check-label" for="scope_write">
+                                <strong>write</strong> - Create/update campaigns, manage suppressions
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" name="scopes" value="send" id="scope_send">
+                            <label class="form-check-label" for="scope_send">
+                                <strong>send</strong> - Start/stop campaigns
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Expires In</label>
+                        <select class="form-select" name="expires_in">
+                            <option value="30">30 days</option>
+                            <option value="90">90 days</option>
+                            <option value="365">1 year</option>
+                            <option value="0">Never</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-key me-1"></i> Create Key
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- New Key Display Modal -->
+{% if new_api_key %}
+<div class="modal fade show" id="newKeyModal" tabindex="-1" style="display: block; background: rgba(0,0,0,0.5);">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-success text-white">
+                <h5 class="modal-title"><i class="fas fa-check-circle me-2"></i> API Key Created</h5>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-warning">
+                    <i class="fas fa-exclamation-triangle me-2"></i>
+                    <strong>Important:</strong> Copy this key now. You won't be able to see it again!
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Your API Key</label>
+                    <div class="input-group">
+                        <input type="text" class="form-control font-monospace" value="{{ new_api_key }}" id="newKeyValue" readonly>
+                        <button class="btn btn-outline-secondary" type="button" onclick="copyKey()">
+                            <i class="fas fa-copy"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <a href="{{ url_for('main.api_keys') }}" class="btn btn-primary">Done</a>
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+function copyKey() {
+    const input = document.getElementById('newKeyValue');
+    input.select();
+    input.setSelectionRange(0, 99999); /* For mobile devices */
+    navigator.clipboard.writeText(input.value).then(() => {
+        alert("API Key copied to clipboard!");
+    });
+}
+</script>
+{% endif %}
+{% endblock %}
