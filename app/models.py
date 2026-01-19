@@ -90,11 +90,7 @@ class User(UserMixin, db.Model):
     username = db.Column(db.String(64), index=True, unique=True, nullable=False)
     email = db.Column(db.String(120), index=True, unique=True, nullable=False)
     password_hash = db.Column(db.String(256))
-    
-    # --- CRITICAL FIX FOR BUILD ---
-    # Changed from db.Enum to db.String to prevent Postgres "type does not exist" error
     role = db.Column(db.String(20), default='editor')
-    
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     last_login = db.Column(db.DateTime)
@@ -113,7 +109,9 @@ class User(UserMixin, db.Model):
     preferences = db.Column(db.Text)  # JSON
     
     # Relationships
-    campaigns = db.relationship('Campaign', backref='author', lazy='dynamic')
+    # --- FIXED RELATIONSHIP AMBIGUITY HERE ---
+    campaigns = db.relationship('Campaign', backref='author', lazy='dynamic', foreign_keys='Campaign.user_id')
+    
     api_keys = db.relationship('APIKey', backref='user', lazy='dynamic')
     notifications = db.relationship('Notification', backref='user', lazy='dynamic')
     activity_logs = db.relationship('ActivityLog', backref='user', lazy='dynamic')
@@ -164,7 +162,6 @@ class User(UserMixin, db.Model):
             'id': self.id,
             'username': self.username,
             'email': self.email,
-            # Handle string or enum value safely
             'role': self.role if isinstance(self.role, str) else self.role.value,
             'is_active': self.is_active,
             'created_at': self.created_at.isoformat() if self.created_at else None,
