@@ -14,6 +14,9 @@
     </button>
 </div>
 
+<!-- Hidden CSRF Token for JavaScript -->
+<input type="hidden" id="csrf_token" name="csrf_token" value="{{ csrf_token() }}">
+
 <div class="card">
     <div class="card-body">
         <div class="table-responsive">
@@ -35,6 +38,7 @@
                         <td>{{ profile.username }}</td>
                         <td>{{ profile.sender_name }} &lt;{{ profile.sender_email }}&gt;</td>
                         <td>
+                            <!-- Edit Button -->
                             <button class="btn btn-sm btn-secondary" title="Edit" 
                                     onclick='editModal({{ profile.to_dict()|tojson|safe }}, "{{ profile.profile_name }}", {{ profile.id }})'>
                                 <i class="fas fa-pencil-alt"></i>
@@ -46,7 +50,9 @@
                                 <i class="fas fa-plug"></i> Test
                             </button>
                             
-                            <form method="POST" action="{{ url_for('main.delete_smtp_profile', profile_id=profile.id) }}" style="display:inline;" onsubmit="return confirm('Are you sure?');">
+                            <!-- Delete Button -->
+                            <form method="POST" action="{{ url_for('main.delete_smtp_profile', profile_id=profile.id) }}" style="display:inline;" onsubmit="return confirm('Are you sure you want to delete this profile?');">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                                 <button type="submit" class="btn btn-sm btn-danger" title="Delete"><i class="fas fa-trash"></i></button>
                             </form>
                         </td>
@@ -69,6 +75,7 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <form id="profileForm" method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                 <div class="modal-body">
                     <input type="hidden" id="profile_id" name="profile_id">
                     <div class="mb-3">
@@ -131,6 +138,7 @@
     const modal = new bootstrap.Modal(document.getElementById('profileModal'));
     const modalTitle = document.getElementById('modalTitle');
     const profileForm = document.getElementById('profileForm');
+    const csrfToken = document.getElementById('csrf_token').value;
 
     function clearModal() {
         modalTitle.innerText = "Add SMTP Profile";
@@ -166,16 +174,23 @@
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
-                "X-Requested-With": "XMLHttpRequest"
+                "X-Requested-With": "XMLHttpRequest",
+                "X-CSRFToken": csrfToken // Added CSRF Token Header
             },
             body: JSON.stringify({ profile_id: id })
         })
-        .then(response => response.json())
+        .then(response => {
+            if (!response.ok) {
+                throw new Error("HTTP " + response.status);
+            }
+            return response.json();
+        })
         .then(data => {
-            alert(data.message); // Simple alert as requested for test results
+            alert(data.message);
         })
         .catch(err => {
-            alert("Network Error: " + err);
+            console.error(err);
+            alert("Connection Test Failed: " + err + ". Check console/logs.");
         })
         .finally(() => {
             btn.innerHTML = originalHtml;
