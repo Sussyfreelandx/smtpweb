@@ -1,4 +1,4 @@
-from app import create_app, db
+from app import create_app, db, socketio
 from app.models import User, Campaign, Recipient, SMTPServer, Suppression
 
 app = create_app()
@@ -9,12 +9,13 @@ def make_shell_context():
     return {
         'db': db,
         'User': User,
-        'Campaign':  Campaign,
+        'Campaign': Campaign,
         'Recipient': Recipient,
         'SMTPServer': SMTPServer,
-        'Suppression':  Suppression
+        'Suppression': Suppression
     }
 
 
-if __name__ == '__main__': 
-    app.run(debug=True)
+if __name__ == '__main__':
+    # Run with SocketIO support
+    socketio.run(app, debug=True, host='0.0.0.0', port=5000)
