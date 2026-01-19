@@ -299,10 +299,17 @@ def test_smtp_connection():
         data = request.get_json()
         profile_id = data.get('profile_id')
         profile = SMTPServer.query.get_or_404(profile_id)
-        if profile.user_id != current_user.id: return jsonify({'message': 'Unauthorized'}), 403
+        if profile.user_id != current_user.id: 
+            return jsonify({'message': 'Unauthorized'}), 403
 
         from app.core_logic.smtp_handler import SMTPHandler
-        handler = SMTPHandler(profile.to_dict())
+        # Decrypt password automatically via to_dict which calls get_password()
+        config = profile.to_dict()
+        
+        if not config.get('password'):
+            return jsonify({'message': '❌ Failed: Password could not be decrypted or is missing.'}), 400
+
+        handler = SMTPHandler(config)
         success, msg = handler.test_connection()
         
         if success:
@@ -310,6 +317,7 @@ def test_smtp_connection():
         else:
             return jsonify({'message': f'❌ Failed: {msg}'}), 400
     except Exception as e:
+        log_activity(f"SMTP Test Exception: {e}", "ERROR")
         return jsonify({'message': f'Error: {str(e)}'}), 500
 
 @bp.route('/settings/smtp/delete/<int:profile_id>', methods=['POST'])
