@@ -3,7 +3,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from flask_login import UserMixin
 from itsdangerous import URLSafeTimedSerializer as Serializer
 from flask import current_app
-from . import db, login
+from app import db, login
 from cryptography.fernet import Fernet
 import base64
 import hashlib
@@ -33,32 +33,39 @@ class SMTPServer(db.Model):
     use_tls = db.Column(db.Boolean, default=True)
     use_ssl = db.Column(db.Boolean, default=False)
     username = db.Column(db.String(100), nullable=False)
-    password_encrypted = db.Column(db.String(512))
+    password_encrypted = db.Column(db.String(512), nullable=True) # Allow nullable for initial creation
     sender_name = db.Column(db.String(100))
     sender_email = db.Column(db.String(100))
+    
+    imap_server = db.Column(db.String(100))
+    imap_port = db.Column(db.Integer, default=993)
+    imap_username = db.Column(db.String(100))
+    imap_password_encrypted = db.Column(db.String(512))
     
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
 
     def _get_fernet_key(self):
         """
-        Generates a URL-safe base64-encoded 32-byte key from the app SECRET_KEY.
+        Generates a safe URL-safe base64-encoded 32-byte key from the app SECRET_KEY.
         This prevents Internal Server Errors if SECRET_KEY is not in Fernet format.
         """
         secret = current_app.config['SECRET_KEY']
+        # Hash the secret to ensure 32 bytes
         digest = hashlib.sha256(secret.encode()).digest()
+        # Encode to base64url format required by Fernet
         return base64.urlsafe_b64encode(digest)
 
     def set_password(self, password):
-        if not password: 
-            self.password_encrypted = None
-            return
+        if not password: return
         try:
             key = self._get_fernet_key()
             f = Fernet(key)
             self.password_encrypted = f.encrypt(password.encode()).decode()
         except Exception as e:
-            current_app.logger.error(f"Encryption Error: {e}")
-            self.password_encrypted = None
+            print(f"Encryption Error: {e}")
+            # In a real production app, handle this. 
+            # For now, we avoid crashing if encryption fails.
+            pass
 
     def get_password(self):
         if not self.password_encrypted: return None
@@ -66,25 +73,27 @@ class SMTPServer(db.Model):
             key = self._get_fernet_key()
             f = Fernet(key)
             return f.decrypt(self.password_encrypted.encode()).decode()
-        except Exception as e:
-            current_app.logger.error(f"Decryption Error: {e}. Key may have changed or data is corrupt.")
+        except Exception:
+            # Return None instead of crashing 500 error if key changed or data corrupt
             return None
     
+    def set_imap_password(self, password):
+        if not password: return
+        try:
+            key = self._get_fernet_key()
+            f = Fernet(key)
+            self.imap_password_encrypted = f.encrypt(password.encode()).decode()
+        except Exception: pass
+
+    def get_imap_password(self):
+        if not self.imap_password_encrypted: return None
+        try:
+            key = self._get_fernet_key()
+            f = Fernet(key)
+            return f.decrypt(self.imap_password_encrypted.encode()).decode()
+        except Exception: return None
+    
     def to_dict(self):
-        return {
-            'id': self.id,
-            'name': self.profile_name,
-            'server': self.server,
-            'port': self.port,
-            'username': self.username,
-            'sender_name': self.sender_name,
-            'sender_email': self.sender_email,
-            'use_tls': self.use_tls,
-            'use_ssl': self.use_ssl,
-        }
-        
-    def to_config_dict(self):
-        """ Returns a dictionary formatted for the SMTPHandler. """
         return {
             'server': self.server,
             'port': self.port,
@@ -98,23 +107,25 @@ class SMTPServer(db.Model):
 
 class Campaign(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(140), nullable=False)
-    subject = db.Column(db.String(255), nullable=False)
-    body = db.Column(db.Text, nullable=False)
+    name = db.Column(db.String(140))
+    subject = db.Column(db.String(140))
+    body = db.Column(db.Text)
     
     ab_testing_enabled = db.Column(db.Boolean, default=False)
-    subject_b = db.Column(db.String(255))
+    subject_b = db.Column(db.String(140))
     body_b = db.Column(db.Text)
     ab_split_ratio = db.Column(db.Integer, default=50)
     
     burner_domain = db.Column(db.String(100))
     lure_path = db.Column(db.String(100))
     
+    # New Config Fields
     throttle_amount = db.Column(db.Integer, default=20)
     throttle_delay = db.Column(db.Integer, default=60)
     parallel_workers = db.Column(db.Integer, default=10)
     
-    status = db.Column(db.String(20), default='Draft', index=True)
+    # Status tracking
+    status = db.Column(db.String(20), default='Draft') # Draft, Sending, Paused, Completed, Stopped
     
     timestamp = db.Column(db.DateTime, index=True, default=datetime.utcnow)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
@@ -126,29 +137,30 @@ class Campaign(db.Model):
 
 class Recipient(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    email = db.Column(db.String(120), index=True, nullable=False)
+    email = db.Column(db.String(120), index=True)
+    # Important: db.Text is used to store full CSV row JSON for autograb logic
     data = db.Column(db.Text) 
-    status = db.Column(db.String(20), default='Queued', index=True)
+    status = db.Column(db.String(20), default='Queued')
     status_message = db.Column(db.String(255))
-    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'), nullable=False)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'))
     sent_at = db.Column(db.DateTime, nullable=True)
     opened_at = db.Column(db.DateTime, nullable=True)
     clicked_at = db.Column(db.DateTime, nullable=True)
-    
+
     def get_tracking_token(self, action, payload=None):
         s = Serializer(current_app.config['SECRET_KEY'])
-        data = {'action': action, 'rid': self.id, 'cid': self.campaign_id}
+        data = {'action': action, 'rid': self.id}
         if payload: data.update(payload)
-        return s.dumps(data, salt='tracking-salt')
+        return s.dumps(data, salt='track')
 
 class Suppression(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    email = db.Column(db.String(120), unique=True, index=True, nullable=False)
+    email = db.Column(db.String(120), unique=True, index=True)
     reason = db.Column(db.String(100))
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
 
 class GlobalSettings(db.Model):
-    id = db.Column(db.Integer, primary_key=True, default=1)
+    id = db.Column(db.Integer, primary_key=True)
     burner_domain = db.Column(db.String(150))
     lure_path = db.Column(db.String(100))
     template_pdf_path = db.Column(db.String(255))
