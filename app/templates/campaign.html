@@ -23,10 +23,19 @@
     <!-- MAIN CONTROLS -->
     <div class="card mb-4 shadow-sm border-0">
         <div class="card-body p-2 bg-light rounded d-flex flex-wrap gap-2">
-            <a href="{{ url_for('main.campaign_control', campaign_id=campaign.id, action='start') }}" 
-               class="btn btn-success fw-bold text-white {% if campaign.status == 'Sending' %}disabled{% endif %}">
-                <i class="fas fa-play me-1"></i> START
-            </a>
+            <!-- Start Button: Logic updated to allow restart if stuck, but warns user -->
+            {% if campaign.status == 'Sending' %}
+                <a href="{{ url_for('main.campaign_control', campaign_id=campaign.id, action='start') }}" 
+                   class="btn btn-success fw-bold text-white"
+                   onclick="return confirm('Campaign is marked as Sending. Force restart task?')">
+                    <i class="fas fa-sync me-1"></i> RESTART WORKER
+                </a>
+            {% else %}
+                <a href="{{ url_for('main.campaign_control', campaign_id=campaign.id, action='start') }}" 
+                   class="btn btn-success fw-bold text-white">
+                    <i class="fas fa-play me-1"></i> START
+                </a>
+            {% endif %}
             
             <a href="{{ url_for('main.campaign_control', campaign_id=campaign.id, action='pause') }}" 
                class="btn btn-warning text-white fw-bold {% if campaign.status != 'Sending' %}disabled{% endif %}">
@@ -38,7 +47,7 @@
                 <i class="fas fa-stop me-1"></i> STOP
             </a>
             
-            <button class="btn btn-info text-white fw-bold" disabled>
+            <button class="btn btn-info text-white fw-bold" onclick="alert('Web scheduler coming soon.')">
                 <i class="fas fa-calendar-alt me-1"></i> SCHEDULE
             </button>
             
@@ -50,11 +59,11 @@
 
     <!-- LIST TOOLS -->
     <div class="card mb-4 shadow-sm">
-        <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
-            <span><i class="fas fa-users me-2"></i> Recipients</span>
+        <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center flex-wrap">
+            <span class="me-auto"><i class="fas fa-users me-2"></i> Recipients</span>
             
-            <!-- Manual Add Input (Matches Screenshot Logic) -->
-            <div class="input-group input-group-sm w-auto">
+            <!-- Manual Add Input (Aligned right like screenshot) -->
+            <div class="input-group input-group-sm w-auto me-2">
                 <input type="email" id="newRecipientEmail" class="form-control" placeholder="manual@add.com">
                 <button class="btn btn-success" type="button" onclick="addRecipient()"><i class="fas fa-plus"></i></button>
             </div>
@@ -138,6 +147,10 @@ function addRecipient() {
     const email = document.getElementById('newRecipientEmail').value;
     if(!email) return;
     
+    // Disable button to prevent double click
+    const btn = event.target.closest('button');
+    btn.disabled = true;
+    
     fetch("{{ url_for('main.add_recipient_manual', campaign_id=campaign.id) }}", {
         method: "POST",
         headers: {'Content-Type': 'application/x-www-form-urlencoded'},
@@ -146,7 +159,14 @@ function addRecipient() {
     .then(r => r.json())
     .then(data => {
         if(data.success) location.reload();
-        else alert(data.message);
+        else {
+            alert(data.message);
+            btn.disabled = false;
+        }
+    })
+    .catch(e => {
+        alert("Error: " + e);
+        btn.disabled = false;
     });
 }
 </script>
