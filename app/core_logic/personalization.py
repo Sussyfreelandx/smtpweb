@@ -1,10 +1,12 @@
 import re
-import base64
-import uuid
 import json
+import random
+import uuid
+import css_inline
 from datetime import datetime
 from jinja2 import Environment, exceptions
 from flask import url_for
+from urllib.parse import urlparse, urlunparse
 from app.core_logic.deliverability import DeliverabilityHelper
 
 # These domains are used to determine if the company name should be a fallback.
@@ -13,12 +15,13 @@ COMMON_ISP_DOMAINS = {
     "msn.com", "live.com", "icloud.com", "mail.com", "comcast.net",
     "verizon.net", "att.net", "sbcglobal.net", "cox.net", "yandex.com",
     "protonmail.com", "zoho.com", "gmx.com", "fastmail.com", "hey.com",
+    "tutanota.com", "riseup.net", "disroot.org"
 }
 
 class PersonalizationEngine:
     """
-    Handles all email personalization, including autograb, Jinja2 rendering,
-    and tracking link insertion. Matches logic from paris_sender_complete.py v8.0.3
+    Advanced Personalization Engine (Web Version)
+    Features: Autograb, A/B Testing, Spintax, Secure Links, Inline CSS.
     """
 
     def __init__(self, campaign, recipient):
@@ -28,151 +31,211 @@ class PersonalizationEngine:
         self.deliverability_helper = DeliverabilityHelper()
 
     def _get_context(self):
-        """Builds the full context dictionary for Jinja2 rendering."""
-        # Start with the recipient's own data (from CSV)
+        """
+        Builds the context dictionary for Jinja2 rendering.
+        Auto-detects missing fields like 'firstname' and 'company'.
+        """
+        # 1. Load Recipient Data (CSV Data)
         try:
             context = json.loads(self.recipient.data) if self.recipient.data else {}
-        except:
+        except json.JSONDecodeError:
             context = {}
         
-        # Ensure all keys are lowercase for template consistency
+        # Ensure keys are lowercase for consistency
         context = {k.lower(): v for k, v in context.items()}
         
-        # --- Autograb Logic (Matches paris_sender_complete.py) ---
+        # --- AUTOGRAB LOGIC ---
         
-        # 1. Firstname Autograb
-        found_name = context.get('firstname')
-        if not found_name:
+        # Autograb: Firstname
+        if 'firstname' not in context or not context['firstname']:
             local_part = self.recipient.email.split('@')[0]
-            # Split by dots, dashes, underscores
+            # Split by common delimiters (., _, -)
             potential_parts = re.split(r'[._\-+]+', local_part)
-            # Filter for alphabetic parts only
+            # Filter out short parts or numbers
             valid_parts = [p for p in potential_parts if len(p) > 1 and p.isalpha()]
             
             generic_words = {
                 'info', 'contact', 'admin', 'support', 'sales', 'mail', 'email', 
                 'hello', 'test', 'demo', 'user', 'customer', 'press', 'jobs', 
-                'careers', 'service', 'team', 'office', 'billing', 'accounts'
+                'careers', 'service', 'team', 'office', 'billing', 'accounts', 
+                'dev', 'webmaster', 'media', 'noreply', 'marketing'
             }
             
-            if valid_parts:
-                candidate = valid_parts[0]
-                if candidate.lower() not in generic_words:
-                    found_name = candidate.capitalize()
-                    context['firstname'] = found_name
+            if valid_parts and valid_parts[0].lower() not in generic_words:
+                context['firstname'] = valid_parts[0].capitalize()
+            else:
+                context['firstname'] = "there" # Default Fallback
 
-        # 2. Company Autograb
-        found_company = context.get('company')
-        if not found_company:
+        # Autograb: Company
+        if 'company' not in context or not context['company']:
             try:
                 domain = self.recipient.email.split('@')[1].lower()
                 if domain in COMMON_ISP_DOMAINS:
-                    # Fallback for ISP domains
-                    found_company = "you" 
+                    # Logic from Script: Fallback for ISP domains
+                    context['company'] = "you" 
                 else:
                     parts = domain.split('.')
-                    # Basic logic: take the SLD (second level domain)
-                    # e.g., company.com -> company
-                    # e.g., company.co.uk -> company
-                    if len(parts) > 2 and len(parts[-2]) > 2 and parts[-2] not in ('co', 'com', 'org', 'net'):
-                        company_part = parts[-2]
-                    else:
-                        company_part = parts[0]
-                    
-                    found_company = '-'.join([p.capitalize() for p in company_part.split('-')])
-                
-                context['company'] = found_company
-            except:
-                context['company'] = 'you'
+                    # Heuristic: avoid TLDs (co.uk, com, etc.)
+                    company_part = parts[-2] if len(parts) > 2 and len(parts[-2]) > 2 and parts[-2] not in ('co', 'com', 'org', 'net', 'gov', 'edu') else parts[0]
+                    context['company'] = '-'.join([p.capitalize() for p in company_part.split('-')])
+            except IndexError:
+                context['company'] = "your company"
 
-        # --- Dynamic & Global Placeholders ---
-        now = datetime.utcnow()
+        # --- DYNAMIC PLACEHOLDERS ---
+        now = datetime.now()
         hour = now.hour
         if 5 <= hour < 12: base_greeting = "Good morning"
         elif 12 <= hour < 18: base_greeting = "Good afternoon"
         else: base_greeting = "Good evening"
         
-        # Logic: If name exists, append it. Else just greeting.
-        if context.get('firstname'):
-            context['greetings'] = f"{base_greeting} {context['firstname']}"
-        else:
-            context['greetings'] = base_greeting
-            
-        context['sender_name'] = self.campaign.smtp_profile.sender_name if self.campaign.smtp_profile else "Sender"
+        # {{ greetings }} placeholder
+        context['greetings'] = f"{base_greeting} {context['firstname']}"
+        
+        # {{ currentdate }} placeholder
         context['currentdate'] = now.strftime("%B %d, %Y")
+        
+        # {{ time }} placeholder
         context['time'] = now.strftime("%I:%M %p")
         
-        # --- Fallbacks (to prevent errors if data is missing) ---
-        context.setdefault('firstname', 'Hello')
-        context.setdefault('company', 'you')
+        # {{ sender_name }} placeholder
+        context['sender_name'] = self.campaign.smtp_profile.sender_name if self.campaign.smtp_profile else "Sender"
 
-        # --- Tracking Links (Generated via Flask's url_for) ---
-        # Note: We need _external=True for absolute URLs
+        # {{ secure_link }} placeholder (Secure Redirector)
+        context['secure_link'] = self._generate_secure_link()
+
+        # {{ unsubscribe_link }} placeholder
         unsubscribe_token = self.recipient.get_tracking_token('unsubscribe')
-        open_token = self.recipient.get_tracking_token('open')
-        
-        # Matches autograb format
-        context['unsubscribe_link'] = url_for('core_logic.unsubscribe', campaign_id=self.campaign.id, recipient_id=self.recipient.id, _external=True)
-        self.open_pixel_url = url_for('core_logic.track_open', campaign_id=self.campaign.id, recipient_id=self.recipient.id, _external=True)
+        context['unsubscribe_link'] = url_for('main.unsubscribe', token=unsubscribe_token, _external=True)
         
         return context
 
+    def _generate_secure_link(self):
+        """Generates a secure, unique link using the campaign's burner domain if configured."""
+        burner_domain = self.campaign.burner_domain
+        lure_path = self.campaign.lure_path
+        
+        if not burner_domain:
+            return "#" # Fallback if not configured
+            
+        parsed_domain = urlparse(burner_domain)
+        if not parsed_domain.scheme:
+            burner_domain = "https://" + burner_domain
+            parsed_domain = urlparse(burner_domain)
+
+        nonce = str(uuid.uuid4())
+        # We use email as ID here, or you could use recipient.id
+        target_id = self.recipient.email 
+        
+        clean_path = lure_path.lstrip('/') if lure_path else ""
+
+        final_url = urlunparse((
+            parsed_domain.scheme,
+            parsed_domain.netloc,
+            clean_path,
+            '',
+            f'id={target_id}&nonce={nonce}',
+            ''
+        ))
+        return final_url
+
+    def _select_ab_content(self):
+        """
+        Determines whether to use Version A or Version B based on campaign settings
+        and a deterministic hash of the recipient email (so it stays consistent).
+        """
+        if not self.campaign.ab_testing_enabled:
+            return self.campaign.subject, self.campaign.body
+
+        # Deterministic A/B split based on email hash (0-99)
+        # This ensures if we retry sending to this email, they get the same version
+        email_hash = hash(self.recipient.email) % 100
+        split_ratio = self.campaign.ab_split_ratio or 50
+
+        if email_hash < split_ratio:
+            # Version A
+            return self.campaign.subject, self.campaign.body
+        else:
+            # Version B
+            # Fallback to Subject A if B is empty
+            subj = self.campaign.subject_b if self.campaign.subject_b else self.campaign.subject
+            # Fallback to Body A if Body B is empty
+            body = self.campaign.body_b if self.campaign.body_b else self.campaign.body
+            return subj, body
+
     def _render_with_jinja(self, template_string, context):
         """Safely renders a string using Jinja2."""
-        if not template_string: return ""
         try:
-            # First, handle the legacy [placeholder] syntax by converting to {{ placeholder }}
-            # This matches the desktop app behavior which supports both.
-            template_string = re.sub(r'\[([a-zA-Z0-9_]+)\]', r'{{ \1 }}', template_string)
+            # Pre-processing: Convert legacy [placeholder] to {{ placeholder }}
+            # Careful not to break existing {{ }}
+            converted_template = re.sub(r'\[([a-zA-Z0-9_]+)\]', r'{{ \1 }}', template_string)
             
-            template = self.jinja_env.from_string(template_string)
+            template = self.jinja_env.from_string(converted_template)
             return template.render(context)
-        except exceptions.TemplateError as e:
-            # If rendering fails, return original or a safe fallback
+        except exceptions.TemplateError:
+            # Return original if render fails to avoid crashing the send
             return template_string
 
+    def _inline_css(self, html_content):
+        """Uses css_inline to make styles email-compatible."""
+        try:
+            inliner = css_inline.CSSInliner()
+            return inliner.inline(html_content)
+        except Exception:
+            return html_content
+
     def _add_tracking_pixel(self, html_content):
-        """Injects the 1x1 tracking pixel before the closing </body> tag."""
-        pixel_img = f'<img src="{self.open_pixel_url}" width="1" height="1" alt="" border="0" style="height:1px;width:1px;border:0;"/>'
+        """Injects the 1x1 tracking pixel."""
+        open_token = self.recipient.get_tracking_token('open')
+        open_url = url_for('main.track_open', token=open_token, _external=True)
+        pixel_img = f'<img src="{open_url}" width="1" height="1" alt="" border="0" style="height:1px;width:1px;border:0;display:none;"/>'
+        
         if '</body>' in html_content.lower():
             return html_content.replace('</body>', f'{pixel_img}</body>', 1)
         return html_content + pixel_img
 
     def _replace_links_for_tracking(self, html_content):
-        """Replaces all hrefs with a trackable redirect link."""
+        """Replaces hrefs with Flask tracking endpoints."""
         def replace_link(match):
             original_url = match.group(2)
-            # Don't track unsubscribe links or mailto links
-            if 'unsubscribe' in original_url or original_url.startswith(('mailto:', '#')) or 'track' in original_url:
+            # Skip mailto, hash links, and already tracked/unsub links
+            if any(x in original_url for x in ['mailto:', '#', 'unsubscribe', '/track/']):
                 return match.group(0)
             
-            # Encode target URL
-            encoded_url = base64.urlsafe_b64encode(original_url.encode()).decode()
-            
-            # Generate tracking URL
-            tracked_url = url_for('core_logic.track_click', campaign_id=self.campaign.id, recipient_id=self.recipient.id, url=encoded_url, _external=True)
-            
+            click_token = self.recipient.get_tracking_token('click', payload={'url': original_url})
+            tracked_url = url_for('main.track_click', token=click_token, _external=True)
             return f'{match.group(1)}="{tracked_url}"'
 
         return re.sub(r'(href\s*=\s*)(["\'](https?://[^"\']+)["\'])', replace_link, html_content, flags=re.IGNORECASE)
 
     def personalize(self):
         """
-        Runs the full personalization and tracking pipeline.
-        Returns the final subject and HTML body.
+        Main Pipeline:
+        1. Select A/B Version
+        2. Spin Text (Spintax)
+        3. Autograb & Context Building
+        4. Jinja2 Rendering
+        5. CSS Inlining
+        6. Tracking Injection
         """
+        # 1. Select Content (A vs B)
+        raw_subject, raw_body = self._select_ab_content()
+        
+        # 2. Spintax
+        spun_subject = self.deliverability_helper.spin(raw_subject)
+        spun_body = self.deliverability_helper.spin(raw_body)
+        
+        # 3. Context
         context = self._get_context()
-
-        # 1. Spin the text first (spintax)
-        spun_subject = self.deliverability_helper.spin(self.campaign.subject)
-        spun_body = self.deliverability_helper.spin(self.campaign.body)
-
-        # 2. Render with Jinja2 using the context (handles autograb)
+        
+        # 4. Render
         final_subject = self._render_with_jinja(spun_subject, context)
         final_body = self._render_with_jinja(spun_body, context)
+        
+        # 5. Inline CSS (New Feature)
+        final_body = self._inline_css(final_body)
+        
+        # 6. Tracking
+        final_body = self._replace_links_for_tracking(final_body)
+        final_body = self._add_tracking_pixel(final_body)
 
-        # 3. Add tracking links and pixel
-        body_with_tracked_links = self._replace_links_for_tracking(final_body)
-        final_body_with_pixel = self._add_tracking_pixel(body_with_tracked_links)
-
-        return final_subject, final_body_with_pixel
+        return final_subject, final_body
