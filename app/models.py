@@ -36,7 +36,6 @@ class SMTPServer(db.Model):
     sender_name = db.Column(db.String(100))
     sender_email = db.Column(db.String(100))
     
-    # IMAP Support
     imap_server = db.Column(db.String(100))
     imap_port = db.Column(db.Integer, default=993)
     imap_username = db.Column(db.String(100))
@@ -80,42 +79,34 @@ class SMTPServer(db.Model):
 class Campaign(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(140))
-    status = db.Column(db.String(20), default='Draft') # Draft, Sending, Paused, Stopped, Completed
+    status = db.Column(db.String(20), default='Draft')
     
-    # Content
     subject = db.Column(db.String(140))
     body = db.Column(db.Text)
     
-    # Configuration
-    parallel_workers = db.Column(db.Integer, default=10)
-    smtp_rotation_enabled = db.Column(db.Boolean, default=False)
-    throttle_amount = db.Column(db.Integer, default=20)
-    throttle_delay = db.Column(db.Integer, default=1)
-    throttle_unit = db.Column(db.String(10), default='Minutes')
-    
-    # A/B Testing
     ab_testing_enabled = db.Column(db.Boolean, default=False)
     subject_b = db.Column(db.String(140))
     body_b = db.Column(db.Text)
     ab_split_ratio = db.Column(db.Integer, default=50)
     
-    # Secure Redirector (Updated with PDF)
+    # These fields can override the global settings if set
     burner_domain = db.Column(db.String(100))
     lure_path = db.Column(db.String(100))
-    template_pdf = db.Column(db.String(200)) # Stores file path
+    
+    throttle_amount = db.Column(db.Integer, default=20)
+    throttle_delay = db.Column(db.Integer, default=60)
+    parallel_workers = db.Column(db.Integer, default=10)
     
     timestamp = db.Column(db.DateTime, index=True, default=datetime.utcnow)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
     smtp_profile_id = db.Column(db.Integer, db.ForeignKey('smtp_server.id'))
     smtp_profile = db.relationship('SMTPServer', backref='campaigns')
     recipients = db.relationship('Recipient', backref='campaign', lazy='dynamic', cascade="all, delete-orphan")
-    logs = db.relationship('ActivityLog', backref='campaign', lazy='dynamic', cascade="all, delete-orphan")
 
 class Recipient(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(120), index=True)
-    data = db.Column(db.Text) # JSON data
-    
+    data = db.Column(db.Text) 
     status = db.Column(db.String(20), default='Queued')
     status_message = db.Column(db.String(200))
     campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'))
@@ -130,22 +121,21 @@ class Recipient(db.Model):
             data.update(payload)
         return s.dumps(data, salt=action)
 
-class ActivityLog(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'))
-    message = db.Column(db.String(500))
-    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
-    log_type = db.Column(db.String(20), default='info') # info, error, success
-
-    def to_dict(self):
-        return {
-            'timestamp': self.timestamp.strftime('%H:%M:%S'),
-            'message': self.message,
-            'type': self.log_type
-        }
-
 class Suppression(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(120), unique=True, index=True)
     reason = db.Column(db.String(100))
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+
+class GlobalSettings(db.Model):
+    """
+    Stores global application configuration, including Secure Redirector settings.
+    We generally only have one row in this table.
+    """
+    id = db.Column(db.Integer, primary_key=True)
+    burner_domain = db.Column(db.String(200), default="")
+    lure_path = db.Column(db.String(200), default="")
+    template_pdf_path = db.Column(db.String(500), default="") # Stores path to uploaded PDF
+    
+    # Could add other global settings here (e.g., default proxy)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
