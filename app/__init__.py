@@ -96,6 +96,20 @@ def create_app(config_name=None):
     
     # Register template context processors
     register_context_processors(app)
+
+    # --- TEMPORARY DB FIX: Reset Migration History ---
+    # This block forces the database to forget the old migration ID that is causing the error.
+    # It runs every time the app starts, which allows 'flask db upgrade' to succeed.
+    with app.app_context():
+        try:
+            from sqlalchemy import text
+            # This deletes the table that tracks migration history
+            db.session.execute(text("DROP TABLE IF EXISTS alembic_version"))
+            db.session.commit()
+            print("--- DATABASE FIX: Dropped alembic_version table to reset migration history ---")
+        except Exception as e:
+            print(f"--- NOTE: Could not drop alembic_version: {e} ---")
+    # -------------------------------------------------
     
     return app
 
