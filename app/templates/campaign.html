@@ -23,12 +23,12 @@
     <!-- MAIN CONTROLS -->
     <div class="card mb-4 shadow-sm border-0">
         <div class="card-body p-2 bg-light rounded d-flex flex-wrap gap-2">
-            <!-- Start Button: Logic updated to allow restart if stuck, but warns user -->
+            <!-- Start/Restart Button -->
             {% if campaign.status == 'Sending' %}
                 <a href="{{ url_for('main.campaign_control', campaign_id=campaign.id, action='start') }}" 
                    class="btn btn-success fw-bold text-white"
                    onclick="return confirm('Campaign is marked as Sending. Force restart task?')">
-                    <i class="fas fa-sync me-1"></i> RESTART WORKER
+                    <i class="fas fa-sync me-1"></i> RESTART
                 </a>
             {% else %}
                 <a href="{{ url_for('main.campaign_control', campaign_id=campaign.id, action='start') }}" 
@@ -47,7 +47,7 @@
                 <i class="fas fa-stop me-1"></i> STOP
             </a>
             
-            <button class="btn btn-info text-white fw-bold" onclick="alert('Web scheduler coming soon.')">
+            <button class="btn btn-info text-white fw-bold" onclick="alert('Scheduler is currently in beta. Please use instant start.')">
                 <i class="fas fa-calendar-alt me-1"></i> SCHEDULE
             </button>
             
@@ -62,7 +62,7 @@
         <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center flex-wrap">
             <span class="me-auto"><i class="fas fa-users me-2"></i> Recipients</span>
             
-            <!-- Manual Add Input (Aligned right like screenshot) -->
+            <!-- Manual Add Input -->
             <div class="input-group input-group-sm w-auto me-2">
                 <input type="email" id="newRecipientEmail" class="form-control" placeholder="manual@add.com">
                 <button class="btn btn-success" type="button" onclick="addRecipient()"><i class="fas fa-plus"></i></button>
@@ -147,7 +147,6 @@ function addRecipient() {
     const email = document.getElementById('newRecipientEmail').value;
     if(!email) return;
     
-    // Disable button to prevent double click
     const btn = event.target.closest('button');
     btn.disabled = true;
     
