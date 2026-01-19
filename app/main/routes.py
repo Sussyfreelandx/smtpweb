@@ -300,12 +300,15 @@ def register():
 @login_required
 def index():
     """Dashboard view."""
-    # Get user's campaigns
-    campaigns = Campaign.query.filter_by(user_id=current_user.id).order_by(Campaign.created_at.desc()).limit(10)
+    # Base query for stats (NO LIMIT applied here)
+    all_campaigns = Campaign.query.filter_by(user_id=current_user.id)
     
-    # Calculate summary stats
-    total_campaigns = Campaign.query.filter_by(user_id=current_user.id).count()
-    active_campaigns = Campaign.query.filter_by(user_id=current_user.id, status='Sending').count()
+    # List query for display (Limit APPLIED here)
+    recent_campaigns = all_campaigns.order_by(Campaign.created_at.desc()).limit(10).all()
+    
+    # Calculate summary stats using the base query
+    total_campaigns = all_campaigns.count()
+    active_campaigns = all_campaigns.filter_by(status='Sending').count()
     
     # Get recent stats
     today = datetime.utcnow().date()
@@ -334,9 +337,16 @@ def index():
         read=False
     ).order_by(Notification.created_at.desc()).limit(5).all()
     
+    # Pass 'all_campaigns' as 'campaigns' for the stats counters in template
+    # Pass 'recent_campaigns' for the list loop in template
+    # NOTE: You will need to update dashboard.html slightly to loop over 'recent_campaigns' 
+    # instead of 'campaigns' OR we just pass 'all_campaigns' as 'campaigns' and handle list differently.
+    # BEST FIX: Pass 'campaigns' as the base query for stats, and 'recent_campaigns' for the list.
+    
     return render_template('dashboard.html', 
                           title='Dashboard', 
-                          campaigns=campaigns,
+                          campaigns=all_campaigns,  # For the counters (e.g. campaigns.count())
+                          recent_campaigns=recent_campaigns, # For the table loop
                           stats=stats,
                           notifications=notifications)
 
@@ -1443,9 +1453,9 @@ def api_get_logs():
     log_list = []
     for log in logs:
         log_list.append({
-            'timestamp': log['timestamp'],
-            'level': log['level'],
-            'message': log['message']
+            'timestamp': log.timestamp.strftime('%H:%M:%S'),
+            'level': log.level,
+            'message': log.message
         })
         
     return jsonify(log_list)
