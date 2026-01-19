@@ -13,8 +13,7 @@ log = logging.getLogger(__name__)
 class SMTPHandler:
     """
     Handles all SMTP operations for the web application using standard smtplib.
-    Supports standard Multi-threaded sending via the Web Worker.
-    NO AIOSMTP included as requested.
+    Designed to be called synchronously inside ThreadPoolExecutor threads.
     """
     def __init__(self, smtp_config):
         self.smtp_server = smtp_config.get('server')
@@ -92,7 +91,6 @@ class SMTPHandler:
             else:
                 server = smtplib.SMTP(self.smtp_server, self.smtp_port, timeout=30)
             
-            # Note: with context managers, quit() is often handled, but explicit control helps debug
             server.ehlo()
             if not self.use_ssl and self.use_tls and server.has_extn('STARTTLS'):
                 server.starttls(context=context)
