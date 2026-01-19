@@ -4,9 +4,7 @@ basedir = os.path.abspath(os.path.dirname(__file__))
 
 
 class Config:
-    """
-    Sets the configuration for the Flask application.
-    """
+    """Configuration for the Flask application."""
     SECRET_KEY = os.environ.get('SECRET_KEY') or 'dev-secret-key-change-this-in-production'
 
     SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL') or \
