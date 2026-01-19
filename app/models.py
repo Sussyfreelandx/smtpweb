@@ -90,7 +90,11 @@ class User(UserMixin, db.Model):
     username = db.Column(db.String(64), index=True, unique=True, nullable=False)
     email = db.Column(db.String(120), index=True, unique=True, nullable=False)
     password_hash = db.Column(db.String(256))
-    role = db.Column(db.Enum(UserRole), default=UserRole.EDITOR)
+    
+    # --- CRITICAL FIX FOR BUILD ---
+    # Changed from db.Enum to db.String to prevent Postgres "type does not exist" error
+    role = db.Column(db.String(20), default='editor')
+    
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     last_login = db.Column(db.DateTime)
@@ -160,7 +164,8 @@ class User(UserMixin, db.Model):
             'id': self.id,
             'username': self.username,
             'email': self.email,
-            'role': self.role.value if self.role else 'editor',
+            # Handle string or enum value safely
+            'role': self.role if isinstance(self.role, str) else self.role.value,
             'is_active': self.is_active,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'two_factor_enabled': self.two_factor_enabled,
