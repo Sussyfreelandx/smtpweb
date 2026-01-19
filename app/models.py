@@ -5,7 +5,8 @@ from itsdangerous import URLSafeTimedSerializer as Serializer
 from flask import current_app
 from app import db, login
 from cryptography.fernet import Fernet
-import json
+import base64
+import hashlib
 
 @login.user_loader
 def load_user(id):
@@ -26,13 +27,13 @@ class User(UserMixin, db.Model):
 
 class SMTPServer(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    profile_name = db.Column(db.String(100), unique=True, nullable=False)
+    profile_name = db.Column(db.String(100), nullable=False)
     server = db.Column(db.String(100), nullable=False)
     port = db.Column(db.Integer, nullable=False)
     use_tls = db.Column(db.Boolean, default=True)
     use_ssl = db.Column(db.Boolean, default=False)
     username = db.Column(db.String(100), nullable=False)
-    password_encrypted = db.Column(db.String(512), nullable=False)
+    password_encrypted = db.Column(db.String(512), nullable=True) # Allow nullable for initial creation
     sender_name = db.Column(db.String(100))
     sender_email = db.Column(db.String(100))
     
@@ -43,26 +44,53 @@ class SMTPServer(db.Model):
     
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
 
+    def _get_fernet_key(self):
+        """
+        Generates a safe URL-safe base64-encoded 32-byte key from the app SECRET_KEY.
+        This prevents Internal Server Errors if SECRET_KEY is not in Fernet format.
+        """
+        secret = current_app.config['SECRET_KEY']
+        # Hash the secret to ensure 32 bytes
+        digest = hashlib.sha256(secret.encode()).digest()
+        # Encode to base64url format required by Fernet
+        return base64.urlsafe_b64encode(digest)
+
     def set_password(self, password):
-        key = current_app.config['SECRET_KEY'].encode()
-        f = Fernet(key)
-        self.password_encrypted = f.encrypt(password.encode()).decode()
+        if not password: return
+        try:
+            key = self._get_fernet_key()
+            f = Fernet(key)
+            self.password_encrypted = f.encrypt(password.encode()).decode()
+        except Exception as e:
+            print(f"Encryption Error: {e}")
+            # Fallback (insecure) only if encryption fails hard, or handle gracefully
+            pass
 
     def get_password(self):
-        key = current_app.config['SECRET_KEY'].encode()
-        f = Fernet(key)
-        return f.decrypt(self.password_encrypted.encode()).decode()
+        if not self.password_encrypted: return None
+        try:
+            key = self._get_fernet_key()
+            f = Fernet(key)
+            return f.decrypt(self.password_encrypted.encode()).decode()
+        except Exception:
+            # Return None instead of crashing 500 error if key changed or data corrupt
+            return None
     
     def set_imap_password(self, password):
-        key = current_app.config['SECRET_KEY'].encode()
-        f = Fernet(key)
-        self.imap_password_encrypted = f.encrypt(password.encode()).decode()
+        if not password: return
+        try:
+            key = self._get_fernet_key()
+            f = Fernet(key)
+            self.imap_password_encrypted = f.encrypt(password.encode()).decode()
+        except Exception: pass
 
     def get_imap_password(self):
         if not self.imap_password_encrypted: return None
-        key = current_app.config['SECRET_KEY'].encode()
-        f = Fernet(key)
-        return f.decrypt(self.imap_password_encrypted.encode()).decode()
+        try:
+            key = self._get_fernet_key()
+            f = Fernet(key)
+            return f.decrypt(self.imap_password_encrypted.encode()).decode()
+        except Exception: return None
     
     def to_dict(self):
         return {
@@ -79,8 +107,6 @@ class SMTPServer(db.Model):
 class Campaign(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(140))
-    status = db.Column(db.String(20), default='Draft')
-    
     subject = db.Column(db.String(140))
     body = db.Column(db.Text)
     
@@ -89,18 +115,23 @@ class Campaign(db.Model):
     body_b = db.Column(db.Text)
     ab_split_ratio = db.Column(db.Integer, default=50)
     
-    # These fields can override the global settings if set
     burner_domain = db.Column(db.String(100))
     lure_path = db.Column(db.String(100))
     
+    # New Config Fields
     throttle_amount = db.Column(db.Integer, default=20)
     throttle_delay = db.Column(db.Integer, default=60)
     parallel_workers = db.Column(db.Integer, default=10)
     
+    # Status tracking
+    status = db.Column(db.String(20), default='Draft') # Draft, Sending, Paused, Completed, Stopped
+    
     timestamp = db.Column(db.DateTime, index=True, default=datetime.utcnow)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    
     smtp_profile_id = db.Column(db.Integer, db.ForeignKey('smtp_server.id'))
     smtp_profile = db.relationship('SMTPServer', backref='campaigns')
+    
     recipients = db.relationship('Recipient', backref='campaign', lazy='dynamic', cascade="all, delete-orphan")
 
 class Recipient(db.Model):
@@ -108,18 +139,17 @@ class Recipient(db.Model):
     email = db.Column(db.String(120), index=True)
     data = db.Column(db.Text) 
     status = db.Column(db.String(20), default='Queued')
-    status_message = db.Column(db.String(200))
+    status_message = db.Column(db.String(255))
     campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'))
     sent_at = db.Column(db.DateTime, nullable=True)
     opened_at = db.Column(db.DateTime, nullable=True)
     clicked_at = db.Column(db.DateTime, nullable=True)
 
-    def get_tracking_token(self, action, expires_in=None, payload=None):
+    def get_tracking_token(self, action, payload=None):
         s = Serializer(current_app.config['SECRET_KEY'])
-        data = {'action': action, 'recipient_id': self.id}
-        if payload:
-            data.update(payload)
-        return s.dumps(data, salt=action)
+        data = {'action': action, 'rid': self.id}
+        if payload: data.update(payload)
+        return s.dumps(data, salt='track')
 
 class Suppression(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -128,14 +158,7 @@ class Suppression(db.Model):
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
 
 class GlobalSettings(db.Model):
-    """
-    Stores global application configuration, including Secure Redirector settings.
-    We generally only have one row in this table.
-    """
     id = db.Column(db.Integer, primary_key=True)
-    burner_domain = db.Column(db.String(200), default="")
-    lure_path = db.Column(db.String(200), default="")
-    template_pdf_path = db.Column(db.String(500), default="") # Stores path to uploaded PDF
-    
-    # Could add other global settings here (e.g., default proxy)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    burner_domain = db.Column(db.String(150))
+    lure_path = db.Column(db.String(100))
+    template_pdf_path = db.Column(db.String(255))
