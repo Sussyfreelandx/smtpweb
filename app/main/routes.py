@@ -1,7 +1,9 @@
-from flask import render_template, flash, redirect, url_for, request, jsonify, current_app, Response
+from flask import (render_template, flash, redirect, url_for, request, 
+                   jsonify, current_app, Response)
 from flask_login import login_user, logout_user, current_user, login_required
 from app import db
-from app.models import User, Campaign, Recipient, SMTPServer, Suppression, GlobalSettings
+from app.models import (User, Campaign, Recipient, SMTPServer, 
+                        Suppression, GlobalSettings)
 from app.core_logic. deliverability import DeliverabilityHelper
 from app.core_logic. ai_handler import AIHandler
 from app.core_logic.smtp_handler import SMTPHandler
@@ -18,6 +20,7 @@ import json
 import os
 import re
 import threading
+import time
 from datetime import datetime
 
 
@@ -31,6 +34,27 @@ class SuppressionForm(FlaskForm):
     email = StringField('Email Address', validators=[DataRequired()])
     reason = StringField('Reason', default="Manual")
     submit = SubmitField('Add to Suppression List')
+
+
+def is_valid_email(email):
+    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    return re.match(pattern, email) is not None
+
+
+def html_to_plain_text(html):
+    if not html:
+        return ""
+    text = re.sub(r'<(script|style).*?>.*?</\1>', '', html, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r'</(p|h[1-6]|li|div|tr)\s*>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'<br\s*/? >', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'<[^>]+>', ' ', text)
+    text = re.sub(r'&nbsp;', ' ', text)
+    text = re.sub(r'&amp;', '&', text)
+    text = re.sub(r'&lt;', '<', text)
+    text = re.sub(r'&gt;', '>', text)
+    text = re.sub(r'\s+', ' ', text)
+    lines = [line.strip() for line in text.split('\n')]
+    return '\n'.join(line for line in lines if line)
 
 
 @bp.route('/')
@@ -50,9 +74,12 @@ def view_campaign(campaign_id):
         return redirect(url_for('main.index'))
         
     page = request.args.get('page', 1, type=int)
-    recipients = campaign.recipients.order_by(Recipient.id.asc()).paginate(page=page, per_page=50, error_out=False)
+    recipients = campaign.recipients.order_by(Recipient.id.asc()).paginate(
+        page=page, per_page=50, error_out=False
+    )
     
-    return render_template('campaign.html', title=campaign.name, campaign=campaign, recipients=recipients)
+    return render_template('campaign.html', title=campaign.name, 
+                          campaign=campaign, recipients=recipients)
 
 
 @bp.route('/campaign/new', methods=['GET', 'POST'])
@@ -83,19 +110,20 @@ def new_campaign():
                 burner_domain=request.form.get('burner_domain') or default_burner,
                 lure_path=request.form.get('lure_path') or default_lure,
                 smtp_profile_id=request.form.get('smtp_profile_id'),
-                throttle_amount=int(request.form. get('throttle_amount', 20)),
+                throttle_amount=int(request.form.get('throttle_amount', 20)),
                 throttle_delay=int(request.form.get('throttle_delay', 60)),
-                parallel_workers=int(request.form.get('parallel_workers', 10)),
+                parallel_workers=int(request. form.get('parallel_workers', 10)),
                 user_id=current_user.id
             )
             db.session.add(campaign)
             db.session.flush()
             
             file = request.files.get('recipients_file')
-            if file:
-                stream = io.StringIO(file.stream. read().decode("UTF-8"), newline=None)
+            if file and file.filename:
+                stream = io.StringIO(file.stream.read().decode("UTF-8"), newline=None)
                 csv_reader = csv.DictReader(stream)
-                csv_reader.fieldnames = [f. lower().strip() for f in csv_reader. fieldnames]
+                if csv_reader.fieldnames:
+                    csv_reader.fieldnames = [f.lower().strip() for f in csv_reader. fieldnames]
                 
                 count = 0
                 for row in csv_reader:
@@ -105,7 +133,7 @@ def new_campaign():
                             continue
                         is_suppressed = Suppression.query.filter_by(email=email).first()
                         recipient = Recipient(
-                            email=email, 
+                            email=email,
                             campaign_id=campaign.id,
                             data=json.dumps(row),
                             status='Suppressed' if is_suppressed else 'Queued',
@@ -126,8 +154,9 @@ def new_campaign():
             log_activity(f"Error creating campaign: {str(e)}", "ERROR")
             flash(f"Error creating campaign: {str(e)}", "danger")
         
-    return render_template('create_campaign.html', title='New Campaign', smtp_profiles=smtp_profiles,
-                           default_burner=default_burner, default_lure=default_lure)
+    return render_template('create_campaign.html', title='New Campaign', 
+                          smtp_profiles=smtp_profiles,
+                          default_burner=default_burner, default_lure=default_lure)
 
 
 @bp.route('/campaign/<int:campaign_id>/add_recipient', methods=['POST'])
@@ -152,8 +181,8 @@ def add_recipient_manual(campaign_id):
     
     recipient = Recipient(
         email=email,
-        campaign_id=campaign. id,
-        data=json. dumps({'email': email}), 
+        campaign_id=campaign.id,
+        data=json.dumps({'email': email}),
         status='Suppressed' if is_suppressed else 'Queued',
         status_message='Suppressed by global list' if is_suppressed else None
     )
@@ -175,11 +204,16 @@ def campaign_control(campaign_id, action):
         if action == 'start':
             queued_count = campaign.recipients.filter_by(status='Queued').count()
             if queued_count == 0:
-                flash('No queued recipients to send to.', 'warning')
-                return redirect(url_for('main.view_campaign', campaign_id=campaign. id))
+                flash('No queued recipients to send to. ', 'warning')
+                return redirect(url_for('main. view_campaign', campaign_id=campaign. id))
             
             if not campaign.smtp_profile:
                 flash('No SMTP profile configured for this campaign.', 'danger')
+                return redirect(url_for('main.view_campaign', campaign_id=campaign.id))
+            
+            smtp_config = campaign.smtp_profile. to_dict()
+            if not smtp_config. get('password'):
+                flash('SMTP password not configured.  Please update your SMTP profile.', 'danger')
                 return redirect(url_for('main.view_campaign', campaign_id=campaign.id))
             
             campaign.status = 'Sending'
@@ -243,33 +277,48 @@ def run_campaign_sending(app, campaign_id):
                 db.session.commit()
                 return
             
-            smtp_handler = SMTPHandler(smtp_profile. to_dict())
+            smtp_config = smtp_profile.to_dict()
+            if not smtp_config.get('password'):
+                log_activity(f"No password for SMTP profile {smtp_profile. profile_name}", "ERROR")
+                campaign. status = 'Failed'
+                db.session.commit()
+                return
+            
+            smtp_handler = SMTPHandler(smtp_config)
             
             batch_size = campaign.throttle_amount or 20
             delay_seconds = campaign.throttle_delay or 60
             
-            log_activity(f"Starting campaign:  {campaign.name}. Batch: {batch_size}, Delay:  {delay_seconds}s", "INFO")
+            log_activity(f"Starting campaign:  {campaign.name}.  Batch:  {batch_size}, Delay:  {delay_seconds}s", "INFO")
             
             while True:
-                db.session.refresh(campaign)
-                if campaign.status != 'Sending':
-                    log_activity(f"Campaign {campaign.name} status changed to {campaign.status}.  Stopping.", "WARNING")
+                db.session.expire_all()
+                campaign = Campaign.query.get(campaign_id)
+                
+                if not campaign or campaign.status != 'Sending':
+                    log_activity(f"Campaign {campaign_id} status changed.  Stopping.", "WARNING")
                     break
                 
-                recipients = campaign.recipients.filter_by(status='Queued').limit(batch_size).all()
+                recipients = campaign.recipients. filter_by(status='Queued').limit(batch_size).all()
                 
                 if not recipients:
                     campaign.status = 'Completed'
-                    db.session. commit()
-                    log_activity(f"Campaign {campaign.name} completed successfully.", "SUCCESS")
+                    db.session.commit()
+                    log_activity(f"Campaign {campaign. name} completed successfully.", "SUCCESS")
                     break
                 
                 log_activity(f"Processing batch of {len(recipients)} recipients...", "INFO")
                 
                 for recipient in recipients:
-                    db.session.refresh(campaign)
-                    if campaign.status != 'Sending':
+                    db.session.expire_all()
+                    campaign = Campaign.query.get(campaign_id)
+                    
+                    if not campaign or campaign.status != 'Sending':
                         break
+                    
+                    recipient = Recipient.query.get(recipient.id)
+                    if not recipient or recipient.status != 'Queued':
+                        continue
                     
                     try: 
                         recipient.status = 'Sending'
@@ -279,9 +328,10 @@ def run_campaign_sending(app, campaign_id):
                         personalizer = PersonalizationEngine(campaign, recipient)
                         p_subject, p_body_html, p_body_plain = personalizer.personalize()
                         
+                        unsubscribe_token = recipient.get_tracking_token('unsubscribe')
                         unsubscribe_url = url_for('main.unsubscribe', 
-                                                   token=recipient.get_tracking_token('unsubscribe'), 
-                                                   _external=True)
+                                                  token=unsubscribe_token, 
+                                                  _external=True)
                         
                         success, message = smtp_handler.send_email_sync(
                             to_email=recipient.email,
@@ -295,6 +345,7 @@ def run_campaign_sending(app, campaign_id):
                             recipient.status = 'Sent'
                             recipient.sent_at = datetime.utcnow()
                             recipient.status_message = "OK"
+                            log_activity(f"Sent to {recipient.email}", "SUCCESS")
                         else:
                             recipient.status = 'Failed'
                             recipient.status_message = message[: 250] if message else "Unknown error"
@@ -302,43 +353,45 @@ def run_campaign_sending(app, campaign_id):
                         
                         db.session.commit()
                         
-                    except Exception as e:
+                    except Exception as e: 
                         recipient.status = 'Failed'
-                        recipient.status_message = str(e)[:250]
+                        recipient. status_message = str(e)[: 250]
                         db.session.commit()
                         log_activity(f"Exception sending to {recipient.email}: {e}", "ERROR")
                 
-                db.session.refresh(campaign)
-                remaining = campaign.recipients.filter_by(status='Queued').count()
-                if remaining > 0 and campaign.status == 'Sending':
-                    log_activity(f"Throttling:  waiting {delay_seconds}s before next batch.  {remaining} remaining.", "INFO")
-                    import time
-                    time.sleep(delay_seconds)
+                db.session.expire_all()
+                campaign = Campaign.query.get(campaign_id)
+                
+                if campaign and campaign.status == 'Sending':
+                    remaining = campaign.recipients.filter_by(status='Queued').count()
+                    if remaining > 0:
+                        log_activity(f"Throttling:  waiting {delay_seconds}s.  {remaining} remaining.", "INFO")
+                        time.sleep(delay_seconds)
             
-        except Exception as e: 
+        except Exception as e:
             log_activity(f"Campaign sending error: {str(e)}", "ERROR")
             try:
                 campaign = Campaign.query.get(campaign_id)
                 if campaign: 
                     campaign.status = 'Failed'
                     db.session.commit()
-            except:
+            except Exception:
                 pass
 
 
-@bp.route('/campaign/<int:campaign_id>/validate_list')
+@bp. route('/campaign/<int:campaign_id>/validate_list')
 @login_required
 def validate_list(campaign_id):
     campaign = Campaign.query. get_or_404(campaign_id)
     if campaign.author != current_user:
         return redirect(url_for('main. index'))
     
-    recipients = campaign.recipients.filter_by(status='Queued').limit(100).all() 
+    recipients = campaign.recipients.filter_by(status='Queued').limit(100).all()
     helper = DeliverabilityHelper()
     count, valid, invalid = 0, 0, 0
     
     for r in recipients:
-        try: 
+        try:
             domain = r.email.split('@')[1]
             mx_status = helper.check_mx_record(domain)
             if mx_status == "Valid":
@@ -347,9 +400,9 @@ def validate_list(campaign_id):
                 r.status = 'Invalid'
                 r.status_message = f"MX Check:  {mx_status}"
                 invalid += 1
-        except:
+        except Exception: 
             r.status = 'Invalid'
-            r. status_message = "Invalid email format"
+            r.status_message = "Invalid email format"
             invalid += 1
         count += 1
     
@@ -392,7 +445,7 @@ def export_campaign_report(campaign_id):
         data.seek(0)
         data.truncate(0)
         for r in recipients:
-            w.writerow((r.email, r. status, r.sent_at, r.opened_at, r. clicked_at, r.attempts, r.status_message))
+            w.writerow((r.email, r.status, r.sent_at, r.opened_at, r. clicked_at, r.attempts, r.status_message))
             yield data.getvalue()
             data.seek(0)
             data.truncate(0)
@@ -431,8 +484,8 @@ def smtp_profiles():
             
             db.session.add(profile)
             db.session.commit()
-            log_activity(f"SMTP Profile saved:  {profile.profile_name}", "SUCCESS")
-            flash('SMTP Profile Saved.', 'success')
+            log_activity(f"SMTP Profile saved: {profile.profile_name}", "SUCCESS")
+            flash('SMTP Profile Saved. ', 'success')
         except Exception as e:
             db.session.rollback()
             log_activity(f"Error saving SMTP profile: {e}", "ERROR")
@@ -450,16 +503,21 @@ def test_smtp_connection():
     try:
         data = request.get_json()
         if not data: 
-            return jsonify({'success': False, 'message': 'No data provided'}), 400
+            return jsonify({'success':  False, 'message': 'No data provided'}), 400
         
         profile_id = data.get('profile_id')
-        profile = SMTPServer.query.get_or_404(profile_id)
+        if not profile_id:
+            return jsonify({'success': False, 'message':  'Profile ID required'}), 400
+            
+        profile = SMTPServer. query.get(profile_id)
+        if not profile:
+            return jsonify({'success': False, 'message': 'Profile not found'}), 404
         
         if profile.user_id != current_user.id:
             return jsonify({'success': False, 'message': 'Unauthorized'}), 403
 
         smtp_config = profile.to_dict()
-        if not smtp_config. get('password'):
+        if not smtp_config.get('password'):
             return jsonify({'success': False, 'message': 'Password not set for this profile'}), 400
 
         handler = SMTPHandler(smtp_config)
@@ -470,9 +528,9 @@ def test_smtp_connection():
             return jsonify({'success': True, 'message': f'✅ Success: {msg}'})
         else:
             log_activity(f"SMTP Test failed for {profile.profile_name}:  {msg}", "ERROR")
-            return jsonify({'success': False, 'message': f'❌ Failed: {msg}'}), 400
+            return jsonify({'success': False, 'message': f'❌ Failed: {msg}'})
             
-    except Exception as e:
+    except Exception as e: 
         log_activity(f"SMTP Test error: {str(e)}", "ERROR")
         return jsonify({'success': False, 'message': f'Error: {str(e)}'}), 500
 
@@ -494,7 +552,7 @@ def delete_smtp_profile(profile_id):
 def suppression_list():
     form = SuppressionForm()
     if form.validate_on_submit():
-        email = form. email.data.lower().strip()
+        email = form.email.data. lower().strip()
         if not Suppression.query.filter_by(email=email).first():
             s = Suppression(email=email, reason=form.reason.data)
             db.session.add(s)
@@ -509,7 +567,7 @@ def suppression_list():
     return render_template('suppression. html', title='Suppression List', form=form, pagination=pagination)
 
 
-@bp.route('/settings/suppression/delete/<int: suppressed_id>', methods=['POST'])
+@bp.route('/settings/suppression/delete/<int:suppressed_id>', methods=['POST'])
 @login_required
 def delete_suppressed_email(suppressed_id):
     item = Suppression.query.get_or_404(suppressed_id)
@@ -526,7 +584,7 @@ def general_settings():
     if not settings:
         settings = GlobalSettings()
         db.session.add(settings)
-        db.session.commit()
+        db.session. commit()
     
     if request.method == 'POST': 
         settings.burner_domain = request.form. get('burner_domain')
@@ -572,8 +630,8 @@ def deliverability_tools_ajax():
         data = request.get_json()
         helper = DeliverabilityHelper()
         success, result = helper.analyze_spam_ai(
-            data.get('subject'), 
-            data.get('body'), 
+            data. get('subject'),
+            data.get('body'),
             provider_type=data.get('provider', 'openai')
         )
         return jsonify({'success': success, 'result': result})
@@ -590,7 +648,7 @@ def ai_rewrite():
         if not content:
             return jsonify({'success': False, 'result': 'No content'})
         handler = AIHandler()
-        prompt = f"Rewrite the following email content to be more persuasive and clear.  Preserve HTML structure and Jinja2 tags like {{{{variable}}}}.\n\n{content}"
+        prompt = f"Rewrite the following email content to be more persuasive and clear.  Preserve HTML structure and placeholders like {{{{variable}}}}.\n\n{content}"
         success, result = handler.generate(prompt)
         return jsonify({'success': success, 'result':  result})
     except Exception as e:
@@ -661,14 +719,14 @@ def unsubscribe(token):
                 
                 log_activity(f"Unsubscribed:  {recipient.email}", "INFO")
         
-        return render_template('message.html', 
-                               message_title='Unsubscribed', 
-                               message_body='You have been successfully unsubscribed from our mailing list.')
+        return render_template('message.html',
+                              message_title='Unsubscribed',
+                              message_body='You have been successfully unsubscribed from our mailing list.')
     except Exception as e:
         log_activity(f"Unsubscribe error: {str(e)}", "ERROR")
-        return render_template('message.html', 
-                               message_title='Error', 
-                               message_body='An error occurred processing your request.')
+        return render_template('message.html',
+                              message_title='Error',
+                              message_body='An error occurred processing your request.')
 
 
 @bp.route('/track/open/<token>')
@@ -679,10 +737,10 @@ def track_open(token):
         data = s.loads(token, salt='track', max_age=86400*30)
         
         recipient_id = data.get('rid')
-        if recipient_id:
-            recipient = Recipient.query.get(recipient_id)
+        if recipient_id: 
+            recipient = Recipient.query. get(recipient_id)
             if recipient and not recipient.opened_at:
-                recipient.opened_at = datetime. utcnow()
+                recipient.opened_at = datetime.utcnow()
                 if recipient.status not in ['Clicked', 'Unsubscribed']:
                     recipient.status = 'Opened'
                 db.session.commit()
@@ -701,7 +759,6 @@ def track_click(token):
     redirect_url = request.args.get('url', '#')
     try:
         from itsdangerous import URLSafeTimedSerializer as Serializer
-        import base64
         s = Serializer(current_app.config['SECRET_KEY'])
         data = s.loads(token, salt='track', max_age=86400*30)
         
@@ -758,31 +815,9 @@ def register():
             return redirect(url_for('main. register'))
         
         user = User(username=username, email=email)
-        user.set_password(request.form['password'])
+        user.set_password(request. form['password'])
         db.session.add(user)
-        db.session. commit()
+        db.session.commit()
         flash('Registered! ', 'success')
         return redirect(url_for('main. login'))
     return render_template('register.html', title='Register')
-
-
-def is_valid_email(email):
-    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-    return re.match(pattern, email) is not None
-
-
-def html_to_plain_text(html):
-    """Convert HTML to plain text."""
-    if not html:
-        return ""
-    text = re.sub(r'<(script|style).*?>.*?</\1>', '', html, flags=re.DOTALL | re.IGNORECASE)
-    text = re.sub(r'</(p|h[1-6]|li|div|tr|br)\s*>', '\n', text, flags=re.IGNORECASE)
-    text = re.sub(r'<br\s*/? >', '\n', text, flags=re.IGNORECASE)
-    text = re.sub(r'<[^>]+>', ' ', text)
-    text = re.sub(r'&nbsp;', ' ', text)
-    text = re.sub(r'&amp;', '&', text)
-    text = re.sub(r'&lt;', '<', text)
-    text = re.sub(r'&gt;', '>', text)
-    text = re.sub(r'\s+', ' ', text)
-    lines = [line. strip() for line in text.split('\n')]
-    return '\n'.join(line for line in lines if line)
