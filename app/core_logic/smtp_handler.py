@@ -12,7 +12,7 @@ log = logging.getLogger(__name__)
 
 class SMTPHandler:
     """
-    Handles all SMTP operations for the web application using standard smtplib.
+    Handles all SMTP operations using standard smtplib.
     Designed for synchronous sending with proper connection handling.
     """
     
@@ -21,7 +21,7 @@ class SMTPHandler:
         self.smtp_port = int(smtp_config.get('port', 587))
         self.username = smtp_config.get('username')
         self.password = smtp_config.get('password')
-        self.use_tls = smtp_config. get('use_tls', True)
+        self.use_tls = smtp_config.get('use_tls', True)
         self.use_ssl = smtp_config.get('use_ssl', False)
         self.sender_name = smtp_config.get('sender_name', '')
         self.sender_email = smtp_config.get('sender_email') or self.username
@@ -37,8 +37,8 @@ class SMTPHandler:
         if not html:
             return ""
         text = re.sub(r'<(script|style).*?>.*?</\1>', '', html, flags=re.DOTALL | re.IGNORECASE)
-        text = re.sub(r'</(p|h[1-6]|li|div|tr|br)\s*>', '\n', text, flags=re. IGNORECASE)
-        text = re.sub(r'<br\s*/?>', '\n', text, flags=re. IGNORECASE)
+        text = re.sub(r'</(p|h[1-6]|li|div|tr)\s*>', '\n', text, flags=re.IGNORECASE)
+        text = re.sub(r'<br\s*/? >', '\n', text, flags=re.IGNORECASE)
         text = re.sub(r'<[^>]+>', ' ', text)
         text = re.sub(r'&nbsp;', ' ', text)
         text = re.sub(r'&amp;', '&', text)
@@ -77,7 +77,7 @@ class SMTPHandler:
         """Tests the SMTP connection and credentials."""
         server = None
         try:
-            if not self.smtp_server or not self.username:
+            if not self.smtp_server or not self.username: 
                 return False, "SMTP configuration incomplete"
             
             if not self.password:
@@ -103,8 +103,7 @@ class SMTPHandler:
             
         except smtplib.SMTPAuthenticationError as e:
             error_msg = e.smtp_error. decode() if isinstance(e. smtp_error, bytes) else str(e.smtp_error)
-            detailed_msg = f"Authentication Failed: {error_msg}"
-            return False, detailed_msg
+            return False, f"Authentication Failed: {error_msg}"
             
         except smtplib. SMTPConnectError as e:
             return False, f"Connection Error: {str(e)}"
@@ -117,10 +116,10 @@ class SMTPHandler:
             return False, str(e)
             
         finally:
-            if server:
+            if server: 
                 try:
                     server.close()
-                except:
+                except Exception: 
                     pass
 
     def send_email_sync(self, to_email, subject, html_content, plain_content=None, unsubscribe_url=None):
@@ -131,9 +130,9 @@ class SMTPHandler:
                 return False, "Password not configured"
             
             mime_message = self._create_mime_message(
-                to_email, 
-                subject, 
-                html_content, 
+                to_email,
+                subject,
+                html_content,
                 plain_content=plain_content,
                 unsubscribe_url=unsubscribe_url
             )
@@ -168,14 +167,14 @@ class SMTPHandler:
             
         except smtplib.SMTPSenderRefused as e:
             log.error(f"SMTP Sender Refused:  {e}")
-            return False, f"Sender Refused"
+            return False, "Sender Refused"
             
         except smtplib.SMTPDataError as e:
             error_msg = e.smtp_error.decode() if isinstance(e.smtp_error, bytes) else str(e.smtp_error)
             log.error(f"SMTP Data Error for {to_email}: {error_msg}")
             return False, f"Data Error:  {error_msg}"
             
-        except smtplib.SMTPServerDisconnected as e: 
+        except smtplib.SMTPServerDisconnected as e:
             log.error(f"SMTP Server Disconnected for {to_email}: {e}")
             return False, "Server Disconnected"
             
@@ -187,5 +186,5 @@ class SMTPHandler:
             if server:
                 try: 
                     server.close()
-                except:
+                except Exception:
                     pass
