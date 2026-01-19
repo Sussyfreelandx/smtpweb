@@ -17,7 +17,7 @@ class AIHandler:
     def generate(self, prompt, system_msg="You are a helpful email marketing assistant."):
         """Generate content using configured AI provider."""
         api_key = current_app.config.get('OPENAI_API_KEY')
-        local_url = current_app.config.get('LOCAL_AI_URL')
+        local_url = current_app. config.get('LOCAL_AI_URL')
 
         if local_url:
             return self._generate_local(prompt, system_msg, local_url)
@@ -52,7 +52,7 @@ class AIHandler:
             if response.status_code == 200:
                 result = response.json()
                 content = result['choices'][0]['message']['content']
-                return True, content.strip()
+                return True, content. strip()
             else:
                 log.error(f"OpenAI API Error ({response.status_code}): {response.text}")
                 return False, f"API Error ({response.status_code}): {response.text}"
@@ -80,11 +80,11 @@ class AIHandler:
             response = requests.post(api_url, headers=headers, json=data, timeout=120)
             if response.status_code == 200:
                 result = response.json()
-                content = result.get('response', '')
+                content = result. get('response', '')
                 return True, content.strip()
             else:
                 log.error(f"Local AI Error ({response.status_code}): {response.text}")
-                return False, f"Local AI Error ({response.status_code}): {response.text}"
+                return False, f"Local AI Error ({response. status_code}): {response.text}"
         except Exception as e:
             log.error(f"Local AI Connection Error:  {e}")
             return False, f"Local AI Connection Error: {e}"
@@ -93,7 +93,7 @@ class AIHandler:
         """Rewrite email content to be more persuasive."""
         prompt = (f"Rewrite the following email content to be more persuasive and clear. "
                   f"Preserve HTML structure and any placeholders like {{{{variable}}}}.\n\n{content}")
-        return self.generate(prompt)
+        return self. generate(prompt)
 
     def generate_subjects(self, content, count=3):
         """Generate subject line suggestions."""
