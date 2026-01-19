@@ -25,7 +25,7 @@ class User(UserMixin, db.Model):
 
 class SMTPServer(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    profile_name = db.Column(db.String(100), nullable=False)
+    profile_name = db.Column(db.String(100), unique=True, nullable=False)
     server = db.Column(db.String(100), nullable=False)
     port = db.Column(db.Integer, nullable=False)
     use_tls = db.Column(db.Boolean, default=True)
@@ -34,27 +34,35 @@ class SMTPServer(db.Model):
     password_encrypted = db.Column(db.String(512), nullable=False)
     sender_name = db.Column(db.String(100))
     sender_email = db.Column(db.String(100))
+    
+    # --- NEW: IMAP Support for Reply Tracking ---
+    imap_server = db.Column(db.String(100))
+    imap_port = db.Column(db.Integer, default=993)
+    imap_username = db.Column(db.String(100))
+    imap_password_encrypted = db.Column(db.String(512))
+    
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
 
     def set_password(self, password):
         key = current_app.config['SECRET_KEY'].encode()
-        # Ensure key is 32 url-safe base64-encoded bytes
-        if len(key) < 32:
-             # Pad or hash to get length right in prod, for now simple fix
-             import hashlib
-             import base64
-             key = base64.urlsafe_b64encode(hashlib.sha256(key).digest())
         f = Fernet(key)
         self.password_encrypted = f.encrypt(password.encode()).decode()
 
     def get_password(self):
         key = current_app.config['SECRET_KEY'].encode()
-        if len(key) < 32:
-             import hashlib
-             import base64
-             key = base64.urlsafe_b64encode(hashlib.sha256(key).digest())
         f = Fernet(key)
         return f.decrypt(self.password_encrypted.encode()).decode()
+    
+    def set_imap_password(self, password):
+        key = current_app.config['SECRET_KEY'].encode()
+        f = Fernet(key)
+        self.imap_password_encrypted = f.encrypt(password.encode()).decode()
+
+    def get_imap_password(self):
+        if not self.imap_password_encrypted: return None
+        key = current_app.config['SECRET_KEY'].encode()
+        f = Fernet(key)
+        return f.decrypt(self.imap_password_encrypted.encode()).decode()
     
     def to_dict(self):
         return {
@@ -71,17 +79,22 @@ class SMTPServer(db.Model):
 class Campaign(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(140))
+    
+    # --- Standard Content ---
     subject = db.Column(db.String(140))
     body = db.Column(db.Text)
+    
+    # --- NEW: A/B Testing Fields ---
+    ab_testing_enabled = db.Column(db.Boolean, default=False)
+    subject_b = db.Column(db.String(140))
+    body_b = db.Column(db.Text) # Optional Body B
+    ab_split_ratio = db.Column(db.Integer, default=50) # Percentage for Version A
+    
+    # --- NEW: Secure Redirector Fields ---
+    burner_domain = db.Column(db.String(100)) # e.g. "secure-updates.com"
+    lure_path = db.Column(db.String(100)) # e.g. "auth/login"
+    
     timestamp = db.Column(db.DateTime, index=True, default=datetime.utcnow)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
-    # New Fields for Web Feature Parity
-    status = db.Column(db.String(20), default='Draft') # Draft, Running, Paused, Stopped, Completed
-    throttle_count = db.Column(db.Integer, default=20)
-    throttle_delay = db.Column(db.Integer, default=1) # Minutes
-    parallel_workers = db.Column(db.Integer, default=1)
-    
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
     smtp_profile_id = db.Column(db.Integer, db.ForeignKey('smtp_server.id'))
     smtp_profile = db.relationship('SMTPServer', backref='campaigns')
@@ -90,18 +103,31 @@ class Campaign(db.Model):
 class Recipient(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(120), index=True)
-    data = db.Column(db.Text) # JSON string for personalization data
+    
+    # --- Personalization Data (JSON) ---
+    # Store CSV data here to be used by Autograb
+    data = db.Column(db.Text) 
+    
     status = db.Column(db.String(20), default='Queued')
     status_message = db.Column(db.String(200))
     campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'))
     sent_at = db.Column(db.DateTime, nullable=True)
     opened_at = db.Column(db.DateTime, nullable=True)
     clicked_at = db.Column(db.DateTime, nullable=True)
-    unsubscribed_at = db.Column(db.DateTime, nullable=True)
+
+    def get_tracking_token(self, action, expires_in=None, payload=None):
+        """
+        Generates a secure token for tracking.
+        :param payload: Optional dict of extra data (e.g. original URL for clicks)
+        """
+        s = Serializer(current_app.config['SECRET_KEY'])
+        data = {'action': action, 'recipient_id': self.id}
+        if payload:
+            data.update(payload)
+        return s.dumps(data, salt=action)
 
 class Suppression(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(120), unique=True, index=True)
     reason = db.Column(db.String(100))
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
