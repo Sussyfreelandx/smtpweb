@@ -2,94 +2,219 @@
 
 {% block content %}
 <div class="mb-3">
-    <a href="{{ url_for('main.index') }}" class="btn btn-outline-secondary">
+    <a href="{{ url_for('main.index') }}" class="btn btn-outline-secondary btn-sm">
         <i class="fas fa-arrow-left"></i> Back to Dashboard
     </a>
 </div>
 
-<h1 class="mb-2">Global Settings</h1>
-<p class="text-muted">Configure default settings for campaigns and the secure redirector.</p>
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h1 class="mb-1">Global Settings</h1>
+        <p class="text-muted mb-0">Configure default settings for campaigns and system-wide options.</p>
+    </div>
+    <div>
+        <span class="badge bg-info"><i class="fas fa-info-circle me-1"></i> Settings apply to new campaigns</span>
+    </div>
+</div>
 
-<form method="POST" enctype="multipart/form-data">
+<form method="POST" enctype="multipart/form-data" id="settingsForm">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     
     <div class="row">
+        <!-- Left Column -->
         <div class="col-lg-6">
             <!-- Secure Redirector Config -->
-            <div class="card mb-4">
-                <div class="card-header fw-bold">
-                    <i class="fas fa-user-secret me-2"></i> Secure Redirector Config
+            <div class="card mb-4 shadow-sm">
+                <div class="card-header">
+                    <i class="fas fa-user-secret me-2 text-dark"></i> Secure Redirector Configuration
                 </div>
                 <div class="card-body">
-                    <p class="small text-muted mb-3">
-                        These settings are used to generate the <code>{{secure_link}}</code> placeholder in your emails.
-                        They act as defaults for new campaigns.
-                    </p>
+                    <div class="alert alert-info small mb-3">
+                        <i class="fas fa-info-circle me-1"></i>
+                        These settings generate the <code>{{secure_link}}</code> placeholder in your emails. 
+                        They serve as defaults for new campaigns.
+                    </div>
                     
                     <div class="mb-3">
-                        <label class="form-label">Burner Domain</label>
+                        <label class="form-label">
+                            <i class="fas fa-globe me-1 text-primary"></i> Burner Domain
+                        </label>
                         <input type="text" class="form-control" name="burner_domain" 
                                value="{{ settings.burner_domain or '' }}" 
                                placeholder="e.g., secure-docs-gateway.com">
-                        <small class="text-muted">The domain used for secure links</small>
+                        <div class="form-text">The domain used for secure tracking links</div>
                     </div>
                     
                     <div class="mb-3">
-                        <label class="form-label">Lure Path</label>
+                        <label class="form-label">
+                            <i class="fas fa-link me-1 text-success"></i> Lure Path
+                        </label>
                         <input type="text" class="form-control" name="lure_path" 
                                value="{{ settings.lure_path or '' }}" 
                                placeholder="e.g., auth/login/v2">
-                        <small class="text-muted">The path appended to the burner domain</small>
+                        <div class="form-text">The path appended to the burner domain</div>
                     </div>
                     
                     <div class="mb-3">
-                        <label class="form-label">Template PDF</label>
+                        <label class="form-label">
+                            <i class="fas fa-file-pdf me-1 text-danger"></i> Template PDF
+                        </label>
                         <input type="file" class="form-control" name="template_pdf" accept=".pdf">
                         {% if settings.template_pdf_path %}
-                            <div class="form-text text-success mt-2">
+                        <div class="mt-2 p-2 bg-light rounded d-flex align-items-center justify-content-between">
+                            <span class="text-success small">
                                 <i class="fas fa-check-circle me-1"></i> 
-                                Current PDF:  {{ settings.template_pdf_path.split('/')[-1] }}
-                            </div>
+                                Current: <strong>{{ settings.template_pdf_path.split('/')[-1] }}</strong>
+                            </span>
+                            <button type="button" class="btn btn-sm btn-outline-danger" 
+                                    onclick="if(confirm('Remove current PDF?')) { document.getElementById('remove_pdf').value='1'; document.getElementById('settingsForm').submit(); }">
+                                <i class="fas fa-times"></i>
+                            </button>
+                            <input type="hidden" name="remove_pdf" id="remove_pdf" value="">
+                        </div>
                         {% else %}
-                            <small class="text-muted">Upload a PDF template for personalized attachments</small>
+                        <div class="form-text">Upload a PDF template for personalized attachments (optional)</div>
                         {% endif %}
+                    </div>
+                    
+                    <!-- Preview of secure link -->
+                    <div class="border rounded p-3 bg-light">
+                        <label class="form-label small text-muted mb-2">
+                            <i class="fas fa-eye me-1"></i> Preview of Generated Secure Link
+                        </label>
+                        <code id="securelink-preview" class="d-block text-break">
+                            {% if settings.burner_domain %}
+                            https://{{ settings.burner_domain }}/{{ settings.lure_path or 'path' }}?id=recipient@email.com&nonce=xxxxx
+                            {% else %}
+                            Configure burner domain to see preview
+                            {% endif %}
+                        </code>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- AI Configuration -->
+            <div class="card mb-4 shadow-sm">
+                <div class="card-header">
+                    <i class="fas fa-robot me-2 text-purple"></i> AI Configuration
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <label class="form-label">
+                            <i class="fas fa-key me-1"></i> OpenAI API Key
+                        </label>
+                        <div class="input-group">
+                            <input type="password" class="form-control" name="openai_api_key" 
+                                   id="openai_api_key"
+                                   value="{{ settings.openai_api_key or '' }}" 
+                                   placeholder="sk-...">
+                            <button class="btn btn-outline-secondary" type="button" onclick="togglePasswordVisibility('openai_api_key')">
+                                <i class="fas fa-eye" id="openai_api_key-toggle-icon"></i>
+                            </button>
+                        </div>
+                        <div class="form-text">Required for AI rewrite and subject generation features</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">
+                            <i class="fas fa-server me-1"></i> Local AI URL (Optional)
+                        </label>
+                        <input type="text" class="form-control" name="local_ai_url" 
+                               value="{{ settings.local_ai_url or '' }}" 
+                               placeholder="http://localhost:11434/api/generate">
+                        <div class="form-text">For local LLM integration (e.g., Ollama). Leave empty to use OpenAI.</div>
+                    </div>
+                    
+                    <div class="mb-0">
+                        <label class="form-label">
+                            <i class="fas fa-cube me-1"></i> Local AI Model
+                        </label>
+                        <input type="text" class="form-control" name="local_ai_model" 
+                               value="{{ settings.local_ai_model or 'llama3' }}" 
+                               placeholder="llama3">
+                        <div class="form-text">Model name for local AI (e.g., llama3, mistral, codellama)</div>
                     </div>
                 </div>
             </div>
         </div>
         
+        <!-- Right Column -->
         <div class="col-lg-6">
             <!-- Default Throttling -->
-            <div class="card mb-4">
-                <div class="card-header fw-bold">
-                    <i class="fas fa-tachometer-alt me-2"></i> Default Throttling Settings
+            <div class="card mb-4 shadow-sm">
+                <div class="card-header">
+                    <i class="fas fa-tachometer-alt me-2 text-warning"></i> Default Throttling Settings
                 </div>
                 <div class="card-body">
-                    <p class="small text-muted mb-3">
-                        These values will be used as defaults when creating new campaigns. 
-                    </p>
+                    <div class="alert alert-warning small mb-3">
+                        <i class="fas fa-exclamation-triangle me-1"></i>
+                        These values are used as defaults when creating new campaigns.  
+                        Adjust based on your SMTP provider's limits.
+                    </div>
                     
                     <div class="row">
                         <div class="col-md-6 mb-3">
-                            <label class="form-label">Batch Size</label>
+                            <label class="form-label">
+                                <i class="fas fa-layer-group me-1"></i> Default Batch Size
+                            </label>
                             <input type="number" class="form-control" name="default_throttle_amount" 
-                                   value="{{ settings.default_throttle_amount or 20 }}" min="1">
-                            <small class="text-muted">Emails per batch</small>
+                                   value="{{ settings.default_throttle_amount or 20 }}" min="1" max="500">
+                            <div class="form-text">Emails sent per batch</div>
                         </div>
                         <div class="col-md-6 mb-3">
-                            <label class="form-label">Delay (seconds)</label>
+                            <label class="form-label">
+                                <i class="fas fa-clock me-1"></i> Default Delay (seconds)
+                            </label>
                             <input type="number" class="form-control" name="default_throttle_delay" 
-                                   value="{{ settings.default_throttle_delay or 60 }}" min="1">
-                            <small class="text-muted">Wait between batches</small>
+                                   value="{{ settings.default_throttle_delay or 60 }}" min="1" max="3600">
+                            <div class="form-text">Wait time between batches</div>
+                        </div>
+                    </div>
+                    
+                    <!-- Throttle Calculator -->
+                    <div class="border rounded p-3 bg-light">
+                        <label class="form-label small text-muted mb-2">
+                            <i class="fas fa-calculator me-1"></i> Estimated Sending Rate
+                        </label>
+                        <div id="throttle-estimate" class="fw-bold">
+                            Calculating...
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Warmup Schedule -->
+            <div class="card mb-4 shadow-sm">
+                <div class="card-header">
+                    <i class="fas fa-fire-alt me-2 text-danger"></i> IP Warmup Schedule
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <label class="form-label">Warmup Daily Limits (JSON)</label>
+                        <textarea class="form-control font-monospace" name="warmup_schedule" rows="4" 
+                                  placeholder='[10, 20, 40, 80, 150, 300, 500]'>{{ settings.warmup_schedule or '[10, 20, 40, 80, 150, 300, 500]' }}</textarea>
+                        <div class="form-text">
+                            Daily sending limits for warmup mode (array of numbers). 
+                            Day 1 uses first value, Day 2 uses second, etc. 
+                        </div>
+                    </div>
+                    
+                    <!-- Warmup Preview -->
+                    <div class="border rounded p-3 bg-light">
+                        <label class="form-label small text-muted mb-2">
+                            <i class="fas fa-chart-line me-1"></i> Warmup Schedule Preview
+                        </label>
+                        <div id="warmup-preview" class="small">
+                            Loading...
                         </div>
                     </div>
                 </div>
             </div>
             
             <!-- Quick Links -->
-            <div class="card">
-                <div class="card-header fw-bold">
-                    <i class="fas fa-link me-2"></i> Quick Links
+            <div class="card mb-4 shadow-sm">
+                <div class="card-header">
+                    <i class="fas fa-link me-2 text-info"></i> Quick Navigation
                 </div>
                 <div class="card-body">
                     <div class="d-grid gap-2">
@@ -102,16 +227,176 @@
                         <a href="{{ url_for('main.deliverability_tools') }}" class="btn btn-outline-info">
                             <i class="fas fa-shield-alt me-2"></i> Deliverability Tools
                         </a>
+                        <a href="{{ url_for('main.analytics_dashboard') }}" class="btn btn-outline-success">
+                            <i class="fas fa-chart-bar me-2"></i> Analytics Dashboard
+                        </a>
                     </div>
+                </div>
+            </div>
+            
+            <!-- System Info -->
+            <div class="card shadow-sm">
+                <div class="card-header">
+                    <i class="fas fa-info-circle me-2 text-secondary"></i> System Information
+                </div>
+                <div class="card-body">
+                    <ul class="list-group list-group-flush small">
+                        <li class="list-group-item d-flex justify-content-between align-items-center px-0">
+                            <span>Application Version</span>
+                            <span class="badge bg-primary">8.0.3 Web</span>
+                        </li>
+                        <li class="list-group-item d-flex justify-content-between align-items-center px-0">
+                            <span>Database Status</span>
+                            <span class="badge bg-success">Connected</span>
+                        </li>
+                        <li class="list-group-item d-flex justify-content-between align-items-center px-0">
+                            <span>SMTP Profiles</span>
+                            <span class="badge bg-info">{{ smtp_count if smtp_count is defined else '?' }}</span>
+                        </li>
+                        <li class="list-group-item d-flex justify-content-between align-items-center px-0">
+                            <span>Suppression List</span>
+                            <span class="badge bg-warning text-dark">{{ suppression_count if suppression_count is defined else '?' }}</span>
+                        </li>
+                    </ul>
                 </div>
             </div>
         </div>
     </div>
     
-    <div class="d-flex justify-content-end mt-3">
-        <button type="submit" class="btn btn-primary btn-lg">
+    <!-- Save Button -->
+    <div class="d-flex justify-content-between align-items-center mt-4 mb-5">
+        <div class="text-muted small">
+            <i class="fas fa-info-circle me-1"></i>
+            Changes will apply to new campaigns.  Existing campaigns are not affected.
+        </div>
+        <button type="submit" class="btn btn-primary btn-lg px-5" id="saveBtn">
             <i class="fas fa-save me-2"></i> Save Settings
         </button>
     </div>
 </form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Toggle password visibility
+    function togglePasswordVisibility(inputId) {
+        const input = document.getElementById(inputId);
+        const icon = document.getElementById(inputId + '-toggle-icon');
+        
+        if (input.type === 'password') {
+            input.type = 'text';
+            if (icon) {
+                icon.classList.remove('fa-eye');
+                icon.classList.add('fa-eye-slash');
+            }
+        } else {
+            input.type = 'password';
+            if (icon) {
+                icon.classList.remove('fa-eye-slash');
+                icon.classList.add('fa-eye');
+            }
+        }
+    }
+    
+    // Update secure link preview
+    function updateSecureLinkPreview() {
+        const domain = document.querySelector('input[name="burner_domain"]').value.trim();
+        const path = document.querySelector('input[name="lure_path"]').value.trim();
+        const preview = document.getElementById('securelink-preview');
+        
+        if (domain) {
+            let url = domain;
+            if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                url = 'https://' + url;
+            }
+            if (path) {
+                url += '/' + path.replace(/^\//, '');
+            }
+            url += '?id=recipient@email.com&nonce=abc123';
+            preview.textContent = url;
+            preview.classList.remove('text-muted');
+        } else {
+            preview.textContent = 'Configure burner domain to see preview';
+            preview.classList.add('text-muted');
+        }
+    }
+    
+    // Update throttle estimate
+    function updateThrottleEstimate() {
+        const batch = parseInt(document.querySelector('input[name="default_throttle_amount"]').value) || 20;
+        const delay = parseInt(document.querySelector('input[name="default_throttle_delay"]').value) || 60;
+        const estimate = document.getElementById('throttle-estimate');
+        
+        const emailsPerHour = Math.round((3600 / delay) * batch);
+        const emailsPerDay = emailsPerHour * 24;
+        
+        estimate.innerHTML = `
+            <div class="row text-center">
+                <div class="col-4">
+                    <div class="text-primary h5 mb-0">${batch}</div>
+                    <small class="text-muted">per batch</small>
+                </div>
+                <div class="col-4">
+                    <div class="text-success h5 mb-0">~${emailsPerHour.toLocaleString()}</div>
+                    <small class="text-muted">per hour</small>
+                </div>
+                <div class="col-4">
+                    <div class="text-info h5 mb-0">~${emailsPerDay.toLocaleString()}</div>
+                    <small class="text-muted">per day</small>
+                </div>
+            </div>
+        `;
+    }
+    
+    // Update warmup preview
+    function updateWarmupPreview() {
+        const scheduleInput = document.querySelector('textarea[name="warmup_schedule"]').value.trim();
+        const preview = document.getElementById('warmup-preview');
+        
+        try {
+            const schedule = JSON.parse(scheduleInput || '[10, 20, 40, 80, 150, 300, 500]');
+            if (Array.isArray(schedule) && schedule.length > 0) {
+                let html = '<div class="d-flex flex-wrap gap-2">';
+                schedule.forEach((limit, index) => {
+                    const bgClass = index < 3 ? 'bg-warning text-dark' : (index < 5 ? 'bg-info text-white' : 'bg-success text-white');
+                    html += `<span class="badge ${bgClass}">Day ${index + 1}:  ${limit}</span>`;
+                });
+                html += '</div>';
+                html += `<div class="mt-2 text-muted">Total warmup period: ${schedule.length} days</div>`;
+                preview.innerHTML = html;
+            } else {
+                preview.innerHTML = '<span class="text-danger">Invalid schedule format</span>';
+            }
+        } catch (e) {
+            preview.innerHTML = '<span class="text-danger">Invalid JSON format</span>';
+        }
+    }
+    
+    // Add event listeners
+    document.querySelector('input[name="burner_domain"]').addEventListener('input', updateSecureLinkPreview);
+    document.querySelector('input[name="lure_path"]').addEventListener('input', updateSecureLinkPreview);
+    document.querySelector('input[name="default_throttle_amount"]').addEventListener('input', updateThrottleEstimate);
+    document.querySelector('input[name="default_throttle_delay"]').addEventListener('input', updateThrottleEstimate);
+    document.querySelector('textarea[name="warmup_schedule"]').addEventListener('input', updateWarmupPreview);
+    
+    // Initialize on page load
+    document.addEventListener('DOMContentLoaded', function() {
+        updateSecureLinkPreview();
+        updateThrottleEstimate();
+        updateWarmupPreview();
+    });
+    
+    // Form submission feedback
+    document.getElementById('settingsForm').addEventListener('submit', function(e) {
+        const btn = document.getElementById('saveBtn');
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Saving...';
+        btn.disabled = true;
+    });
+</script>
+
+<style>
+    .text-purple {
+        color: #6f42c1;
+    }
+</style>
 {% endblock %}
