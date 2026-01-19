@@ -23,7 +23,56 @@ redis
 psycopg2-binary
 cryptography
 
-# Forms & Validation (NEW - Required for Settings pages)
+# Forms & Validation
 Flask-WTF
 email-validator
 
+# Real-time WebSocket Support
+flask-socketio
+python-socketio
+eventlet
+
+# Advanced Analytics & Charts
+pandas
+plotly
+
+# API Support
+flask-restful
+flask-cors
+marshmallow
+
+# Rate Limiting & Security
+flask-limiter
+flask-talisman
+pyotp
+qrcode
+
+# Caching
+flask-caching
+
+# File Handling
+Pillow
+python-magic
+
+# Scheduling
+APScheduler
+
+# Email Validation & Verification
+py3dns
+validate-email-address
+
+# AI/ML Features
+scikit-learn
+numpy
+
+# Export Formats
+openpyxl
+xlsxwriter
+
+# Monitoring & Logging
+sentry-sdk
+structlog
+
+# Testing
+pytest
+pytest-flask
