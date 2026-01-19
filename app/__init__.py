@@ -3,7 +3,7 @@ from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_login import LoginManager
-from flask_wtf. csrf import CSRFProtect
+from flask_wtf.csrf import CSRFProtect
 
 db = SQLAlchemy()
 migrate = Migrate()
@@ -19,7 +19,7 @@ def create_app():
     
     app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY') or 'dev-secret-key-change-this-in-production'
     
-    database_url = os. environ.get('DATABASE_URL') or 'sqlite:///' + os.path.join(basedir, 'app. db')
+    database_url = os.environ.get('DATABASE_URL') or 'sqlite:///' + os.path.join(basedir, 'app.db')
     if database_url and database_url.startswith('postgres://'):
         database_url = database_url.replace('postgres://', 'postgresql://', 1)
     app.config['SQLALCHEMY_DATABASE_URI'] = database_url
@@ -36,7 +36,7 @@ def create_app():
     csrf.init_app(app)
 
     from app.main import bp as main_bp
-    app. register_blueprint(main_bp)
+    app.register_blueprint(main_bp)
 
     from app.tracking import bp as tracking_bp
     app.register_blueprint(tracking_bp)
