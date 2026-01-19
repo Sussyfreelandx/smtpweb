@@ -1,34 +1,22 @@
-import os
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_login import LoginManager
 from flask_wtf.csrf import CSRFProtect
+from config import Config
 
 db = SQLAlchemy()
 migrate = Migrate()
 login = LoginManager()
 login.login_view = 'main.login'
+login.login_message = 'Please log in to access this page.'
+login.login_message_category = 'info'
 csrf = CSRFProtect()
 
 
-def create_app():
+def create_app(config_class=Config):
     app = Flask(__name__)
-    
-    basedir = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
-    
-    app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY') or 'dev-secret-key-change-this-in-production'
-    
-    database_url = os.environ.get('DATABASE_URL') or 'sqlite:///' + os.path.join(basedir, 'app.db')
-    if database_url and database_url.startswith('postgres://'):
-        database_url = database_url.replace('postgres://', 'postgresql://', 1)
-    app.config['SQLALCHEMY_DATABASE_URI'] = database_url
-    
-    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-    app.config['CELERY_BROKER_URL'] = os.environ.get('REDIS_URL') or 'redis://localhost:6379/0'
-    app.config['CELERY_RESULT_BACKEND'] = os.environ.get('REDIS_URL') or 'redis://localhost:6379/0'
-    app.config['OPENAI_API_KEY'] = os.environ.get('OPENAI_API_KEY')
-    app.config['LOCAL_AI_URL'] = os.environ.get('LOCAL_AI_URL')
+    app.config.from_object(config_class)
 
     db.init_app(app)
     migrate.init_app(app, db)
@@ -38,7 +26,11 @@ def create_app():
     from app.main import bp as main_bp
     app.register_blueprint(main_bp)
 
-    from app.tracking import bp as tracking_bp
-    app.register_blueprint(tracking_bp)
+    # Import models here to avoid circular dependency
+    from app import models
+
+    # Create tables if they don't exist
+    with app.app_context():
+        db.create_all()
 
     return app
