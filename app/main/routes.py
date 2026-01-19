@@ -1431,6 +1431,26 @@ def css_inline():
         return jsonify({'success': False, 'result': str(e)})
 
 
+# ==================== API LOGS ROUTE ====================
+
+@bp.route('/api/logs')
+@login_required
+def api_get_logs():
+    """Get recent activity logs."""
+    logs = get_logs(limit=10) # Using utility function
+    
+    # Format for JSON
+    log_list = []
+    for log in logs:
+        log_list.append({
+            'timestamp': log['timestamp'],
+            'level': log['level'],
+            'message': log['message']
+        })
+        
+    return jsonify(log_list)
+
+
 # ==================== ANALYTICS ====================
 
 @bp.route('/analytics')
