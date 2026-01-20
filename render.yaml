@@ -6,7 +6,7 @@ databases:
 services:
   - type: redis
     name: paris-sender-redis
-    # ipAllowList removed to prevent sync errors
+    ipAllowList: []
 
   - type: web
     name: paris-sender-web
@@ -36,8 +36,6 @@ services:
         value: wsgi:app
       - key: FLASK_DEBUG
         value: "0"
-      # Proxy variables removed from YAML to fix sync.
-      # Manage them in the Dashboard -> Environment.
 
   - type: worker
     name: paris-sender-worker
@@ -60,5 +58,3 @@ services:
           type: web
           name: paris-sender-web
           envVarKey: SECRET_KEY
-      # Proxy variables removed from YAML to fix sync.
-      # Manage them in the Dashboard -> Environment.
