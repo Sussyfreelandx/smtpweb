@@ -217,23 +217,27 @@ def register_context_processors(app):
 
 
 # =========================================================
-#   FIXED CELERY CONFIGURATION (LOWERCASE ONLY)
+#   FIXED CELERY CONFIGURATION (SSL + PROTOCOL FIX)
 # =========================================================
 def make_celery(app):
     """Create Celery instance with SSL support for Render."""
     from celery import Celery
     
-    # 1. Force retrieval of REDIS_URL
+    # 1. Get the Redis URL
     redis_url = os.environ.get('REDIS_URL', app.config.get('CELERY_BROKER_URL'))
     
+    # 2. CRITICAL FIX: If using SSL options, URL MUST be 'rediss://'
+    # Render gives 'redis://', so we swap it here.
+    if redis_url and redis_url.startswith('redis://'):
+        redis_url = redis_url.replace('redis://', 'rediss://', 1)
+
     celery_app = Celery(
         app.import_name,
         backend=redis_url,
         broker=redis_url
     )
     
-    # 2. Update config using ONLY lowercase keys (Celery 5/6 Standard)
-    # We DO NOT use app.config.update() here to avoid mixing upper/lowercase keys
+    # 3. Update config using ONLY lowercase keys
     celery_app.conf.update(
         broker_url=redis_url,
         result_backend=redis_url,
@@ -251,7 +255,6 @@ def make_celery(app):
         },
         broker_connection_retry_on_startup=True,
         
-        # Serialization & Timezone defaults
         task_serializer='json',
         accept_content=['json'],
         result_serializer='json',
