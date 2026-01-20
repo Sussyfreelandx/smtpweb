@@ -3,6 +3,7 @@ import logging
 import socket
 import socks  # pip install PySocks
 import smtplib
+import ssl  # <--- ADDED: Required for Redis SSL checks
 from logging.handlers import RotatingFileHandler
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
@@ -259,7 +260,22 @@ def make_celery(app):
         backend=app.config.get('CELERY_RESULT_BACKEND'),
         broker=app.config.get('CELERY_BROKER_URL')
     )
+    
+    # 1. Load standard config
     celery_app.conf.update(app.config)
+
+    # 2. OVERRIDE: Force SSL and connection settings for Render Redis
+    celery_app.conf.update(
+        broker_use_ssl={'ssl_cert_reqs': ssl.CERT_NONE},
+        redis_backend_use_ssl={'ssl_cert_reqs': ssl.CERT_NONE},
+        broker_transport_options={
+            'visibility_timeout': 3600,  # 1 hour visibility
+            'socket_timeout': 30,
+            'socket_connect_timeout': 30,
+            'socket_keepalive': True,
+        },
+        broker_connection_retry_on_startup=True
+    )
     
     class ContextTask(celery_app.Task):
         def __call__(self, *args, **kwargs):
@@ -273,6 +289,5 @@ def make_celery(app):
 # ==========================================
 #   CREATE CELERY INSTANCE FOR EXPORT
 # ==========================================
-# This creates the celery instance at module level so wsgi.py can import it
 _app = create_app()
 celery = make_celery(_app)
