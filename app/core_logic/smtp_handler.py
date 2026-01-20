@@ -41,6 +41,7 @@ class SMTPHandler:
     """
     Robust SMTP Handler integrated from Paris Sender Desktop logic.
     Supports connection pooling, multi-threaded bulk sending, warmup, and SOCKS5 Proxying.
+    Includes IPv4 forcing to fix PySocks/IPv6 compatibility issues.
     """
     
     def __init__(self, smtp_config):
@@ -80,6 +81,23 @@ class SMTPHandler:
             
         return context
     
+    def _resolve_ipv4(self, hostname):
+        """
+        Force resolution of hostname to an IPv4 address.
+        This prevents PySocks from crashing on IPv6 addresses (e.g. Office365).
+        """
+        try:
+            # AF_INET forces IPv4
+            addr_info = socket.getaddrinfo(hostname, None, socket.AF_INET)
+            if addr_info:
+                # return the IP address from the first result
+                return addr_info[0][4][0]
+        except Exception as e:
+            log.warning(f"Could not force IPv4 resolution for {hostname}: {e}")
+        
+        # Fallback to original hostname if resolution fails
+        return hostname
+
     def _html_to_text(self, html):
         """Convert HTML to plain text using regex (Robust method from desktop app)."""
         if not html: return "Plain text content not available."
@@ -149,17 +167,19 @@ class SMTPHandler:
         with self._lock:
             try:
                 context = self._create_secure_ssl_context()
-                
-                # Force shorter timeouts for cloud environments to fail fast if proxy is stuck
                 timeout_val = 30
+                
+                # CRITICAL FIX: Resolve hostname to IPv4 before connecting
+                # This bypasses the PySocks IPv6 bug
+                target_host = self._resolve_ipv4(self.smtp_server)
                 
                 if self.use_ssl or self.smtp_port == 465:
                     self._connection = smtplib.SMTP_SSL(
-                        self.smtp_server, self.smtp_port, context=context, timeout=timeout_val
+                        target_host, self.smtp_port, context=context, timeout=timeout_val
                     )
                 else: 
                     self._connection = smtplib.SMTP(
-                        self.smtp_server, self.smtp_port, timeout=timeout_val
+                        target_host, self.smtp_port, timeout=timeout_val
                     )
                 
                 # Handshake
@@ -223,10 +243,13 @@ class SMTPHandler:
             context = self._create_secure_ssl_context()
             timeout_val = 30
             
+            # CRITICAL FIX: Resolve hostname to IPv4
+            target_host = self._resolve_ipv4(self.smtp_server)
+            
             if self.use_ssl or self.smtp_port == 465:
-                server = smtplib.SMTP_SSL(self.smtp_server, self.smtp_port, context=context, timeout=timeout_val)
+                server = smtplib.SMTP_SSL(target_host, self.smtp_port, context=context, timeout=timeout_val)
             else:
-                server = smtplib.SMTP(self.smtp_server, self.smtp_port, timeout=timeout_val)
+                server = smtplib.SMTP(target_host, self.smtp_port, timeout=timeout_val)
             
             with server:
                 try: server.ehlo()
