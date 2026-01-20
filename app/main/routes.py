@@ -1442,11 +1442,14 @@ def css_inline():
 @login_required
 def api_get_logs():
     """Get recent activity logs."""
-    logs = get_logs(limit=10) # Using utility function
+    logs = get_logs() # Calling without arguments
+    
+    # Slice the result here instead of in the helper function
+    recent_logs = logs[:10]
     
     # Format for JSON
     log_list = []
-    for log in logs:
+    for log in recent_logs:
         log_list.append({
             'timestamp': log.timestamp.strftime('%H:%M:%S'),
             'level': log.level,
