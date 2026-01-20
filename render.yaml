@@ -11,7 +11,7 @@ services:
   - type: web
     name: paris-sender-web
     env: python
-    pythonVersion: 3.11
+    pythonVersion: 3.11.4
     buildCommand: pip install -r requirements.txt && flask db upgrade
     startCommand: gunicorn wsgi:app
     envVars:
@@ -42,7 +42,7 @@ services:
   - type: worker
     name: paris-sender-worker
     env: python
-    pythonVersion: 3.11
+    pythonVersion: 3.11.4
     buildCommand: pip install -r requirements.txt
     startCommand: celery -A wsgi.celery worker --loglevel=info
     envVars:
