@@ -1,7 +1,7 @@
 # Flask and Web Server
 Flask>=2.0
-gunicorn
-Flask-SQLAlchemy
+gunicorn>=21.2.0
+Flask-SQLAlchemy>=3.1.1
 Flask-Migrate
 Flask-Login
 python-dotenv
@@ -14,11 +14,12 @@ Jinja2
 pypdf2
 requests
 itsdangerous
-PySocks==1.7.1
+# CRITICAL: Required for SOCKS5 Proxy Tunneling
+PySocks>=1.7.1
 
 # Background Jobs
-Celery
-redis
+Celery>=5.3.6
+redis>=5.0.1
 
 # Database Driver & Encryption
 psycopg2-binary
@@ -29,9 +30,11 @@ Flask-WTF
 email-validator
 
 # Real-time WebSocket Support
-flask-socketio
-python-socketio
-eventlet
+flask-socketio>=5.3.6
+python-socketio>=5.11.0
+eventlet>=0.33.3
+# Recommended for better async performance with Gunicorn
+gevent>=23.9.1
 
 # Advanced Analytics & Charts
 pandas
