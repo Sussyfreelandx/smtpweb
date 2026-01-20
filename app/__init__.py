@@ -62,6 +62,7 @@ limiter = Limiter(key_func=get_remote_address)
 
 
 def create_app(config_name=None):
+    """Application factory pattern."""
     if config_name is None:
         config_name = os.environ.get('FLASK_CONFIG', 'default')
     
@@ -86,7 +87,7 @@ def create_app(config_name=None):
     # Initialize SocketIO
     socketio.init_app(
         app,
-        message_queue=os.environ.get('REDIS_URL'), # Explicitly use Redis URL here too
+        message_queue=os.environ.get('REDIS_URL'), 
         cors_allowed_origins="*",
         async_mode='eventlet'
     )
@@ -216,13 +217,13 @@ def register_context_processors(app):
 
 
 # =========================================================
-#   ROBUST CELERY CONFIGURATION
+#   FIXED CELERY CONFIGURATION (LOWERCASE ONLY)
 # =========================================================
 def make_celery(app):
-    """Create Celery instance."""
+    """Create Celery instance with SSL support for Render."""
     from celery import Celery
     
-    # 1. Force retrieval of REDIS_URL to avoid config.py mismatches
+    # 1. Force retrieval of REDIS_URL
     redis_url = os.environ.get('REDIS_URL', app.config.get('CELERY_BROKER_URL'))
     
     celery_app = Celery(
@@ -231,23 +232,31 @@ def make_celery(app):
         broker=redis_url
     )
     
-    # 2. Update with app config first
-    celery_app.conf.update(app.config)
-
-    # 3. OVERRIDE: Enforce SSL for Render Redis
-    # This block ensures 'ssl_cert_reqs' is NONE, preventing the retry/handshake error.
+    # 2. Update config using ONLY lowercase keys (Celery 5/6 Standard)
+    # We DO NOT use app.config.update() here to avoid mixing upper/lowercase keys
     celery_app.conf.update(
         broker_url=redis_url,
         result_backend=redis_url,
+        
+        # SSL Configuration for Render
         broker_use_ssl={'ssl_cert_reqs': ssl.CERT_NONE},
         redis_backend_use_ssl={'ssl_cert_reqs': ssl.CERT_NONE},
+        
+        # Connection Stability
         broker_transport_options={
             'visibility_timeout': 3600,
             'socket_timeout': 30,
             'socket_connect_timeout': 30,
             'socket_keepalive': True,
         },
-        broker_connection_retry_on_startup=True
+        broker_connection_retry_on_startup=True,
+        
+        # Serialization & Timezone defaults
+        task_serializer='json',
+        accept_content=['json'],
+        result_serializer='json',
+        timezone='UTC',
+        enable_utc=True
     )
     
     class ContextTask(celery_app.Task):
