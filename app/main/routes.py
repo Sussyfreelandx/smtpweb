@@ -32,6 +32,7 @@ import base64
 import secrets
 from datetime import datetime, timedelta
 from collections import Counter
+from sqlalchemy import func
 
 
 # ==================== FORMS ====================
@@ -1485,12 +1486,11 @@ def api_campaign_status(campaign_id):
 @login_required
 def analytics_dashboard():
     """Analytics dashboard."""
-    # Get date range
     days = request.args.get('days', 30, type=int)
     end_date = datetime.utcnow().date()
     start_date = end_date - timedelta(days=days)
     
-    # Daily Stats
+    # 1. Timeline Data (Daily Stats)
     daily_data = db.session.query(
         DailyStats.date,
         db.func.sum(DailyStats.emails_sent).label('sent'),
@@ -1501,14 +1501,41 @@ def analytics_dashboard():
         DailyStats.date >= start_date
     ).group_by(DailyStats.date).order_by(DailyStats.date).all()
     
-    # Hourly Stats (Best time to send)
+    # 2. Hourly Data (Best time to send)
     hourly_data = db.session.query(
         HourlyStats.hour_of_day,
         db.func.sum(HourlyStats.total_opens).label('opens')
     ).filter_by(user_id=current_user.id).group_by(HourlyStats.hour_of_day).all()
     
+    # 3. Overall Summary (Required for template)
+    total_sent = db.session.query(func.count(Recipient.id)).join(Campaign).filter(
+        Campaign.user_id == current_user.id, Recipient.status == 'Sent'
+    ).scalar() or 0
+    
+    total_failed = db.session.query(func.count(Recipient.id)).join(Campaign).filter(
+        Campaign.user_id == current_user.id, Recipient.status == 'Failed'
+    ).scalar() or 0
+    
+    total_opens = db.session.query(func.count(Recipient.id)).join(Campaign).filter(
+        Campaign.user_id == current_user.id, Recipient.opened_at != None
+    ).scalar() or 0
+    
+    total_clicks = db.session.query(func.count(Recipient.id)).join(Campaign).filter(
+        Campaign.user_id == current_user.id, Recipient.clicked_at != None
+    ).scalar() or 0
+    
+    summary = {
+        'total_sent': total_sent,
+        'total_failed': total_failed,
+        'total_opens': total_opens,
+        'total_clicks': total_clicks,
+        'open_rate': round((total_opens / total_sent * 100), 1) if total_sent > 0 else 0,
+        'click_rate': round((total_clicks / total_sent * 100), 1) if total_sent > 0 else 0
+    }
+    
     return render_template('analytics.html', 
                           title='Analytics',
+                          summary=summary,  # <-- Added summary here
                           daily_data=daily_data,
                           hourly_data=hourly_data,
                           days=days)
@@ -1525,12 +1552,9 @@ def bulk_add_suppression():
         flash('No emails provided.', 'warning')
         return redirect(url_for('main.suppression_list'))
     
-    # Parse emails (handle both comma-separated and newline-separated)
-    import re
     emails_text = emails_text.replace(',', '\n')
     emails = [e.strip().lower() for e in emails_text.split('\n') if e.strip()]
     
-    # Validate and add
     count = 0
     duplicates = 0
     invalid = 0
