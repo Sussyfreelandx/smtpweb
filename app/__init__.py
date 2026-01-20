@@ -29,6 +29,14 @@ if PROXY_HOST:
     original_getaddrinfo = socket.getaddrinfo
 
     def patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+        # --- CRITICAL FIX: BYPASS PROXY FOR REDIS ---
+        # Do NOT tunnel Redis traffic (port 6379) through the proxy.
+        # This fixes the "Cannot connect to rediss://..." error.
+        if port == 6379:
+             return original_getaddrinfo(host, port, family, type, proto, flags)
+        # --------------------------------------------
+
+        # Force IPv4 (AF_INET) for other traffic (fixes SMTP/IPv6 issues)
         if family == 0 or family == socket.AF_INET6:
             try:
                 return original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
