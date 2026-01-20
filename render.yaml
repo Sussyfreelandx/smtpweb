@@ -11,10 +11,11 @@ services:
   - type: web
     name: paris-sender-web
     env: python
-    pythonVersion: 3.11
+    pythonVersion: 3.11.4
     buildCommand: |
       pip install -r requirements.txt
       if [ ! -d "migrations" ]; then
+        echo "Initializing database migrations..."
         flask db init
         flask db migrate -m "Initial migration"
       fi
@@ -48,7 +49,7 @@ services:
   - type: worker
     name: paris-sender-worker
     env: python
-    pythonVersion: 3.11
+    pythonVersion: 3.11.4
     buildCommand: pip install -r requirements.txt
     startCommand: celery -A wsgi.celery worker --loglevel=info
     envVars:
