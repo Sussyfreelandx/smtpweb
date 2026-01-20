@@ -1,8 +1,8 @@
 import os
+import ssl  # Added for SSL context
 from datetime import timedelta
 
 basedir = os.path.abspath(os.path.dirname(__file__))
-
 
 class Config:
     # Basic Flask Config
@@ -16,35 +16,46 @@ class Config:
     SQLALCHEMY_POOL_SIZE = 10
     SQLALCHEMY_MAX_OVERFLOW = 20
     
+    # --- REDIS CONFIGURATION (CRITICAL FOR RENDER) ---
+    _redis_url = os.environ.get('REDIS_URL') or 'redis://localhost:6379/0'
+    
     # Celery
-    CELERY_BROKER_URL = os.environ.get('REDIS_URL') or 'redis://localhost:6379/0'
-    CELERY_RESULT_BACKEND = os.environ.get('REDIS_URL') or 'redis://localhost:6379/0'
+    CELERY_BROKER_URL = _redis_url
+    CELERY_RESULT_BACKEND = _redis_url
+    
+    # Render requires SSL for Redis. We enforce it here.
+    if os.environ.get('RENDER'):
+        CELERY_BROKER_USE_SSL = {'ssl_cert_reqs': ssl.CERT_NONE}
+        CELERY_REDIS_BACKEND_USE_SSL = {'ssl_cert_reqs': ssl.CERT_NONE}
     
     # Redis Cache
     CACHE_TYPE = 'redis'
-    CACHE_REDIS_URL = os.environ.get('REDIS_URL') or 'redis://localhost:6379/1'
+    CACHE_REDIS_URL = _redis_url
     CACHE_DEFAULT_TIMEOUT = 300
     
+    # Rate Limiting
+    RATELIMIT_STORAGE_URL = _redis_url
+    RATELIMIT_DEFAULT = "200 per day"
+    RATELIMIT_HEADERS_ENABLED = True
+    
+    # WebSocket Configuration
+    SOCKETIO_MESSAGE_QUEUE = _redis_url
+    
+    # --- END REDIS CONFIGURATION ---
+
     # AI Configuration
     OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
     LOCAL_AI_URL = os.environ.get('LOCAL_AI_URL')
     
     # Session Configuration
     SESSION_TYPE = 'redis'
+    SESSION_REDIS = None # Will be set in factory if needed, handled by Flask-Session usually
     PERMANENT_SESSION_LIFETIME = timedelta(days=7)
     
     # File Upload Configuration
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB max
     UPLOAD_FOLDER = os.path.join(basedir, 'app', 'static', 'uploads')
     ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'pdf', 'csv', 'xlsx'}
-    
-    # Rate Limiting
-    RATELIMIT_STORAGE_URL = os.environ.get('REDIS_URL') or 'redis://localhost:6379/2'
-    RATELIMIT_DEFAULT = "200 per day"
-    RATELIMIT_HEADERS_ENABLED = True
-    
-    # WebSocket Configuration
-    SOCKETIO_MESSAGE_QUEUE = os.environ.get('REDIS_URL') or 'redis://localhost:6379/3'
     
     # Security
     SESSION_COOKIE_SECURE = True
@@ -84,9 +95,6 @@ class DevelopmentConfig(Config):
 
 class ProductionConfig(Config):
     DEBUG = False
-    # SERVER_NAME is deliberately omitted here to prevent Gunicorn binding errors.
-    # Instead, we set it dynamically in app/__init__.py based on the environment.
-    # This prevents the "Name or service not known" crash on deployment.
     PREFERRED_URL_SCHEME = 'https'
 
 
