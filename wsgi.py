@@ -1,8 +1,50 @@
+import os
+import socket
+import socks # pip install PySocks
+import smtplib
+import logging
+
+# ==========================================
+#   CRITICAL: WSGI PROXY CONFIGURATION
+# ==========================================
+# This ensures Gunicorn workers are patched immediately upon startup.
+
+PROXY_HOST = os.environ.get('SMTP_PROXY_HOST')
+PROXY_PORT = int(os.environ.get('SMTP_PROXY_PORT', 1080))
+PROXY_USER = os.environ.get('SMTP_PROXY_USER')
+PROXY_PASS = os.environ.get('SMTP_PROXY_PASS')
+
+if PROXY_HOST:
+    # 1. Force IPv4 Resolution (Fixes Office365/Gmail crashes on Render)
+    original_getaddrinfo = socket.getaddrinfo
+
+    def patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+        if family == 0 or family == socket.AF_INET6:
+            try:
+                return original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+            except socket.gaierror:
+                pass
+        return original_getaddrinfo(host, port, family, type, proto, flags)
+
+    socket.getaddrinfo = patched_getaddrinfo
+    
+    # 2. Configure Proxy
+    if PROXY_USER and PROXY_PASS:
+        socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT, username=PROXY_USER, password=PROXY_PASS)
+        print(f"🔌 WSGI Proxy Active: {PROXY_HOST}:{PROXY_PORT} (Auth: Yes)")
+    else:
+        socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT)
+        print(f"🔌 WSGI Proxy Active: {PROXY_HOST}:{PROXY_PORT} (Auth: No)")
+    
+    # 3. Patch smtplib
+    socks.wrap_module(smtplib)
+
+# ==========================================
+
 from app import create_app, db, socketio
 from app.models import User, Campaign, Recipient, SMTPServer, Suppression
 
 app = create_app()
-
 
 @app.shell_context_processor
 def make_shell_context():
@@ -14,7 +56,6 @@ def make_shell_context():
         'SMTPServer': SMTPServer,
         'Suppression': Suppression
     }
-
 
 # For Gunicorn with eventlet/gevent
 if __name__ == '__main__': 
