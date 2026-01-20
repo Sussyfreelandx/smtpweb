@@ -41,7 +41,8 @@ if PROXY_HOST:
 
 # ==========================================
 
-from app import create_app, db, socketio
+# CRITICAL: Import celery here so 'celery -A wsgi.celery' works
+from app import create_app, db, socketio, celery
 from app.models import User, Campaign, Recipient, SMTPServer, Suppression
 
 app = create_app()
