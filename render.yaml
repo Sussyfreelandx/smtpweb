@@ -1,3 +1,4 @@
+# This configuration tells Render how to build and run your services.
 databases:
   - name: paris-sender-db
     databaseName: paris_sender_db
@@ -6,7 +7,6 @@ databases:
 services:
   - type: redis
     name: paris-sender-redis
-    ipAllowList: []
 
   - type: web
     name: paris-sender-web
@@ -14,7 +14,9 @@ services:
     pythonVersion: "3.11"
     buildCommand: |
       pip install -r requirements.txt
+      # Check if migrations exist; if not, initialize them
       if [ ! -d "migrations" ]; then
+        echo "Initializing database migrations..."
         flask db init
         flask db migrate -m "Initial migration"
       fi
