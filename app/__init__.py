@@ -3,7 +3,7 @@ import logging
 import socket
 import socks  # pip install PySocks
 import smtplib
-import ssl  # <--- ADDED: Required for Redis SSL checks
+import ssl    # Required for Redis SSL checks
 from logging.handlers import RotatingFileHandler
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
@@ -20,21 +20,15 @@ from config import config
 # ==========================================
 #   CRITICAL:  GLOBAL PROXY CONFIGURATION
 # ==========================================
-# This block ensures the Web Process tunnels traffic through your VPS
-# and forces IPv4 to prevent Office365/Gmail connection crashes on Render. 
-
 PROXY_HOST = os.environ.get('SMTP_PROXY_HOST')
 PROXY_PORT = int(os.environ.get('SMTP_PROXY_PORT', 1080))
 PROXY_USER = os.environ.get('SMTP_PROXY_USER')
 PROXY_PASS = os.environ.get('SMTP_PROXY_PASS')
 
 if PROXY_HOST: 
-    # 1. Save original getaddrinfo to prevent recursion loops
     original_getaddrinfo = socket.getaddrinfo
 
     def patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
-        # Force IPv4 (AF_INET) if we are resolving a hostname
-        # This fixes the "PySocks doesn't support IPv6" error
         if family == 0 or family == socket.AF_INET6:
             try:
                 return original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
@@ -42,10 +36,8 @@ if PROXY_HOST:
                 pass
         return original_getaddrinfo(host, port, family, type, proto, flags)
 
-    # 2. Apply the IPv4 patch globally
     socket.getaddrinfo = patched_getaddrinfo
     
-    # 3. Configure the SOCKS5 Proxy
     if PROXY_USER and PROXY_PASS: 
         socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT, username=PROXY_USER, password=PROXY_PASS)
         print(f"🔌 Web/App Proxy Active: {PROXY_HOST}:{PROXY_PORT} (Auth: Yes)")
@@ -53,7 +45,6 @@ if PROXY_HOST:
         socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT)
         print(f"🔌 Web/App Proxy Active: {PROXY_HOST}:{PROXY_PORT} (Auth: No)")
     
-    # 4. Wrap smtplib to force all SMTP traffic through the tunnel
     socks.wrap_module(smtplib)
 
 # ==========================================
@@ -71,7 +62,6 @@ limiter = Limiter(key_func=get_remote_address)
 
 
 def create_app(config_name=None):
-    """Application factory pattern."""
     if config_name is None:
         config_name = os.environ.get('FLASK_CONFIG', 'default')
     
@@ -79,7 +69,6 @@ def create_app(config_name=None):
     app.config.from_object(config[config_name])
     
     # --- CRITICAL FIX FOR RENDER DEPLOYMENT ---
-    # Ensure SERVER_NAME is set so background tasks can generate URLs
     if os.environ.get('RENDER'):
         app.config['SERVER_NAME'] = 'paris-sender-web.onrender.com'
         app.config['PREFERRED_URL_SCHEME'] = 'https'
@@ -94,10 +83,10 @@ def create_app(config_name=None):
     limiter.init_app(app)
     CORS(app, resources={r"/api/*": {"origins": "*"}})
     
-    # Initialize SocketIO with message queue for scaling
+    # Initialize SocketIO
     socketio.init_app(
         app,
-        message_queue=app.config.get('SOCKETIO_MESSAGE_QUEUE'),
+        message_queue=os.environ.get('REDIS_URL'), # Explicitly use Redis URL here too
         cors_allowed_origins="*",
         async_mode='eventlet'
     )
@@ -116,14 +105,11 @@ def create_app(config_name=None):
     from app.webhooks import bp as webhooks_bp
     app.register_blueprint(webhooks_bp, url_prefix='/webhooks')
     
-    # Register error handlers
     register_error_handlers(app)
     
-    # Setup logging
     if not app.debug and not app.testing:
         setup_logging(app)
     
-    # Initialize Sentry if configured
     if app.config.get('SENTRY_DSN'):
         try:
             import sentry_sdk
@@ -136,17 +122,13 @@ def create_app(config_name=None):
         except ImportError:  
             pass
     
-    # Register CLI commands
     register_cli_commands(app)
-    
-    # Register template context processors
     register_context_processors(app)
     
     return app
 
 
 def register_error_handlers(app):
-    """Register custom error handlers."""
     from flask import render_template, jsonify, request
     
     @app.errorhandler(400)
@@ -182,18 +164,11 @@ def register_error_handlers(app):
 
 
 def setup_logging(app):
-    """Configure logging for production."""
     if not os.path.exists('logs'):
         os.mkdir('logs')
     
-    file_handler = RotatingFileHandler(
-        'logs/paris_sender.log',
-        maxBytes=10240000,
-        backupCount=10
-    )
-    file_handler.setFormatter(logging.Formatter(
-        '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
-    ))
+    file_handler = RotatingFileHandler('logs/paris_sender.log', maxBytes=10240000, backupCount=10)
+    file_handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'))
     file_handler.setLevel(logging.INFO)
     app.logger.addHandler(file_handler)
     app.logger.setLevel(logging.INFO)
@@ -201,24 +176,18 @@ def setup_logging(app):
 
 
 def register_cli_commands(app):
-    """Register CLI commands."""
-    
     @app.cli.command('init-db')
     def init_db():
-        """Initialize the database."""
         db.create_all()
         print('Database initialized.')
     
     @app.cli.command('create-admin')
     def create_admin():
-        """Create an admin user."""
         from app.models import User
         import click
-        
         username = click.prompt('Admin username')
         email = click.prompt('Admin email')
         password = click.prompt('Admin password', hide_input=True)
-        
         user = User(username=username, email=email)
         user.set_password(password)
         db.session.add(user)
@@ -227,18 +196,14 @@ def register_cli_commands(app):
     
     @app.cli.command('cleanup-old-data')
     def cleanup_old_data():
-        """Clean up old tracking data."""
         from app.models import Recipient
         from datetime import datetime, timedelta
-        
         cutoff = datetime.utcnow() - timedelta(days=90)
         old_recipients = Recipient.query.filter(Recipient.sent_at < cutoff).count()
         print(f'Found {old_recipients} recipients older than 90 days.')
 
 
 def register_context_processors(app):
-    """Register template context processors."""
-    
     @app.context_processor
     def inject_globals():
         from datetime import datetime
@@ -250,26 +215,34 @@ def register_context_processors(app):
         }
 
 
-# Create Celery app
+# =========================================================
+#   ROBUST CELERY CONFIGURATION
+# =========================================================
 def make_celery(app):
     """Create Celery instance."""
     from celery import Celery
     
+    # 1. Force retrieval of REDIS_URL to avoid config.py mismatches
+    redis_url = os.environ.get('REDIS_URL', app.config.get('CELERY_BROKER_URL'))
+    
     celery_app = Celery(
         app.import_name,
-        backend=app.config.get('CELERY_RESULT_BACKEND'),
-        broker=app.config.get('CELERY_BROKER_URL')
+        backend=redis_url,
+        broker=redis_url
     )
     
-    # 1. Load standard config
+    # 2. Update with app config first
     celery_app.conf.update(app.config)
 
-    # 2. OVERRIDE: Force SSL and connection settings for Render Redis
+    # 3. OVERRIDE: Enforce SSL for Render Redis
+    # This block ensures 'ssl_cert_reqs' is NONE, preventing the retry/handshake error.
     celery_app.conf.update(
+        broker_url=redis_url,
+        result_backend=redis_url,
         broker_use_ssl={'ssl_cert_reqs': ssl.CERT_NONE},
         redis_backend_use_ssl={'ssl_cert_reqs': ssl.CERT_NONE},
         broker_transport_options={
-            'visibility_timeout': 3600,  # 1 hour visibility
+            'visibility_timeout': 3600,
             'socket_timeout': 30,
             'socket_connect_timeout': 30,
             'socket_keepalive': True,
@@ -286,8 +259,5 @@ def make_celery(app):
     return celery_app
 
 
-# ==========================================
-#   CREATE CELERY INSTANCE FOR EXPORT
-# ==========================================
 _app = create_app()
 celery = make_celery(_app)
