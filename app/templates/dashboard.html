@@ -1,11 +1,13 @@
 {% extends "base.html" %}
 
+{% block title %}Dashboard{% endblock %}
+
 {% block content %}
 <div class="row mt-4">
     <!-- Sidebar / Quick Actions -->
     <div class="col-lg-3 mb-4">
-        <div class="card h-100">
-            <div class="card-header">
+        <div class="card h-100 shadow-sm">
+            <div class="card-header bg-white">
                 <i class="fas fa-rocket text-primary me-2"></i> Quick Actions
             </div>
             <div class="card-body">
@@ -51,13 +53,13 @@
                 <h6 class="text-muted small text-uppercase mb-3">Today's Activity</h6>
                 <div class="row text-center">
                     <div class="col-6 mb-2">
-                        <div class="border rounded py-2">
+                        <div class="border rounded py-2 bg-light">
                             <div class="h4 mb-0 text-primary">{{ today_sent if today_sent is defined else 0 }}</div>
                             <small class="text-muted">Sent</small>
                         </div>
                     </div>
                     <div class="col-6 mb-2">
-                        <div class="border rounded py-2">
+                        <div class="border rounded py-2 bg-light">
                             <div class="h4 mb-0 text-success">{{ today_opened if today_opened is defined else 0 }}</div>
                             <small class="text-muted">Opened</small>
                         </div>
@@ -67,8 +69,9 @@
         </div>
     </div>
 
-    <!-- Main Campaign List -->
+    <!-- Main Content Area -->
     <div class="col-lg-9">
+        
         <!-- Stats Overview -->
         {% if campaigns.count() > 0 %}
         <div class="row mb-4">
@@ -102,7 +105,7 @@
         <!-- Active Campaigns Alert -->
         {% set sending_campaigns = campaigns.filter_by(status='Sending').all() %}
         {% if sending_campaigns|length > 0 %}
-        <div class="alert alert-success d-flex align-items-center mb-4" role="alert">
+        <div class="alert alert-success d-flex align-items-center mb-4 shadow-sm" role="alert">
             <div class="spinner-grow spinner-grow-sm me-3" role="status">
                 <span class="visually-hidden">Loading...</span>
             </div>
@@ -118,187 +121,130 @@
         </div>
         {% endif %}
         
-        <!-- Campaigns Table -->
-        <div class="card">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <span><i class="fas fa-envelope-open-text text-success me-2"></i> Recent Campaigns</span>
-                <div class="d-flex align-items-center gap-2">
-                    <span class="badge bg-secondary">{{ campaigns.count() }} Total</span>
-                    <a href="{{ url_for('main.new_campaign') }}" class="btn btn-sm btn-primary">
-                        <i class="fas fa-plus"></i>
-                    </a>
+        <!-- Row: Campaigns & Live Logs -->
+        <div class="row">
+            <!-- Recent Campaigns -->
+            <div class="col-xl-8 mb-4">
+                <div class="card shadow-sm h-100">
+                    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                        <span class="fw-bold"><i class="fas fa-envelope-open-text text-success me-2"></i> Recent Campaigns</span>
+                        <a href="{{ url_for('main.new_campaign') }}" class="btn btn-sm btn-primary">
+                            <i class="fas fa-plus"></i>
+                        </a>
+                    </div>
+                    <div class="card-body p-0">
+                        {% if campaigns.count() == 0 %}
+                        <div class="text-center py-5">
+                            <i class="fas fa-inbox fa-4x text-muted mb-3"></i>
+                            <h5 class="text-muted">No campaigns yet</h5>
+                            <p class="text-secondary mb-4">Get started by creating your first email campaign.</p>
+                            <a href="{{ url_for('main.new_campaign') }}" class="btn btn-primary">
+                                <i class="fas fa-plus me-2"></i> Create Campaign
+                            </a>
+                        </div>
+                        {% else %}
+                        <div class="table-responsive">
+                            <table class="table table-hover align-middle mb-0">
+                                <thead class="bg-light">
+                                    <tr>
+                                        <th class="ps-3">Name & Status</th>
+                                        <th class="text-center">Progress</th>
+                                        <th class="text-end pe-3">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for campaign in recent_campaigns %}
+                                    <tr>
+                                        <td class="ps-3">
+                                            <a href="{{ url_for('main.view_campaign', campaign_id=campaign.id) }}" class="text-decoration-none fw-bold text-dark d-block">
+                                                {{ campaign.name }}
+                                            </a>
+                                            <div class="mt-1">
+                                                <span class="badge bg-{{ 'success' if campaign.status == 'Completed' else 'warning' if campaign.status == 'Sending' else 'danger' if campaign.status == 'Failed' else 'secondary' }} small-badge">
+                                                    {{ campaign.status }}
+                                                </span>
+                                                <span class="text-muted small ms-1">{{ campaign.created_at.strftime('%b %d') if campaign.created_at else '' }}</span>
+                                            </div>
+                                        </td>
+                                        <td class="text-center" style="min-width: 100px;">
+                                            {% set total = campaign.recipients.count() %}
+                                            {% set sent = campaign.recipients.filter_by(status='Sent').count() %}
+                                            {% if total > 0 %}
+                                            <div class="progress" style="height: 6px;">
+                                                <div class="progress-bar bg-success" style="width: {{ (sent / total * 100) }}%"></div>
+                                            </div>
+                                            <small class="text-muted">{{ ((sent / total) * 100)|round(0)|int }}%</small>
+                                            {% else %}
+                                            <span class="text-muted">-</span>
+                                            {% endif %}
+                                        </td>
+                                        <td class="text-end pe-3">
+                                            <a href="{{ url_for('main.view_campaign', campaign_id=campaign.id) }}" class="btn btn-sm btn-outline-primary">
+                                                <i class="fas fa-eye"></i>
+                                            </a>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                        {% endif %}
+                    </div>
                 </div>
             </div>
-            <div class="card-body p-0">
-                {% if campaigns.count() == 0 %}
-                <div class="text-center py-5">
-                    <i class="fas fa-inbox fa-4x text-muted mb-3"></i>
-                    <h5 class="text-muted">No campaigns yet</h5>
-                    <p class="text-secondary mb-4">Get started by creating your first email campaign. </p>
-                    <a href="{{ url_for('main.new_campaign') }}" class="btn btn-primary">
-                        <i class="fas fa-plus me-2"></i> Create Campaign
-                    </a>
+
+            <!-- Live Activity Log -->
+            <div class="col-xl-4 mb-4">
+                <div class="card shadow-sm h-100">
+                    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                        <span class="fw-bold text-primary"><i class="fas fa-bolt me-2"></i> Live Log</span>
+                        <span class="badge bg-success pulse">Live</span>
+                    </div>
+                    <div class="card-body p-0">
+                        <div id="activity-log-container" class="overflow-auto" style="height: 350px;">
+                            <div class="text-center text-muted py-5">
+                                <div class="spinner-border spinner-border-sm text-primary mb-2" role="status"></div>
+                                <div>Connecting...</div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-                {% else %}
-                <div class="table-responsive">
-                    <table class="table table-hover align-middle mb-0">
-                        <thead class="bg-light">
-                            <tr>
-                                <th class="ps-4">Campaign Name</th>
-                                <th>Status</th>
-                                <th>Subject</th>
-                                <th>Created</th>
-                                <th class="text-center">Recipients</th>
-                                <th class="text-center">Progress</th>
-                                <th class="text-end pe-4">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <!-- FIXED: Removed invalid jinja syntax. Simply loop recent_campaigns -->
-                            {% for campaign in recent_campaigns %}
-                            <tr>
-                                <td class="ps-4">
-                                    <a href="{{ url_for('main.view_campaign', campaign_id=campaign.id) }}" class="text-decoration-none fw-bold text-dark">
-                                        {{ campaign.name }}
-                                    </a>
-                                    <div class="d-flex gap-1 mt-1">
-                                        {% if campaign.ab_testing_enabled %}
-                                        <span class="badge bg-info" title="A/B Testing Enabled">A/B</span>
-                                        {% endif %}
-                                        {% if campaign.warmup_mode %}
-                                        <span class="badge bg-warning text-dark" title="Warmup Mode">🔥</span>
-                                        {% endif %}
-                                        {% if campaign.smtp_rotation_enabled %}
-                                        <span class="badge bg-success" title="SMTP Rotation">⟳</span>
-                                        {% endif %}
-                                        {% if campaign.scheduled_at and campaign.status == 'Draft' %}
-                                        <span class="badge bg-purple text-white" title="Scheduled">📅</span>
-                                        {% endif %}
-                                    </div>
-                                </td>
-                                <td>
-                                    <span class="campaign-status campaign-{{ campaign.status|lower }}">
-                                        {% if campaign.status == 'Sending' %}
-                                        <span class="spinner-grow spinner-grow-sm me-1" style="width: 0.5rem; height: 0.5rem;"></span>
-                                        {% elif campaign.status == 'Completed' %}
-                                        <i class="fas fa-check-circle me-1"></i>
-                                        {% elif campaign.status == 'Failed' %}
-                                        <i class="fas fa-exclamation-circle me-1"></i>
-                                        {% elif campaign.status == 'Paused' %}
-                                        <i class="fas fa-pause-circle me-1"></i>
-                                        {% endif %}
-                                        {{ campaign.status }}
-                                    </span>
-                                </td>
-                                <td class="text-muted small" style="max-width: 200px;">
-                                    <span class="text-truncate d-inline-block" style="max-width: 200px;" title="{{ campaign.subject }}">
-                                        {{ campaign.subject }}
-                                    </span>
-                                </td>
-                                <td class="text-muted small">
-                                    {% if campaign.created_at %}
-                                        <div>{{ campaign.created_at.strftime('%Y-%m-%d') }}</div>
-                                        <small class="text-muted">{{ campaign.created_at.strftime('%H:%M') }}</small>
-                                    {% else %}
-                                        <span class="text-muted">-</span>
-                                    {% endif %}
-                                </td>
-                                <td class="text-center">
-                                    <span class="badge bg-light text-dark border">
-                                        <i class="fas fa-users me-1 text-muted"></i>
-                                        {{ campaign.recipients.count() }}
-                                    </span>
-                                </td>
-                                <td class="text-center" style="min-width: 120px;">
-                                    {% set total = campaign.recipients.count() %}
-                                    {% set sent = campaign.recipients.filter_by(status='Sent').count() %}
-                                    {% set failed = campaign.recipients.filter_by(status='Failed').count() %}
-                                    {% if total > 0 %}
-                                    <div class="progress" style="height: 6px;" title="{{ sent }} sent, {{ failed }} failed">
-                                        <div class="progress-bar bg-success" style="width: {{ (sent / total * 100) }}%"></div>
-                                        <div class="progress-bar bg-danger" style="width:  {{ (failed / total * 100) }}%"></div>
-                                    </div>
-                                    <small class="text-muted">{{ ((sent / total) * 100)|round(0)|int }}%</small>
-                                    {% else %}
-                                    <span class="text-muted">-</span>
-                                    {% endif %}
-                                </td>
-                                <td class="text-end pe-4">
-                                    <div class="btn-group btn-group-sm">
-                                        <a href="{{ url_for('main.view_campaign', campaign_id=campaign.id) }}" class="btn btn-outline-primary" title="View/Manage">
-                                            <i class="fas fa-eye"></i>
-                                        </a>
-                                        {% if campaign.status == 'Draft' %}
-                                        <a href="{{ url_for('main.campaign_control', campaign_id=campaign.id, action='start') }}" class="btn btn-outline-success" title="Start">
-                                            <i class="fas fa-play"></i>
-                                        </a>
-                                        {% elif campaign.status == 'Sending' %}
-                                        <a href="{{ url_for('main.campaign_control', campaign_id=campaign.id, action='pause') }}" class="btn btn-outline-warning" title="Pause">
-                                            <i class="fas fa-pause"></i>
-                                        </a>
-                                        {% elif campaign.status == 'Paused' %}
-                                        <a href="{{ url_for('main.campaign_control', campaign_id=campaign.id, action='start') }}" class="btn btn-outline-success" title="Resume">
-                                            <i class="fas fa-play"></i>
-                                        </a>
-                                        {% endif %}
-                                        <a href="{{ url_for('main.export_campaign_report', campaign_id=campaign.id) }}" class="btn btn-outline-secondary" title="Export">
-                                            <i class="fas fa-download"></i>
-                                        </a>
-                                    </div>
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-                
-                {% if campaigns.count() > 20 %}
-                <div class="card-footer bg-white text-center">
-                    <a href="{{ url_for('main.analytics_dashboard') }}" class="text-decoration-none">
-                        View all {{ campaigns.count() }} campaigns <i class="fas fa-arrow-right ms-1"></i>
-                    </a>
-                </div>
-                {% endif %}
-                {% endif %}
             </div>
         </div>
         
         <!-- Getting Started Guide (shown when no campaigns) -->
         {% if campaigns.count() == 0 %}
-        <div class="card mt-4">
-            <div class="card-header">
-                <i class="fas fa-graduation-cap me-2 text-info"></i> Getting Started
+        <div class="card mt-4 shadow-sm border-info">
+            <div class="card-header bg-info text-white">
+                <i class="fas fa-graduation-cap me-2"></i> Getting Started
             </div>
             <div class="card-body">
                 <div class="row">
                     <div class="col-md-4 mb-3 mb-md-0">
                         <div class="text-center p-3">
-                            <div class="bg-primary bg-opacity-10 rounded-circle d-inline-flex align-items-center justify-content-center mb-3" style="width: 60px; height: 60px;">
-                                <i class="fas fa-server fa-lg text-primary"></i>
+                            <div class="bg-primary bg-opacity-10 rounded-circle d-inline-flex align-items-center justify-content-center mb-3" style="width: 50px; height: 50px;">
+                                <i class="fas fa-server text-primary"></i>
                             </div>
-                            <h6>1. Configure SMTP</h6>
-                            <p class="small text-muted mb-2">Set up your email sending server</p>
-                            <a href="{{ url_for('main.smtp_profiles') }}" class="btn btn-sm btn-outline-primary">Add SMTP Profile</a>
+                            <h6>1. SMTP</h6>
+                            <a href="{{ url_for('main.smtp_profiles') }}" class="btn btn-sm btn-outline-primary mt-2">Configure</a>
                         </div>
                     </div>
                     <div class="col-md-4 mb-3 mb-md-0">
                         <div class="text-center p-3">
-                            <div class="bg-success bg-opacity-10 rounded-circle d-inline-flex align-items-center justify-content-center mb-3" style="width: 60px; height: 60px;">
-                                <i class="fas fa-file-csv fa-lg text-success"></i>
+                            <div class="bg-success bg-opacity-10 rounded-circle d-inline-flex align-items-center justify-content-center mb-3" style="width: 50px; height: 50px;">
+                                <i class="fas fa-file-csv text-success"></i>
                             </div>
-                            <h6>2. Prepare Your List</h6>
-                            <p class="small text-muted mb-2">Create a CSV with email addresses</p>
-                            <a href="#" class="btn btn-sm btn-outline-success" onclick="alert('CSV format:  email,firstname,company')">View Format</a>
+                            <h6>2. List</h6>
+                            <button class="btn btn-sm btn-outline-success mt-2" onclick="alert('Upload CSV in Campaign creation.')">Prepare CSV</button>
                         </div>
                     </div>
                     <div class="col-md-4">
                         <div class="text-center p-3">
-                            <div class="bg-warning bg-opacity-10 rounded-circle d-inline-flex align-items-center justify-content-center mb-3" style="width: 60px; height: 60px;">
-                                <i class="fas fa-paper-plane fa-lg text-warning"></i>
+                            <div class="bg-warning bg-opacity-10 rounded-circle d-inline-flex align-items-center justify-content-center mb-3" style="width: 50px; height: 50px;">
+                                <i class="fas fa-paper-plane text-warning"></i>
                             </div>
-                            <h6>3. Create & Send</h6>
-                            <p class="small text-muted mb-2">Design your email and launch</p>
-                            <a href="{{ url_for('main.new_campaign') }}" class="btn btn-sm btn-outline-warning">Create Campaign</a>
+                            <h6>3. Send</h6>
+                            <a href="{{ url_for('main.new_campaign') }}" class="btn btn-sm btn-outline-warning mt-2">Create</a>
                         </div>
                     </div>
                 </div>
@@ -314,9 +260,76 @@
 // Auto-refresh for sending campaigns
 {% if sending_campaigns and sending_campaigns|length > 0 %}
 setInterval(function() {
-    // Reload the page every 30 seconds if there are sending campaigns
     location.reload();
 }, 30000);
 {% endif %}
+
+// --- Live Activity Log Script ---
+function fetchLogs() {
+    fetch('/api/logs')
+        .then(response => {
+            if (!response.ok) throw new Error('Network response was not ok');
+            return response.json();
+        })
+        .then(data => {
+            const container = document.getElementById('activity-log-container');
+            if (data.length === 0) {
+                container.innerHTML = '<div class="text-center text-muted py-5">No recent activity.</div>';
+                return;
+            }
+
+            let html = '<div class="list-group list-group-flush">';
+            data.forEach(log => {
+                let badgeClass = 'bg-secondary';
+                if (log.level === 'INFO') badgeClass = 'bg-info';
+                if (log.level === 'SUCCESS') badgeClass = 'bg-success';
+                if (log.level === 'WARNING') badgeClass = 'bg-warning text-dark';
+                if (log.level === 'ERROR') badgeClass = 'bg-danger';
+
+                html += `
+                    <div class="list-group-item px-3 py-2 border-0 border-bottom">
+                        <div class="d-flex w-100 justify-content-between align-items-center mb-1">
+                            <span class="badge ${badgeClass} rounded-pill" style="font-size: 0.65rem;">${log.level}</span>
+                            <small class="text-muted ms-2" style="font-size: 0.7rem;">${log.timestamp}</small>
+                        </div>
+                        <p class="mb-0 small text-dark text-break">${log.message}</p>
+                    </div>
+                `;
+            });
+            html += '</div>';
+            
+            // Only update if content changed to prevent jitter (simple check)
+            if (container.innerHTML !== html && !container.innerHTML.includes('Connecting')) {
+                container.innerHTML = html;
+            } else if (container.innerHTML.includes('Connecting')) {
+                container.innerHTML = html;
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching logs:', error);
+            // Don't overwrite container on error if it already has data
+        });
+}
+
+// Start fetching logs
+fetchLogs();
+setInterval(fetchLogs, 3000);
 </script>
+
+<style>
+    /* Pulse animation for the "Live" badge */
+    .pulse {
+        animation: pulse-animation 2s infinite;
+    }
+    @keyframes pulse-animation {
+        0% { opacity: 1; }
+        50% { opacity: 0.5; }
+        100% { opacity: 1; }
+    }
+    /* Smaller badge for table */
+    .small-badge {
+        font-size: 0.65rem;
+        padding: 0.25em 0.4em;
+    }
+</style>
 {% endblock %}
