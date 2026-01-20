@@ -75,24 +75,18 @@ class Config:
         'webhooks_enabled': True,
     }
 
-    # --- CRITICAL FIX FOR EMAIL SENDING ---
-    # We hardcode the domain so the background email worker knows 
-    # how to generate unsubscribe links without an active browser connection.
-    SERVER_NAME = 'paris-sender-web.onrender.com'
-    PREFERRED_URL_SCHEME = 'https'
-
 
 class DevelopmentConfig(Config):
     DEBUG = True
     SESSION_COOKIE_SECURE = False
-    # In development, we might not want to force the prod server name
-    # But if you are testing on Render, keep it. If local, comment it out.
-    SERVER_NAME = None 
+    SERVER_NAME = None # Let Flask determine this in dev
 
 
 class ProductionConfig(Config):
     DEBUG = False
-    SERVER_NAME = 'paris-sender-web.onrender.com'
+    # SERVER_NAME is deliberately omitted here to prevent Gunicorn binding errors.
+    # Instead, we set it dynamically in app/__init__.py based on the environment.
+    # This prevents the "Name or service not known" crash on deployment.
     PREFERRED_URL_SCHEME = 'https'
 
 
@@ -105,5 +99,5 @@ config = {
     'development': DevelopmentConfig,
     'production': ProductionConfig,
     'testing': TestingConfig,
-    'default': ProductionConfig  # Changed default to Production for Render
+    'default': ProductionConfig
 }
