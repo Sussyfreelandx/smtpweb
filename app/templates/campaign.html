@@ -14,11 +14,18 @@
         <div>
             <h2 class="mb-1">{{ campaign.name }}</h2>
             <div class="text-muted small">
-                <!-- FIXED: Changed timestamp to created_at -->
-                <i class="fas fa-calendar me-1"></i> Created: {{ campaign.created_at.strftime('%Y-%m-%d %H:%M') }}
+                <!-- Safe Date Formatting -->
+                <i class="fas fa-calendar me-1"></i> Created: 
+                {% if campaign.created_at %}
+                    {{ campaign.created_at.strftime('%Y-%m-%d %H:%M') }}
+                {% else %}
+                    <span class="text-muted">N/A</span>
+                {% endif %}
+
                 {% if campaign.scheduled_at %}
                 <span class="ms-3"><i class="fas fa-clock me-1"></i> Scheduled: {{ campaign.scheduled_at.strftime('%Y-%m-%d %H:%M') }}</span>
                 {% endif %}
+                
                 {% if campaign.smtp_profile %}
                 <span class="ms-3"><i class="fas fa-server me-1"></i> SMTP: {{ campaign.smtp_profile.profile_name }}</span>
                 {% endif %}
@@ -270,7 +277,13 @@
                             {% endif %}
                         </td>
                         {% endif %}
-                        <td class="small text-muted">{{ r.sent_at.strftime('%H:%M:%S') if r.sent_at else '-' }}</td>
+                        <td class="small text-muted">
+                            {% if r.sent_at %}
+                                {{ r.sent_at.strftime('%H:%M:%S') }}
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
                         <td class="text-center">
                             {% if r.opened_at %}
                             <span class="text-success" title="{{ r.opened_at.strftime('%Y-%m-%d %H:%M:%S') }}">
