@@ -1,4 +1,3 @@
-# This configuration tells Render how to build and run your services.
 databases:
   - name: paris-sender-db
     databaseName: paris_sender_db
@@ -13,10 +12,8 @@ services:
     name: paris-sender-web
     env: python
     pythonVersion: "3.11"
-    buildCommand: |
-      pip install -r requirements.txt
-    startCommand: |
-      flask db upgrade && gunicorn wsgi:app
+    buildCommand: pip install -r requirements.txt
+    startCommand: flask db upgrade && gunicorn wsgi:app
     envVars:
       - key: DATABASE_URL
         fromDatabase:
@@ -33,7 +30,6 @@ services:
         value: wsgi:app
       - key: FLASK_DEBUG
         value: "0"
-      # --- PROXY CONFIGURATION ---
       - key: SMTP_PROXY_HOST
         sync: false
       - key: SMTP_PROXY_PORT
@@ -64,7 +60,6 @@ services:
           type: web
           name: paris-sender-web
           envVarKey: SECRET_KEY
-      # --- PROXY CONFIGURATION ---
       - key: SMTP_PROXY_HOST
         sync: false
       - key: SMTP_PROXY_PORT
