@@ -29,14 +29,19 @@ if PROXY_HOST:
     original_getaddrinfo = socket.getaddrinfo
 
     def patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
-        # --- CRITICAL FIX: BYPASS PROXY FOR REDIS ---
-        # Do NOT tunnel Redis traffic (port 6379) through the proxy.
-        # This fixes the "Cannot connect to rediss://..." error.
-        if port == 6379:
-             return original_getaddrinfo(host, port, family, type, proto, flags)
-        # --------------------------------------------
+        # --- CRITICAL FIX: ROBUST REDIS BYPASS ---
+        # 1. Check if the port matches Redis (6379)
+        # 2. Handle cases where port is passed as a string "6379" OR integer 6379
+        try:
+            p = int(port) if port is not None else 0
+            if p == 6379:
+                # Do NOT tunnel Redis. Use default system DNS.
+                return original_getaddrinfo(host, port, family, type, proto, flags)
+        except (ValueError, TypeError):
+            pass 
+        # -----------------------------------------
 
-        # Force IPv4 (AF_INET) for other traffic (fixes SMTP/IPv6 issues)
+        # Force IPv4 (AF_INET) for everything else (SMTP, etc)
         if family == 0 or family == socket.AF_INET6:
             try:
                 return original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
@@ -225,7 +230,7 @@ def register_context_processors(app):
 
 
 # =========================================================
-#   FIXED CELERY CONFIGURATION (SSL + PROTOCOL FIX)
+#   FIXED CELERY CONFIGURATION
 # =========================================================
 def make_celery(app):
     """Create Celery instance with SSL support for Render."""
@@ -235,7 +240,6 @@ def make_celery(app):
     redis_url = os.environ.get('REDIS_URL', app.config.get('CELERY_BROKER_URL'))
     
     # 2. CRITICAL FIX: If using SSL options, URL MUST be 'rediss://'
-    # Render gives 'redis://', so we swap it here.
     if redis_url and redis_url.startswith('redis://'):
         redis_url = redis_url.replace('redis://', 'rediss://', 1)
 
