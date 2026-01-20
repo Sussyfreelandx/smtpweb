@@ -17,17 +17,17 @@ from flask_limiter.util import get_remote_address
 from config import config
 
 # ==========================================
-#   CRITICAL: GLOBAL PROXY CONFIGURATION
+#   CRITICAL:  GLOBAL PROXY CONFIGURATION
 # ==========================================
 # This block ensures the Web Process tunnels traffic through your VPS
-# and forces IPv4 to prevent Office365/Gmail connection crashes on Render.
+# and forces IPv4 to prevent Office365/Gmail connection crashes on Render. 
 
 PROXY_HOST = os.environ.get('SMTP_PROXY_HOST')
 PROXY_PORT = int(os.environ.get('SMTP_PROXY_PORT', 1080))
 PROXY_USER = os.environ.get('SMTP_PROXY_USER')
 PROXY_PASS = os.environ.get('SMTP_PROXY_PASS')
 
-if PROXY_HOST:
+if PROXY_HOST: 
     # 1. Save original getaddrinfo to prevent recursion loops
     original_getaddrinfo = socket.getaddrinfo
 
@@ -45,7 +45,7 @@ if PROXY_HOST:
     socket.getaddrinfo = patched_getaddrinfo
     
     # 3. Configure the SOCKS5 Proxy
-    if PROXY_USER and PROXY_PASS:
+    if PROXY_USER and PROXY_PASS: 
         socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT, username=PROXY_USER, password=PROXY_PASS)
         print(f"🔌 Web/App Proxy Active: {PROXY_HOST}:{PROXY_PORT} (Auth: Yes)")
     else:
@@ -132,7 +132,7 @@ def create_app(config_name=None):
                 integrations=[FlaskIntegration()],
                 traces_sample_rate=0.1
             )
-        except ImportError: 
+        except ImportError:  
             pass
     
     # Register CLI commands
@@ -254,17 +254,25 @@ def make_celery(app):
     """Create Celery instance."""
     from celery import Celery
     
-    celery = Celery(
+    celery_app = Celery(
         app.import_name,
-        backend=app.config['CELERY_RESULT_BACKEND'],
-        broker=app.config['CELERY_BROKER_URL']
+        backend=app.config.get('CELERY_RESULT_BACKEND'),
+        broker=app.config.get('CELERY_BROKER_URL')
     )
-    celery.conf.update(app.config)
+    celery_app.conf.update(app.config)
     
-    class ContextTask(celery.Task):
+    class ContextTask(celery_app.Task):
         def __call__(self, *args, **kwargs):
             with app.app_context():
                 return self.run(*args, **kwargs)
     
-    celery.Task = ContextTask
-    return celery
+    celery_app.Task = ContextTask
+    return celery_app
+
+
+# ==========================================
+#   CREATE CELERY INSTANCE FOR EXPORT
+# ==========================================
+# This creates the celery instance at module level so wsgi.py can import it
+_app = create_app()
+celery = make_celery(_app)
