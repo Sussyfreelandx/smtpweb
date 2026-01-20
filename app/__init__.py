@@ -29,19 +29,29 @@ if PROXY_HOST:
     original_getaddrinfo = socket.getaddrinfo
 
     def patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
-        # --- CRITICAL FIX: ROBUST REDIS BYPASS ---
-        # 1. Check if the port matches Redis (6379)
-        # 2. Handle cases where port is passed as a string "6379" OR integer 6379
+        # --- CRITICAL FIX: BYPASS PROXY FOR INTERNAL RENDER SERVICES ---
+        # 1. Check if it's Redis (port 6379)
+        # 2. Check if it's an internal Render hostname (starts with "red-")
+        # 3. Check if it's localhost/127.0.0.1
+        
+        is_redis_port = False
         try:
-            p = int(port) if port is not None else 0
-            if p == 6379:
-                # Do NOT tunnel Redis. Use default system DNS.
-                return original_getaddrinfo(host, port, family, type, proto, flags)
+            if port is not None and int(port) == 6379:
+                is_redis_port = True
         except (ValueError, TypeError):
-            pass 
-        # -----------------------------------------
+            pass
 
-        # Force IPv4 (AF_INET) for everything else (SMTP, etc)
+        is_internal_host = False
+        if isinstance(host, str):
+             if host.startswith('red-') or 'onrender.com' in host or host in ('localhost', '127.0.0.1'):
+                 is_internal_host = True
+
+        if is_redis_port or is_internal_host:
+             # Use standard system DNS (no proxy) for internal services
+             return original_getaddrinfo(host, port, family, type, proto, flags)
+        # ---------------------------------------------------------------
+
+        # Force IPv4 (AF_INET) for external traffic (SMTP, etc)
         if family == 0 or family == socket.AF_INET6:
             try:
                 return original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
