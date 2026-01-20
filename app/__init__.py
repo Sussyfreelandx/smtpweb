@@ -1,5 +1,8 @@
 import os
 import logging
+import socket
+import socks  # pip install PySocks
+import smtplib
 from logging.handlers import RotatingFileHandler
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
@@ -12,6 +15,47 @@ from flask_cors import CORS
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from config import config
+
+# ==========================================
+#   CRITICAL: GLOBAL PROXY CONFIGURATION
+# ==========================================
+# This block ensures the Web Process tunnels traffic through your VPS
+# and forces IPv4 to prevent Office365/Gmail connection crashes on Render.
+
+PROXY_HOST = os.environ.get('SMTP_PROXY_HOST')
+PROXY_PORT = int(os.environ.get('SMTP_PROXY_PORT', 1080))
+PROXY_USER = os.environ.get('SMTP_PROXY_USER')
+PROXY_PASS = os.environ.get('SMTP_PROXY_PASS')
+
+if PROXY_HOST:
+    # 1. Save original getaddrinfo to prevent recursion loops
+    original_getaddrinfo = socket.getaddrinfo
+
+    def patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+        # Force IPv4 (AF_INET) if we are resolving a hostname
+        # This fixes the "PySocks doesn't support IPv6" error
+        if family == 0 or family == socket.AF_INET6:
+            try:
+                return original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+            except socket.gaierror:
+                pass
+        return original_getaddrinfo(host, port, family, type, proto, flags)
+
+    # 2. Apply the IPv4 patch globally
+    socket.getaddrinfo = patched_getaddrinfo
+    
+    # 3. Configure the SOCKS5 Proxy
+    if PROXY_USER and PROXY_PASS:
+        socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT, username=PROXY_USER, password=PROXY_PASS)
+        print(f"🔌 Web/App Proxy Active: {PROXY_HOST}:{PROXY_PORT} (Auth: Yes)")
+    else:
+        socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT)
+        print(f"🔌 Web/App Proxy Active: {PROXY_HOST}:{PROXY_PORT} (Auth: No)")
+    
+    # 4. Wrap smtplib to force all SMTP traffic through the tunnel
+    socks.wrap_module(smtplib)
+
+# ==========================================
 
 # Initialize extensions
 db = SQLAlchemy()
