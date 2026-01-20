@@ -39,6 +39,16 @@ services:
         value: wsgi:app
       - key: FLASK_DEBUG
         value: "0"
+      # --- PROXY CONFIGURATION ---
+      # These ensure the Web Service can tunnel traffic (Test Connection/Start Campaign)
+      - key: SMTP_PROXY_HOST
+        sync: false
+      - key: SMTP_PROXY_PORT
+        sync: false
+      - key: SMTP_PROXY_USER
+        sync: false
+      - key: SMTP_PROXY_PASS
+        sync: false
 
   - type: worker
     name: paris-sender-worker
@@ -61,3 +71,13 @@ services:
           type: web
           name: paris-sender-web
           envVarKey: SECRET_KEY
+      # --- PROXY CONFIGURATION ---
+      # These ensure the Background Worker can tunnel traffic (Bulk Sending)
+      - key: SMTP_PROXY_HOST
+        sync: false
+      - key: SMTP_PROXY_PORT
+        sync: false
+      - key: SMTP_PROXY_USER
+        sync: false
+      - key: SMTP_PROXY_PASS
+        sync: false
