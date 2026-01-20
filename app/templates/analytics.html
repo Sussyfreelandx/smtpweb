@@ -214,11 +214,11 @@
 <script>
     // --- Daily Activity Chart ---
     var ctx = document.getElementById("dailyActivityChart");
-    if (ctx && {{ daily_data.labels|tojson|safe }}) {
+    if (ctx && {{ daily_data.chart_labels|tojson|safe }}) {
         var myLineChart = new Chart(ctx, {
           type: 'line',
           data: {
-            labels: {{ daily_data.labels|tojson|safe }},
+            labels: {{ daily_data.chart_labels|tojson|safe }},
             datasets: [{
               label: "Emails Sent",
               lineTension: 0.3,
@@ -232,7 +232,7 @@
               pointHoverBorderColor: "rgba(78, 115, 223, 1)",
               pointHitRadius: 10,
               pointBorderWidth: 2,
-              data: {{ daily_data.values|tojson|safe }},
+              data: {{ daily_data.chart_data|tojson|safe }},
             }],
           },
           options: {
@@ -251,17 +251,17 @@
 
     // --- Hourly Chart ---
     var ctx2 = document.getElementById("hourlyChart");
-    if (ctx2 && {{ hourly_data.labels|tojson|safe }}) {
+    if (ctx2 && {{ hourly_data.chart_labels|tojson|safe }}) {
         var myPieChart = new Chart(ctx2, {
           type: 'bar',
           data: {
-            labels: {{ hourly_data.labels|tojson|safe }},
+            labels: {{ hourly_data.chart_labels|tojson|safe }},
             datasets: [{
               label: "Opens",
               backgroundColor: "#4e73df",
               hoverBackgroundColor: "#2e59d9",
               borderColor: "#4e73df",
-              data: {{ hourly_data.values|tojson|safe }},
+              data: {{ hourly_data.chart_data|tojson|safe }},
             }],
           },
           options: {
