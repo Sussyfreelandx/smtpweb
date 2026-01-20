@@ -1491,7 +1491,7 @@ def analytics_dashboard():
     start_date = end_date - timedelta(days=days)
     
     # 1. Timeline Data (Daily Stats)
-    daily_data = db.session.query(
+    daily_stats = db.session.query(
         DailyStats.date,
         db.func.sum(DailyStats.emails_sent).label('sent'),
         db.func.sum(DailyStats.unique_opens).label('opens'),
@@ -1501,11 +1501,33 @@ def analytics_dashboard():
         DailyStats.date >= start_date
     ).group_by(DailyStats.date).order_by(DailyStats.date).all()
     
+    # Ensure lists exist even if empty
+    daily_dates = [stat.date.strftime('%Y-%m-%d') for stat in daily_stats]
+    daily_values = [stat.sent or 0 for stat in daily_stats]
+    
+    daily_data = {
+        'labels': daily_dates,
+        'values': daily_values
+    }
+    
     # 2. Hourly Data (Best time to send)
-    hourly_data = db.session.query(
+    hourly_stats = db.session.query(
         HourlyStats.hour_of_day,
         db.func.sum(HourlyStats.total_opens).label('opens')
     ).filter_by(user_id=current_user.id).group_by(HourlyStats.hour_of_day).all()
+    
+    # Initialize empty hourly data
+    hourly_labels = [f"{i}:00" for i in range(24)]
+    hourly_values = [0] * 24
+    
+    for stat in hourly_stats:
+        if 0 <= stat.hour_of_day < 24:
+            hourly_values[stat.hour_of_day] = stat.opens or 0
+            
+    hourly_data = {
+        'labels': hourly_labels,
+        'values': hourly_values
+    }
     
     # 3. Overall Summary
     total_sent = db.session.query(func.count(Recipient.id)).join(Campaign).filter(
@@ -1534,9 +1556,11 @@ def analytics_dashboard():
         'total_clicks': total_clicks,
         'open_rate': open_rate,
         'click_rate': click_rate,
-        # Fix: Add these aliased keys required by the template
+        # Required aliases for the template
         'avg_open_rate': open_rate,
-        'avg_click_rate': click_rate
+        'avg_click_rate': click_rate,
+        'total_opened': total_opens,  # Template expects this specific name
+        'total_clicked': total_clicks
     }
     
     return render_template('analytics.html', 
