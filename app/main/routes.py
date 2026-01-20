@@ -1507,7 +1507,7 @@ def analytics_dashboard():
         db.func.sum(HourlyStats.total_opens).label('opens')
     ).filter_by(user_id=current_user.id).group_by(HourlyStats.hour_of_day).all()
     
-    # 3. Overall Summary (Required for template)
+    # 3. Overall Summary
     total_sent = db.session.query(func.count(Recipient.id)).join(Campaign).filter(
         Campaign.user_id == current_user.id, Recipient.status == 'Sent'
     ).scalar() or 0
@@ -1524,18 +1524,24 @@ def analytics_dashboard():
         Campaign.user_id == current_user.id, Recipient.clicked_at != None
     ).scalar() or 0
     
+    open_rate = round((total_opens / total_sent * 100), 1) if total_sent > 0 else 0
+    click_rate = round((total_clicks / total_sent * 100), 1) if total_sent > 0 else 0
+    
     summary = {
         'total_sent': total_sent,
         'total_failed': total_failed,
         'total_opens': total_opens,
         'total_clicks': total_clicks,
-        'open_rate': round((total_opens / total_sent * 100), 1) if total_sent > 0 else 0,
-        'click_rate': round((total_clicks / total_sent * 100), 1) if total_sent > 0 else 0
+        'open_rate': open_rate,
+        'click_rate': click_rate,
+        # Fix: Add these aliased keys required by the template
+        'avg_open_rate': open_rate,
+        'avg_click_rate': click_rate
     }
     
     return render_template('analytics.html', 
                           title='Analytics',
-                          summary=summary,  # <-- Added summary here
+                          summary=summary,
                           daily_data=daily_data,
                           hourly_data=hourly_data,
                           days=days)
