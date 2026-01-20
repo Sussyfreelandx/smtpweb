@@ -1,6 +1,10 @@
 import time
 import json
 import logging
+import os
+import socks
+import socket
+import smtplib
 from datetime import datetime, timedelta
 from celery import shared_task, current_task
 from flask import url_for, current_app
@@ -13,6 +17,47 @@ from app.utils import log_activity
 # Configure module-level logger
 logger = logging.getLogger(__name__)
 
+# ==========================================
+#   CRITICAL: WORKER PROXY CONFIGURATION
+# ==========================================
+# This block ensures the background worker tunnels traffic through your VPS
+# and forces IPv4 to prevent Office365/Gmail connection crashes.
+
+PROXY_HOST = os.environ.get('SMTP_PROXY_HOST')
+PROXY_PORT = int(os.environ.get('SMTP_PROXY_PORT', 1080))
+PROXY_USER = os.environ.get('SMTP_PROXY_USER')
+PROXY_PASS = os.environ.get('SMTP_PROXY_PASS')
+
+if PROXY_HOST:
+    # 1. Save original getaddrinfo to prevent recursion loops
+    original_getaddrinfo = socket.getaddrinfo
+
+    def patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+        # Force IPv4 (AF_INET) if we are resolving a hostname
+        # This fixes the "PySocks doesn't support IPv6" error
+        if family == 0 or family == socket.AF_INET6:
+            try:
+                return original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+            except socket.gaierror:
+                pass
+        return original_getaddrinfo(host, port, family, type, proto, flags)
+
+    # 2. Apply the IPv4 patch
+    socket.getaddrinfo = patched_getaddrinfo
+    
+    # 3. Configure the SOCKS5 Proxy
+    if PROXY_USER and PROXY_PASS:
+        socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT, username=PROXY_USER, password=PROXY_PASS)
+        logger.info(f"🔌 Worker Proxy Active: {PROXY_HOST}:{PROXY_PORT} (Auth: Yes)")
+    else:
+        socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT)
+        logger.info(f"🔌 Worker Proxy Active: {PROXY_HOST}:{PROXY_PORT} (Auth: No)")
+    
+    # 4. Wrap smtplib to force all SMTP traffic through the tunnel
+    socks.wrap_module(smtplib)
+
+# ==========================================
+
 def get_app():
     """Get or create Flask app for Celery tasks."""
     return create_app()
@@ -21,7 +66,7 @@ def get_app():
 def send_campaign_task(self, campaign_id):
     """
     Main task to send a campaign.
-    Updated to use robust multi-threaded SMTP sending.
+    Updated to use robust multi-threaded SMTP sending via Proxy.
     """
     app = get_app()
     
@@ -132,8 +177,6 @@ def send_campaign_task(self, campaign_id):
                 db.session.commit() # Commit 'Sending' status
                 
                 # --- 4. Send Batch in Parallel ---
-                log_activity(f"Sending batch of {len(email_tasks)} emails via {current_handler.smtp_server}...", "INFO")
-                
                 # Use the robust threaded method from the new handler
                 # 5 workers = 5 simultaneous connections
                 results = current_handler.send_bulk_threaded(email_tasks, max_workers=5)
@@ -195,7 +238,7 @@ def send_campaign_task(self, campaign_id):
                 if campaign and campaign.status == 'Sending':
                     remaining = campaign.recipients.filter_by(status='Queued').count()
                     if remaining > 0 and delay_seconds > 0:
-                        log_activity(f"Throttling: waiting {delay_seconds}s. {remaining} remaining.", "INFO")
+                        # log_activity(f"Throttling: waiting {delay_seconds}s. {remaining} remaining.", "INFO")
                         time.sleep(delay_seconds)
 
             # Cleanup
@@ -293,7 +336,7 @@ def get_rotation_smtp_profiles(user_id):
 
 @shared_task(bind=True)
 def send_single_email_task(self, recipient_id, campaign_id):
-    """Task to send a single email (unchanged logic, just ensuring imports)."""
+    """Task to send a single email."""
     app = get_app()
     with app.app_context():
         recipient = Recipient.query.get(recipient_id)
@@ -361,19 +404,43 @@ def process_sequence_automation():
     with app.app_context():
         now = datetime.utcnow()
         due = SequenceRecipient.query.filter(SequenceRecipient.status == 'Active', SequenceRecipient.next_action_at <= now).limit(100).all()
-        # (Sequence logic implementation stub - similar to original file)
-        return {"processed": len(due)}
+        
+        count = 0
+        for sr in due:
+            sequence = Sequence.query.get(sr.sequence_id)
+            if not sequence: continue
+            
+            step = sequence.steps.filter_by(step_number=sr.current_step).first()
+            if not step: 
+                sr.status = 'Completed'
+                continue
+                
+            # Create a recipient record for tracking
+            # In a real implementation, you'd trigger a send here
+            sr.current_step += 1
+            next_step = sequence.steps.filter_by(step_number=sr.current_step).first()
+            
+            if next_step:
+                sr.next_action_at = now + timedelta(days=next_step.delay_days, hours=next_step.delay_hours)
+            else:
+                sr.status = 'Completed'
+                sr.next_action_at = None
+            
+            count += 1
+        
+        db.session.commit()
+        return {"processed": count}
 
 @shared_task
 def check_imap_replies():
     """Check IMAP for replies."""
-    # (Use original implementation logic, ensuring imports are correct)
+    # Placeholder for IMAP logic
     return {"status": "checked"}
 
 @shared_task
 def cleanup_old_data():
     """Cleanup old logs."""
-    # (Use original implementation)
+    # Placeholder for cleanup
     return {"status": "cleaned"}
 
 @shared_task
@@ -393,5 +460,5 @@ def generate_campaign_report(campaign_id, user_email):
     with app.app_context():
         campaign = Campaign.query.get(campaign_id)
         if not campaign: return
-        # (Report generation logic)
+        # Placeholder logic
         return {"status": "completed"}
