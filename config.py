@@ -1,5 +1,5 @@
 import os
-import ssl  # Added for SSL context
+import ssl
 from datetime import timedelta
 
 basedir = os.path.abspath(os.path.dirname(__file__))
@@ -16,14 +16,25 @@ class Config:
     SQLALCHEMY_POOL_SIZE = 10
     SQLALCHEMY_MAX_OVERFLOW = 20
     
-    # --- REDIS CONFIGURATION (CRITICAL FOR RENDER) ---
+    # --- REDIS CONFIGURATION (CRITICAL FIX FOR RENDER) ---
     _redis_url = os.environ.get('REDIS_URL') or 'redis://localhost:6379/0'
     
+    # 1. Clean up trailing slashes that cause "//" errors
+    if _redis_url.endswith('/'):
+        _redis_url = _redis_url.rstrip('/')
+        
+    # 2. Force SSL scheme (rediss://) for Render immediately
+    if os.environ.get('RENDER'):
+        if _redis_url.startswith('redis://'):
+            _redis_url = _redis_url.replace('redis://', 'rediss://', 1)
+            
     # Celery
     CELERY_BROKER_URL = _redis_url
     CELERY_RESULT_BACKEND = _redis_url
     
-    # Render requires SSL for Redis. We enforce it here.
+    # Render requires SSL for Redis.
+    # Note: We configure ssl_cert_reqs=None in __init__.py for the worker,
+    # but setting these here helps Flask components know we intend to use SSL.
     if os.environ.get('RENDER'):
         CELERY_BROKER_USE_SSL = {'ssl_cert_reqs': ssl.CERT_NONE}
         CELERY_REDIS_BACKEND_USE_SSL = {'ssl_cert_reqs': ssl.CERT_NONE}
@@ -49,7 +60,7 @@ class Config:
     
     # Session Configuration
     SESSION_TYPE = 'redis'
-    SESSION_REDIS = None # Will be set in factory if needed, handled by Flask-Session usually
+    SESSION_REDIS = None # Will be set in factory if needed
     PERMANENT_SESSION_LIFETIME = timedelta(days=7)
     
     # File Upload Configuration
@@ -90,7 +101,7 @@ class Config:
 class DevelopmentConfig(Config):
     DEBUG = True
     SESSION_COOKIE_SECURE = False
-    SERVER_NAME = None # Let Flask determine this in dev
+    SERVER_NAME = None 
 
 
 class ProductionConfig(Config):
