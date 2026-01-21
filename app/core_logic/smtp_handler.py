@@ -5,7 +5,6 @@ import re
 import time
 import threading
 import os
-import socks  # Requires: pip install PySocks
 import socket
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -15,53 +14,74 @@ from email.utils import formataddr, formatdate, make_msgid
 from email.header import Header
 from datetime import datetime, timedelta
 from collections import deque
-from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# Check for Eventlet
+try:
+    import eventlet
+    from eventlet import GreenPool
+    EVENTLET_AVAILABLE = True
+except ImportError:
+    EVENTLET_AVAILABLE = False
+    from concurrent.futures import ThreadPoolExecutor
+
+# Check for PySocks
+try:
+    import socks
+    SOCKS_AVAILABLE = True
+except ImportError:
+    SOCKS_AVAILABLE = False
 
 log = logging.getLogger(__name__)
 
 # --- GLOBAL PROXY CONFIGURATION ---
-# Checks for Render Environment Variables
 PROXY_HOST = os.environ.get('SMTP_PROXY_HOST')
 PROXY_PORT = int(os.environ.get('SMTP_PROXY_PORT', 1080))
 PROXY_USER = os.environ.get('SMTP_PROXY_USER')
 PROXY_PASS = os.environ.get('SMTP_PROXY_PASS')
 
-# --- MONKEY PATCH FOR IPV6 + PROXY SUPPORT ---
-# PySocks does not support IPv6. We must force standard socket resolution to use IPv4
-# BEFORE the traffic hits the proxy patch.
-original_getaddrinfo = socket.getaddrinfo
+_PROXY_PATCHED = False
 
-def patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
-    # Force IPv4 (AF_INET) if we are resolving a hostname
-    if family == 0 or family == socket.AF_INET6:
-        try:
-            return original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
-        except socket.gaierror:
-            # If IPv4 fails, fall back to original behavior (might be localhost or IPv6 only)
-            pass
-    return original_getaddrinfo(host, port, family, type, proto, flags)
+def apply_proxy_patch():
+    """Singleton method to apply Proxy and IPv6 patches safely."""
+    global _PROXY_PATCHED
+    if _PROXY_PATCHED:
+        return
 
-# Apply patches if proxy is active
+    if PROXY_HOST and SOCKS_AVAILABLE:
+        log.info(f"🔌 SMTP Proxy Active: Tunneling via {PROXY_HOST}:{PROXY_PORT}")
+        
+        # 1. IPv4 Force Hack (Fixes PySocks/Office365 crashes)
+        original_getaddrinfo = socket.getaddrinfo
+
+        def patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+            if family == 0 or family == socket.AF_INET6:
+                try:
+                    return original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+                except socket.gaierror:
+                    pass
+            return original_getaddrinfo(host, port, family, type, proto, flags)
+
+        socket.getaddrinfo = patched_getaddrinfo
+        
+        # 2. Configure Proxy
+        if PROXY_USER and PROXY_PASS:
+            socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT, username=PROXY_USER, password=PROXY_PASS)
+        else:
+            socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT)
+        
+        # 3. Wrap smtplib
+        socks.wrap_module(smtplib)
+        
+    _PROXY_PATCHED = True
+
+# Apply patch immediately on import if needed
 if PROXY_HOST:
-    log.info(f"🔌 SMTP Proxy Active: Tunneling via {PROXY_HOST}:{PROXY_PORT}")
-    
-    # 1. Force IPv4 Resolution globally to fix Office365/PySocks crash
-    socket.getaddrinfo = patched_getaddrinfo
-    
-    # 2. Configure the Default Proxy
-    if PROXY_USER and PROXY_PASS:
-        socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT, username=PROXY_USER, password=PROXY_PASS)
-    else:
-        socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT)
-    
-    # 3. Wrap smtplib to force traffic through the tunnel
-    socks.wrap_module(smtplib)
+    apply_proxy_patch()
 
 class SMTPHandler:
     """
     Robust SMTP Handler integrated from Paris Sender Desktop logic.
-    Supports connection pooling, multi-threaded bulk sending, warmup, and SOCKS5 Proxying.
-    Includes IPv4 forcing to fix PySocks/IPv6 compatibility issues.
+    Supports connection pooling, multi-threaded/green-threaded bulk sending, and SOCKS5 Proxying.
     """
     
     def __init__(self, smtp_config):
@@ -83,10 +103,6 @@ class SMTPHandler:
         
         # Rate limiting tracking
         self._recent_sends = deque(maxlen=1000)
-        
-        # Configuration
-        self.max_retries = 3
-        self.retry_delay = 5
     
     def _create_secure_ssl_context(self):
         """Create a secure SSL context."""
@@ -102,7 +118,7 @@ class SMTPHandler:
         return context
 
     def _html_to_text(self, html):
-        """Convert HTML to plain text using regex (Robust method from desktop app)."""
+        """Convert HTML to plain text using regex."""
         if not html: return "Plain text content not available."
         try:
             text = re.sub(r'<(script|style).*?>.*?</\1>', '', html, flags=re.DOTALL | re.IGNORECASE)
@@ -166,12 +182,10 @@ class SMTPHandler:
         return msg_root
 
     def connect(self):
-        """Establish connection to SMTP server (Proxied automatically via socks.wrap_module)."""
+        """Establish connection to SMTP server."""
         with self._lock:
             try:
                 context = self._create_secure_ssl_context()
-                
-                # Force shorter timeouts for cloud environments to fail fast if proxy is stuck
                 timeout_val = 30
                 
                 if self.use_ssl or self.smtp_port == 465:
@@ -183,13 +197,11 @@ class SMTPHandler:
                         self.smtp_server, self.smtp_port, timeout=timeout_val
                     )
                 
-                # Handshake
                 try:
                     self._connection.ehlo()
                 except smtplib.SMTPHeloError:
                     self._connection.helo()
                 
-                # STARTTLS
                 if not self.use_ssl and self.use_tls:
                     if self._connection.has_extn('STARTTLS'):
                         self._connection.starttls(context=context)
@@ -215,10 +227,8 @@ class SMTPHandler:
                 try:
                     self._connection.quit()
                 except Exception:
-                    try:
-                        self._connection.close()
-                    except Exception:
-                        pass
+                    try: self._connection.close()
+                    except Exception: pass
                 finally:
                     self._connection = None
                     self._connection_time = None
@@ -229,16 +239,12 @@ class SMTPHandler:
             return False, "SMTP configuration incomplete"
         
         success, msg = self.connect()
-        self.disconnect() # Always disconnect after a test
+        self.disconnect()
         return success, msg
 
     def send_email_sync(self, to_email, subject, html_content, plain_content=None,
                         unsubscribe_url=None, attachments=None, custom_headers=None):
-        """
-        Send a single email synchronously. 
-        Re-establishes connection if needed.
-        """
-        # Always create a fresh connection for threaded tasks when proxying to prevent socket pipe errors
+        """Send a single email synchronously."""
         server = None
         try:
             context = self._create_secure_ssl_context()
@@ -278,8 +284,8 @@ class SMTPHandler:
 
     def send_bulk_threaded(self, email_tasks, max_workers=5):
         """
-        Send a batch of emails using multiple threads.
-        When PROXY_HOST is set, all threads automatically use the proxy tunnel.
+        Send a batch of emails using GreenPool (if Eventlet) or ThreadPool.
+        This prevents blocking the main loop in Gunicorn/Eventlet workers.
         """
         results = []
         
@@ -299,28 +305,30 @@ class SMTPHandler:
                 'error': msg if not success else None
             }
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_email = {executor.submit(_send_single_task, task): task for task in email_tasks}
-            
-            for future in as_completed(future_to_email):
-                try:
-                    result = future.result()
-                    results.append(result)
-                except Exception as e:
-                    log.error(f"Thread worker failed: {e}")
-                    results.append({'email': 'unknown', 'success': False, 'error': str(e)})
+        if EVENTLET_AVAILABLE:
+            # Use Eventlet GreenPool for non-blocking concurrency
+            pool = GreenPool(size=max_workers)
+            for result in pool.imap(_send_single_task, email_tasks):
+                results.append(result)
+        else:
+            # Fallback to Native Threads (Standard WSGI)
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_email = {executor.submit(_send_single_task, task): task for task in email_tasks}
+                for future in as_completed(future_to_email):
+                    try:
+                        results.append(future.result())
+                    except Exception as e:
+                        log.error(f"Thread worker failed: {e}")
+                        results.append({'email': 'unknown', 'success': False, 'error': str(e)})
                     
         return results
 
     def get_sends_per_hour(self):
-        """Get count of emails sent in the last 60 minutes."""
         cutoff = datetime.utcnow() - timedelta(minutes=60)
         return sum(1 for t in self._recent_sends if t > cutoff)
 
     def classify_failure(self, error_message):
-        """Classify the failure type based on the exception message."""
         msg = str(error_message).lower()
-        
         if any(s in msg for s in ["mailbox unavailable", "user unknown", "no such user", "recipient rejected", "invalid address"]):
             return "hard_bounce"
         elif any(s in msg for s in ["quota", "over quota", "mailbox full"]):
@@ -350,7 +358,6 @@ class SMTPRotationManager:
         self._lock = threading.Lock()
     
     def get_next_handler(self):
-        """Get the next available SMTP handler from the pool."""
         with self._lock:
             if not self.profiles:
                 return None, "No SMTP profiles available"
@@ -407,10 +414,7 @@ class SMTPRotationManager:
                 except: pass
             self.handlers.clear()
 
-
 class WarmupManager:
-    """Manages intelligent warmup schedules for new SMTP profiles."""
-    
     DEFAULT_SCHEDULE = [
         {'day': 1, 'limit': 20},
         {'day': 2, 'limit': 40},
