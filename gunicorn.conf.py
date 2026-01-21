@@ -2,6 +2,7 @@ import os
 import socket
 import socks
 import smtplib
+import ipaddress
 
 # ==========================================
 #   GUNICORN CONFIGURATION (THREADED)
@@ -28,12 +29,30 @@ def post_worker_init(worker):
         # 1. Save original socket class
         original_socket = socket.socket
 
-        # 2. Define Custom Socket that ignores internal addresses
+        # 2. Define Custom Socket that ignores internal addresses AND Private IPs
         class SmartSocket(socks.socksocket):
             def connect(self, dest_pair):
                 host, port = dest_pair
-                # BYPASS PROXY for internal Render Redis addresses (red-xxxx) and localhost
-                if (isinstance(host, str) and (host.startswith("red-") or "render.internal" in host or host == "127.0.0.1" or host == "localhost")):
+                
+                is_internal = False
+                
+                # Check 1: Hostname strings
+                if isinstance(host, str):
+                    if host.startswith("red-") or "render.internal" in host or host == "localhost":
+                        is_internal = True
+                
+                # Check 2: IP Addresses (Redis client often resolves DNS first)
+                if not is_internal:
+                    try:
+                        # Check if it's a private IP (10.x, 172.16.x, 192.168.x, 127.x)
+                        ip = ipaddress.ip_address(host)
+                        if ip.is_private or ip.is_loopback:
+                            is_internal = True
+                    except ValueError:
+                        # Not an IP address, ignore
+                        pass
+
+                if is_internal:
                     # Revert to standard non-proxy connection for internal services
                     self.set_proxy(None)
                 else:
