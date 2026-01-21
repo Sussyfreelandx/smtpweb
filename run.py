@@ -1,3 +1,7 @@
+import eventlet
+# CRITICAL: Eventlet monkey patching must happen BEFORE any other imports
+eventlet.monkey_patch()
+
 import os
 import socket
 import socks # pip install PySocks
@@ -13,7 +17,8 @@ PROXY_PORT = int(os.environ.get('SMTP_PROXY_PORT', 1080))
 PROXY_USER = os.environ.get('SMTP_PROXY_USER')
 PROXY_PASS = os.environ.get('SMTP_PROXY_PASS')
 
-if PROXY_HOST:
+# GUARD: Check if we have already patched to prevent RecursionError
+if PROXY_HOST and not getattr(socket, '_paris_proxy_patched', False):
     # 1. Force IPv4 Resolution
     original_getaddrinfo = socket.getaddrinfo
     def patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
@@ -35,6 +40,8 @@ if PROXY_HOST:
     
     # 3. Patch smtplib
     socks.wrap_module(smtplib)
+    
+    socket._paris_proxy_patched = True
 
 # ==========================================
 
