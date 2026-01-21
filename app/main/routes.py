@@ -26,7 +26,6 @@ import io
 import json
 import os
 import re
-import threading
 import time
 import base64
 import secrets
@@ -96,7 +95,7 @@ def emit_campaign_update(campaign_id, data):
             'campaign_id': campaign_id,
             **data
         }, namespace='/campaigns', room=f'campaign_{campaign_id}')
-    except Exception as e: 
+    except Exception as e:  
         current_app.logger.error(f"WebSocket emit error: {e}")
 
 
@@ -146,6 +145,23 @@ def create_notification(user_id, title, message, notification_type='info', relat
         return None
 
 
+def trigger_celery_task(task_name, *args, **kwargs):
+    """
+    Safely trigger a Celery task without causing import issues with eventlet.
+    This function delays the import to avoid module-level import conflicts.
+    """
+    try:
+        if task_name == 'send_campaign': 
+            from app.tasks import send_campaign_task
+            return send_campaign_task.delay(*args, **kwargs)
+        else:
+            current_app.logger.error(f"Unknown task: {task_name}")
+            return None
+    except Exception as e:
+        current_app.logger.error(f"Error triggering Celery task {task_name}: {e}")
+        raise
+
+
 # ==================== AUTHENTICATION ROUTES ====================
 
 @bp.route('/login', methods=['GET', 'POST'])
@@ -154,7 +170,7 @@ def login():
     if current_user.is_authenticated:
         return redirect(url_for('main.index'))
     
-    if request.method == 'POST': 
+    if request.method == 'POST':  
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
         remember = request.form.get('remember', False)
@@ -165,7 +181,7 @@ def login():
         
         if user and user.check_password(password):
             if not user.is_active:
-                flash('Your account has been deactivated. Please contact support.', 'danger')
+                flash('Your account has been deactivated.  Please contact support.', 'danger')
                 return redirect(url_for('main.login'))
             
             # Check 2FA if enabled
@@ -188,7 +204,7 @@ def login():
             return redirect(url_for('main.index'))
         
         flash('Invalid username or password', 'danger')
-        log_activity(f"Failed login attempt for: {username}", "WARNING")
+        log_activity(f"Failed login attempt for:  {username}", "WARNING")
     
     return render_template('login.html', title='Sign In')
 
@@ -199,7 +215,7 @@ def verify_2fa():
     from flask import session
     
     user_id = session.get('pending_2fa_user_id')
-    if not user_id: 
+    if not user_id:  
         return redirect(url_for('main.login'))
     
     user = User.query.get(user_id)
@@ -207,7 +223,7 @@ def verify_2fa():
         session.pop('pending_2fa_user_id', None)
         return redirect(url_for('main.login'))
     
-    if request.method == 'POST': 
+    if request.method == 'POST':  
         token = request.form.get('token', '').strip()
         
         if user.verify_2fa_token(token):
@@ -217,10 +233,10 @@ def verify_2fa():
             db.session.commit()
             
             log_user_activity('login_2fa', 'User logged in with 2FA')
-            flash('Successfully logged in!', 'success')
+            flash('Successfully logged in! ', 'success')
             return redirect(url_for('main.index'))
         else:
-            flash('Invalid verification code. Please try again.', 'danger')
+            flash('Invalid verification code.  Please try again.', 'danger')
     
     return render_template('verify_2fa.html', title='Two-Factor Authentication')
 
@@ -288,7 +304,7 @@ def register():
         db.session.commit()
         
         log_activity(f"New user registered: {username}", "SUCCESS")
-        flash('Registration successful! Please login.', 'success')
+        flash('Registration successful!  Please login.', 'success')
         return redirect(url_for('main.login'))
     
     return render_template('register.html', title='Register')
@@ -340,7 +356,7 @@ def index():
     
     return render_template('dashboard.html', 
                           title='Dashboard', 
-                          campaigns=all_campaigns,  # For the counters (e.g. campaigns.count())
+                          campaigns=all_campaigns,  # For the counters (e.g.  campaigns. count())
                           recent_campaigns=recent_campaigns, # For the table loop
                           stats=stats,
                           notifications=notifications)
@@ -365,10 +381,10 @@ def view_campaign(campaign_id):
     # Build query
     query = campaign.recipients
     
-    if status_filter: 
+    if status_filter:  
         query = query.filter_by(status=status_filter)
     
-    if search: 
+    if search:  
         query = query.filter(Recipient.email.ilike(f'%{search}%'))
     
     recipients = query.order_by(Recipient.id.asc()).paginate(
@@ -397,7 +413,7 @@ def view_campaign(campaign_id):
             'a_opened': a_opened,
             'b_opened': b_opened,
             'a_clicked': a_clicked,
-            'b_clicked': b_clicked,
+            'b_clicked':  b_clicked,
             'a_open_rate': round((a_opened / a_sent * 100), 1) if a_sent > 0 else 0,
             'b_open_rate': round((b_opened / b_sent * 100), 1) if b_sent > 0 else 0,
             'a_click_rate': round((a_clicked / a_sent * 100), 1) if a_sent > 0 else 0,
@@ -473,7 +489,7 @@ def new_campaign():
             # Handle scheduling
             scheduled_date = request.form.get('scheduled_date')
             scheduled_time = request.form.get('scheduled_time')
-            if scheduled_date and scheduled_time: 
+            if scheduled_date and scheduled_time:  
                 try:
                     campaign.scheduled_at = datetime.strptime(
                         f"{scheduled_date} {scheduled_time}", 
@@ -496,27 +512,27 @@ def new_campaign():
             if file and file.filename:
                 recipients_added, errors = parse_csv_file(file, campaign.id)
                 if errors:
-                    for error in errors[:5]: 
+                    for error in errors[:5]:  
                         flash(error, 'warning')
-                flash(f'Loaded {recipients_added} recipients.', 'info')
+                flash(f'Loaded {recipients_added} recipients. ', 'info')
                 campaign.total_recipients = recipients_added
             
             # Handle tags
             tag_ids = request.form.getlist('tags')
-            for tag_id in tag_ids: 
+            for tag_id in tag_ids:  
                 tag = Tag.query.get(tag_id)
                 if tag:
                     campaign.tags.append(tag)
             
             db.session.commit()
             
-            log_user_activity('campaign_created', f'Created campaign: {campaign.name}', 'campaign', campaign.id)
+            log_user_activity('campaign_created', f'Created campaign:  {campaign.name}', 'campaign', campaign.id)
             log_activity(f"Campaign '{campaign.name}' created with {campaign.total_recipients} recipients", "SUCCESS")
             
             flash('Campaign created successfully!', 'success')
             return redirect(url_for('main.view_campaign', campaign_id=campaign.id))
         
-        except Exception as e: 
+        except Exception as e:  
             db.session.rollback()
             current_app.logger.error(f"Error creating campaign: {e}")
             log_activity(f"Error creating campaign: {str(e)}", "ERROR")
@@ -577,7 +593,7 @@ def edit_campaign(campaign_id):
             # Handle scheduling
             scheduled_date = request.form.get('scheduled_date')
             scheduled_time = request.form.get('scheduled_time')
-            if scheduled_date and scheduled_time:
+            if scheduled_date and scheduled_time: 
                 campaign.scheduled_at = datetime.strptime(
                     f"{scheduled_date} {scheduled_time}",
                     "%Y-%m-%d %H:%M"
@@ -596,12 +612,12 @@ def edit_campaign(campaign_id):
             flash('Campaign updated successfully!', 'success')
             return redirect(url_for('main.view_campaign', campaign_id=campaign.id))
         
-        except Exception as e: 
+        except Exception as e:  
             db.session.rollback()
             flash(f"Error updating campaign: {str(e)}", "danger")
     
     return render_template('edit_campaign.html',
-                          title=f'Edit: {campaign.name}',
+                          title=f'Edit:  {campaign.name}',
                           campaign=campaign,
                           smtp_profiles=smtp_profiles,
                           templates=templates)
@@ -647,9 +663,9 @@ def duplicate_campaign(campaign_id):
         flash('Campaign duplicated successfully!', 'success')
         return redirect(url_for('main.edit_campaign', campaign_id=new_campaign.id))
     
-    except Exception as e: 
+    except Exception as e:  
         db.session.rollback()
-        flash(f"Error duplicating campaign: {str(e)}", "danger")
+        flash(f"Error duplicating campaign:  {str(e)}", "danger")
         return redirect(url_for('main.view_campaign', campaign_id=campaign.id))
 
 
@@ -665,7 +681,7 @@ def add_recipient_manual(campaign_id):
     email = request.form.get('email', '').strip().lower()
     
     if not email:
-        return jsonify({'success': False, 'message': 'Email required'})
+        return jsonify({'success': False, 'message':  'Email required'})
     
     if not is_valid_email(email):
         return jsonify({'success': False, 'message': 'Invalid email format'})
@@ -709,7 +725,7 @@ def campaign_control(campaign_id, action):
             queued_count = campaign.recipients.filter_by(status='Queued').count()
             
             if queued_count == 0:
-                flash('No queued recipients to send to.', 'warning')
+                flash('No queued recipients to send to. ', 'warning')
                 return redirect(url_for('main.view_campaign', campaign_id=campaign.id))
             
             if not campaign.smtp_profile and not campaign.smtp_rotation_enabled:
@@ -720,19 +736,18 @@ def campaign_control(campaign_id, action):
             if campaign.smtp_profile:
                 smtp_config = campaign.smtp_profile.to_dict()
                 if not smtp_config.get('password'):
-                    flash('SMTP password not configured. Please update your SMTP profile.', 'danger')
+                    flash('SMTP password not configured.  Please update your SMTP profile.', 'danger')
                     return redirect(url_for('main.view_campaign', campaign_id=campaign.id))
             
             campaign.status = 'Sending'
             campaign.started_at = datetime.utcnow()
             db.session.commit()
             
-            # Start sending task
-            from app.tasks import send_campaign_task
-            send_campaign_task.delay(campaign_id)
+            # Start sending task using helper function to avoid import issues
+            trigger_celery_task('send_campaign', campaign_id)
             
             log_user_activity('campaign_started', f'Started campaign: {campaign.name}', 'campaign', campaign.id)
-            log_activity(f"Started campaign: {campaign.name}", "SUCCESS")
+            log_activity(f"Started campaign:  {campaign.name}", "SUCCESS")
             
             # Emit WebSocket event
             emit_campaign_update(campaign_id, {'status': 'Sending', 'action': 'started'})
@@ -751,7 +766,7 @@ def campaign_control(campaign_id, action):
             log_activity(f"Paused campaign: {campaign.name}", "WARNING")
             emit_campaign_update(campaign_id, {'status': 'Paused', 'action': 'paused'})
             
-            flash('Campaign paused.', 'warning')
+            flash('Campaign paused. ', 'warning')
         
         elif action == 'resume':
             if campaign.status != 'Paused':
@@ -761,16 +776,15 @@ def campaign_control(campaign_id, action):
             campaign.status = 'Sending'
             db.session.commit()
             
-            # Resume sending task
-            from app.tasks import send_campaign_task
-            send_campaign_task.delay(campaign_id)
+            # Resume sending task using helper function
+            trigger_celery_task('send_campaign', campaign_id)
             
             log_activity(f"Resumed campaign: {campaign.name}", "SUCCESS")
             emit_campaign_update(campaign_id, {'status': 'Sending', 'action': 'resumed'})
             
-            flash('Campaign resumed.', 'success')
+            flash('Campaign resumed. ', 'success')
         
-        elif action == 'stop': 
+        elif action == 'stop':  
             if campaign.status not in ['Sending', 'Paused']:
                 flash('Campaign is not active.', 'warning')
                 return redirect(url_for('main.view_campaign', campaign_id=campaign.id))
@@ -780,8 +794,8 @@ def campaign_control(campaign_id, action):
             db.session.commit()
             
             log_user_activity('campaign_stopped', f'Stopped campaign: {campaign.name}', 'campaign', campaign.id)
-            log_activity(f"Stopped campaign: {campaign.name}", "ERROR")
-            emit_campaign_update(campaign_id, {'status': 'Stopped', 'action': 'stopped'})
+            log_activity(f"Stopped campaign:  {campaign.name}", "ERROR")
+            emit_campaign_update(campaign_id, {'status':  'Stopped', 'action': 'stopped'})
             
             flash('Campaign stopped.', 'danger')
         
@@ -798,10 +812,11 @@ def campaign_control(campaign_id, action):
             log_activity(f"Queued {len(failed)} failed recipients for retry.", "INFO")
             flash(f'Queued {len(failed)} failed recipients for retry.', 'info')
     
-    except Exception as e: 
+    except Exception as e:  
         db.session.rollback()
+        current_app.logger.error(f"Campaign control error ({action}): {str(e)}")
         log_activity(f"Campaign control error ({action}): {str(e)}", "ERROR")
-        flash(f"Error: {str(e)}", "danger")
+        flash(f"Error:  {str(e)}", "danger")
     
     return redirect(url_for('main.view_campaign', campaign_id=campaign.id))
 
@@ -831,16 +846,16 @@ def validate_list(campaign_id):
                 valid_count += 1
             else:
                 r.status = 'Invalid'
-                r.status_message = f"MX Check: {mx_status}"
+                r.status_message = f"MX Check:  {mx_status}"
                 invalid_count += 1
-        except Exception: 
+        except Exception:  
             r.status = 'Invalid'
             r.status_message = "Invalid email format"
             invalid_count += 1
     
     db.session.commit()
     
-    log_activity(f"Validated {valid_count + invalid_count} recipients. {valid_count} valid, {invalid_count} invalid.", "INFO")
+    log_activity(f"Validated {valid_count + invalid_count} recipients.  {valid_count} valid, {invalid_count} invalid.", "INFO")
     flash(f"Validated {valid_count + invalid_count} emails. {valid_count} valid, {invalid_count} invalid.", "info")
     
     return redirect(url_for('main.view_campaign', campaign_id=campaign.id))
@@ -866,7 +881,7 @@ def clear_recipient_list(campaign_id):
         flash("Recipient list cleared.", "success")
     except Exception as e:
         db.session.rollback()
-        flash(f"Error: {e}", "danger")
+        flash(f"Error:  {e}", "danger")
     
     return redirect(url_for('main.view_campaign', campaign_id=campaign.id))
 
@@ -929,7 +944,7 @@ def delete_campaign(campaign_id):
         return redirect(url_for('main.index'))
     
     if campaign.status == 'Sending':
-        flash("Cannot delete a campaign that is currently sending. Stop it first.", "danger")
+        flash("Cannot delete a campaign that is currently sending.  Stop it first.", "danger")
         return redirect(url_for('main.view_campaign', campaign_id=campaign.id))
     
     try:
@@ -1002,9 +1017,9 @@ def smtp_profiles():
             
             log_user_activity('smtp_profile_saved', f'SMTP Profile saved: {profile.profile_name}', 'smtp_server', profile.id)
             log_activity(f"SMTP Profile saved: {profile.profile_name}", "SUCCESS")
-            flash('SMTP Profile Saved!', 'success')
+            flash('SMTP Profile Saved! ', 'success')
         
-        except Exception as e: 
+        except Exception as e:  
             db.session.rollback()
             log_activity(f"Error saving SMTP profile: {e}", "ERROR")
             flash(f"Error saving profile: {str(e)}", "danger")
@@ -1021,12 +1036,12 @@ def test_smtp_connection():
     """Test SMTP connection."""
     try:
         data = request.get_json()
-        if not data:
-            return jsonify({'success': False, 'message': 'No data provided'}), 400
+        if not data: 
+            return jsonify({'success':  False, 'message': 'No data provided'}), 400
         
         profile_id = data.get('profile_id')
         if not profile_id:
-            return jsonify({'success': False, 'message': 'Profile ID required'}), 400
+            return jsonify({'success': False, 'message':  'Profile ID required'}), 400
         
         profile = SMTPServer.query.get(profile_id)
         if not profile:
@@ -1051,10 +1066,10 @@ def test_smtp_connection():
             log_activity(f"SMTP Test successful for {profile.profile_name}", "SUCCESS")
             return jsonify({'success': True, 'message': f'Connection successful!'})
         else:
-            log_activity(f"SMTP Test failed for {profile.profile_name}: {msg}", "ERROR")
-            return jsonify({'success': False, 'message': f'Failed: {msg}'})
+            log_activity(f"SMTP Test failed for {profile.profile_name}:  {msg}", "ERROR")
+            return jsonify({'success': False, 'message': f'Failed:  {msg}'})
     
-    except Exception as e: 
+    except Exception as e:  
         log_activity(f"SMTP Test error: {str(e)}", "ERROR")
         return jsonify({'success': False, 'message': f'Error: {str(e)}'}), 500
 
@@ -1072,7 +1087,7 @@ def delete_smtp_profile(profile_id):
     # Check if profile is in use
     campaigns_using = Campaign.query.filter_by(smtp_profile_id=profile_id).count()
     if campaigns_using > 0:
-        flash(f'Cannot delete: {campaigns_using} campaigns are using this profile.', 'danger')
+        flash(f'Cannot delete:  {campaigns_using} campaigns are using this profile.', 'danger')
         return redirect(url_for('main.smtp_profiles'))
     
     try:
@@ -1084,7 +1099,7 @@ def delete_smtp_profile(profile_id):
         flash('Profile deleted.', 'success')
     except Exception as e:
         db.session.rollback()
-        flash(f"Error: {e}", "danger")
+        flash(f"Error:  {e}", "danger")
     
     return redirect(url_for('main.smtp_profiles'))
 
@@ -1110,7 +1125,7 @@ def suppression_list():
             db.session.add(suppression)
             db.session.commit()
             
-            log_activity(f"Suppressed: {email}", "WARNING")
+            log_activity(f"Suppressed:  {email}", "WARNING")
             flash(f'{email} added to suppression list.', 'success')
         else:
             flash(f'{email} is already suppressed.', 'warning')
@@ -1146,7 +1161,7 @@ def delete_suppressed_email(suppressed_id):
         db.session.delete(item)
         db.session.commit()
         
-        log_activity(f"Removed from suppression: {email}", "INFO")
+        log_activity(f"Removed from suppression:  {email}", "INFO")
         flash('Removed from suppression list.', 'success')
     except Exception as e:
         db.session.rollback()
@@ -1162,7 +1177,7 @@ def import_suppression_list():
     file = request.files.get('file')
     
     if not file or not file.filename:
-        flash('No file selected.', 'danger')
+        flash('No file selected. ', 'danger')
         return redirect(url_for('main.suppression_list'))
     
     try:
@@ -1172,8 +1187,8 @@ def import_suppression_list():
         count = 0
         skipped = 0
         
-        for row in csv_reader: 
-            if row and row[0]: 
+        for row in csv_reader:  
+            if row and row[0]:  
                 email = row[0].strip().lower()
                 
                 if is_valid_email(email) and not Suppression.query.filter_by(email=email).first():
@@ -1192,11 +1207,11 @@ def import_suppression_list():
         db.session.commit()
         
         log_activity(f"Imported {count} emails to suppression list", "SUCCESS")
-        flash(f'Imported {count} emails. Skipped {skipped}.', 'success')
+        flash(f'Imported {count} emails.  Skipped {skipped}. ', 'success')
     
-    except Exception as e: 
+    except Exception as e:  
         db.session.rollback()
-        flash(f'Error importing: {e}', 'danger')
+        flash(f'Error importing:  {e}', 'danger')
     
     return redirect(url_for('main.suppression_list'))
 
@@ -1215,7 +1230,7 @@ def export_suppression_list():
         data.seek(0)
         data.truncate(0)
         
-        for item in items: 
+        for item in items:  
             w.writerow([
                 item.email,
                 item.reason or '',
@@ -1239,7 +1254,7 @@ def general_settings():
     """Manage global settings."""
     settings = get_or_create_global_settings()
     
-    if request.method == 'POST': 
+    if request.method == 'POST':  
         try:
             settings.burner_domain = request.form.get('burner_domain', '')
             settings.lure_path = request.form.get('lure_path', '')
@@ -1276,9 +1291,9 @@ def general_settings():
             log_activity("Global settings updated.", "SUCCESS")
             flash("Settings updated successfully.", "success")
         
-        except Exception as e: 
+        except Exception as e:  
             db.session.rollback()
-            flash(f"Error: {e}", "danger")
+            flash(f"Error:  {e}", "danger")
         
         return redirect(url_for('main.general_settings'))
     
@@ -1303,14 +1318,14 @@ def deliverability_tools():
             results = {
                 'type': 'auth',
                 'target': target,
-                'auth': auth_results
+                'auth':  auth_results
             }
         elif form.check_blacklist.data:
             blacklist_result = helper.check_blacklist(target)
             results = {
                 'type': 'blacklist',
-                'target': target,
-                'blacklist': blacklist_result
+                'target':  target,
+                'blacklist':  blacklist_result
             }
     
     return render_template('deliverability.html',
@@ -1334,7 +1349,7 @@ def spam_check():
         if check_type == 'ai':
             ai_handler = AIHandler()
             success, result = ai_handler.analyze_for_spam(subject, body)
-            return jsonify({'success': success, 'result': result})
+            return jsonify({'success': success, 'result':  result})
         else:
             result = helper.basic_spam_check(subject, body)
             return jsonify({'success': True, 'result': result})
@@ -1387,14 +1402,14 @@ def ai_rewrite():
         data = request.get_json()
         content = data.get('content')
         
-        if not content: 
+        if not content:  
             return jsonify({'success': False, 'result': 'No content provided'})
         
         ai_handler = AIHandler()
         success, result = ai_handler.rewrite_content(content)
         
-        return jsonify({'success': success, 'result': result})
-    except Exception as e:
+        return jsonify({'success':  success, 'result': result})
+    except Exception as e: 
         return jsonify({'success': False, 'result': str(e)})
 
 
@@ -1407,7 +1422,7 @@ def ai_subject():
         content = data.get('content')
         
         if not content: 
-            return jsonify({'success': False, 'result': 'No content provided'})
+            return jsonify({'success':  False, 'result': 'No content provided'})
         
         ai_handler = AIHandler()
         success, result = ai_handler.generate_subjects(content)
@@ -1429,9 +1444,9 @@ def css_inline():
             import css_inline
             inliner = css_inline.CSSInliner()
             result = inliner.inline(content)
-            return jsonify({'success': True, 'result': result})
+            return jsonify({'success': True, 'result':  result})
         except ImportError:
-            return jsonify({'success': False, 'result': 'css_inline library not installed'})
+            return jsonify({'success': False, 'result':  'css_inline library not installed'})
     except Exception as e:
         return jsonify({'success': False, 'result': str(e)})
 
@@ -1441,195 +1456,35 @@ def css_inline():
 @bp.route('/api/logs')
 @login_required
 def api_get_logs():
-    """Get recent activity logs."""
-    logs = get_logs() # Calling without arguments
-    
-    # Slice the result here instead of in the helper function
-    recent_logs = logs[:10]
-    
-    # Format for JSON
-    log_list = []
-    for log in recent_logs:
-        log_list.append({
-            'timestamp': log.timestamp.strftime('%H:%M:%S'),
-            'level': log.level,
-            'message': log.message
-        })
-        
-    return jsonify(log_list)
-
-
-# ==================== CAMPAIGN STATUS API ====================
-
-@bp.route('/api/campaign/<int:campaign_id>/status')
-@login_required
-def api_campaign_status(campaign_id):
-    """Get live status of a campaign."""
-    campaign = Campaign.query.get_or_404(campaign_id)
-    
-    if campaign.user_id != current_user.id:
-        return jsonify({'error': 'Unauthorized'}), 403
-    
-    total = campaign.total_recipients
-    sent = campaign.recipients.filter_by(status='Sent').count()
-    failed = campaign.recipients.filter_by(status='Failed').count()
-    
-    return jsonify({
-        'status': campaign.status,
-        'sent': sent,
-        'failed': failed,
-        'total': total,
-        'progress': round((sent / total * 100) if total > 0 else 0)
-    })
-
-
-# ==================== ANALYTICS ====================
-
-@bp.route('/analytics')
-@login_required
-def analytics_dashboard():
-    """Analytics dashboard."""
-    days = request.args.get('days', 30, type=int)
-    end_date = datetime.utcnow().date()
-    start_date = end_date - timedelta(days=days)
-    
-    # 1. Timeline Data (Daily Stats)
-    daily_stats = db.session.query(
-        DailyStats.date,
-        db.func.sum(DailyStats.emails_sent).label('sent'),
-        db.func.sum(DailyStats.unique_opens).label('opens'),
-        db.func.sum(DailyStats.unique_clicks).label('clicks')
-    ).filter(
-        DailyStats.user_id == current_user.id,
-        DailyStats.date >= start_date
-    ).group_by(DailyStats.date).order_by(DailyStats.date).all()
-    
-    # Convert query results to lists
-    daily_labels_list = [stat.date.strftime('%Y-%m-%d') for stat in daily_stats]
-    daily_counts_list = [stat.sent or 0 for stat in daily_stats]
-    
-    # Safe dictionary keys (Avoiding 'values' to prevent Jinja2 collisions)
-    daily_data = {
-        'chart_labels': daily_labels_list,
-        'chart_data': daily_counts_list
-    }
-    
-    # 2. Hourly Data
-    hourly_stats = db.session.query(
-        HourlyStats.hour_of_day,
-        db.func.sum(HourlyStats.total_opens).label('opens')
-    ).filter_by(user_id=current_user.id).group_by(HourlyStats.hour_of_day).all()
-    
-    hourly_labels_list = [f"{i}:00" for i in range(24)]
-    hourly_counts_list = [0] * 24
-    
-    for stat in hourly_stats:
-        if 0 <= stat.hour_of_day < 24:
-            hourly_counts_list[stat.hour_of_day] = stat.opens or 0
-            
-    hourly_data = {
-        'chart_labels': hourly_labels_list,
-        'chart_data': hourly_counts_list
-    }
-    
-    # 3. Overall Summary
-    total_sent = db.session.query(func.count(Recipient.id)).join(Campaign).filter(
-        Campaign.user_id == current_user.id, Recipient.status == 'Sent'
-    ).scalar() or 0
-    
-    total_failed = db.session.query(func.count(Recipient.id)).join(Campaign).filter(
-        Campaign.user_id == current_user.id, Recipient.status == 'Failed'
-    ).scalar() or 0
-    
-    total_opens = db.session.query(func.count(Recipient.id)).join(Campaign).filter(
-        Campaign.user_id == current_user.id, Recipient.opened_at != None
-    ).scalar() or 0
-    
-    total_clicks = db.session.query(func.count(Recipient.id)).join(Campaign).filter(
-        Campaign.user_id == current_user.id, Recipient.clicked_at != None
-    ).scalar() or 0
-    
-    open_rate = round((total_opens / total_sent * 100), 1) if total_sent > 0 else 0
-    click_rate = round((total_clicks / total_sent * 100), 1) if total_sent > 0 else 0
-    
-    summary = {
-        'total_sent': total_sent,
-        'total_failed': total_failed,
-        'total_opens': total_opens,
-        'total_clicks': total_clicks,
-        'avg_open_rate': open_rate,
-        'avg_click_rate': click_rate
-    }
-    
-    return render_template('analytics.html', 
-                          title='Analytics',
-                          summary=summary,
-                          daily_data=daily_data,
-                          hourly_data=hourly_data,
-                          days=days)
-
-
-@bp.route('/settings/suppression/bulk_add', methods=['POST'])
-@login_required
-def bulk_add_suppression():
-    """Bulk add emails to suppression list from text input."""
-    emails_text = request.form.get('emails', '')
-    reason = request.form.get('reason', 'Manual')
-    
-    if not emails_text.strip():
-        flash('No emails provided.', 'warning')
-        return redirect(url_for('main.suppression_list'))
-    
-    emails_text = emails_text.replace(',', '\n')
-    emails = [e.strip().lower() for e in emails_text.split('\n') if e.strip()]
-    
-    count = 0
-    duplicates = 0
-    invalid = 0
-    
-    email_regex = re.compile(r'^[^\s@]+@[^\s@]+\.[^\s@]+$')
-    
-    for email in emails:
-        if not email_regex.match(email):
-            invalid += 1
-            continue
-            
-        if Suppression.query.filter_by(email=email).first():
-            duplicates += 1
-            continue
-        
-        suppression = Suppression(email=email, reason=reason, user_id=current_user.id)
-        db.session.add(suppression)
-        count += 1
-    
+    """Get recent activity logs - live from database."""
     try:
-        db.session.commit()
-        flash(f'Added {count} emails to suppression list. {duplicates} duplicates skipped. {invalid} invalid.', 'success')
-        log_activity(f"Bulk added {count} emails to suppression list", "SUCCESS")
-    except Exception as e: 
-        db.session.rollback()
-        flash(f'Error adding emails: {str(e)}', 'danger')
-    
-    return redirect(url_for('main.suppression_list'))
+        # Query ActivityLog directly for live logs
+        logs = ActivityLog.query.filter_by(
+            user_id=current_user.id
+        ).order_by(ActivityLog.created_at.desc()).limit(20).all()
+        
+        log_list = []
+        for log in logs:
+            log_list.append({
+                'timestamp': log.created_at.strftime('%H:%M:%S') if log.created_at else '',
+                'level': log.action.upper() if log.action else 'INFO',
+                'message': log.description or log.action or ''
+            })
+        
+        # If no user-specific logs, try the global logs from utils
+        if not log_list: 
+            global_logs = get_logs()
+            recent_logs = global_logs[:20] if global_logs else []
+            
+            for log in recent_logs:
+                if hasattr(log, 'timestamp') and hasattr(log, 'message'):
+                    log_list.append({
+                        'timestamp': log.timestamp.strftime('%H:%M:%S'),
+                        'level': log.levelname if hasattr(log, 'levelname') else 'INFO',
+                        'message': log.message
+                    })
 
-
-@bp.route('/settings/suppression/bulk_delete', methods=['POST'])
-@login_required
-def bulk_delete_suppression():
-    """Bulk delete emails from suppression list."""
-    ids = request.form.getlist('ids')
-    
-    if not ids: 
-        flash('No emails selected.', 'warning')
-        return redirect(url_for('main.suppression_list'))
-    
-    try:
-        count = Suppression.query.filter(Suppression.id.in_(ids)).delete(synchronize_session=False)
-        db.session.commit()
-        flash(f'Removed {count} emails from suppression list.', 'success')
-        log_activity(f"Bulk deleted {count} emails from suppression list", "WARNING")
-    except Exception as e: 
-        db.session.rollback()
-        flash(f'Error deleting emails: {str(e)}', 'danger')
-    
-    return redirect(url_for('main.suppression_list'))
+        return jsonify({'logs': log_list})
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
