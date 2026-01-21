@@ -51,15 +51,23 @@ PROXY_PASS = os.environ.get('SMTP_PROXY_PASS')
 if PROXY_HOST:
     # --- FIX 1: RESTORE ORIGINAL SOCKET FOR PYSOCKS ---
     # PySocks needs the real, OS-level socket to function without recursion loops
-    # when running under Eventlet. We grab it from eventlet.patcher if available.
+    # or AttributeErrors when running under Eventlet.
     try:
+        # If eventlet patched socket, we can retrieve the original from eventlet.patcher
         from eventlet.patcher import original
         real_socket = original('socket')
-    except ImportError:
-        real_socket = socket
+    except (ImportError, AttributeError):
+        # Fallback if eventlet isn't actually active or structure changed
+        import socket as real_socket
 
-    # Tell PySocks to use the real socket class, not the GreenSocket
+    # Force PySocks to use the REAL socket class, not the GreenSocket
     socks.socket = real_socket.socket
+    
+    # Ensure PySocks can see standard constants (SOCK_STREAM, etc.)
+    # even if it tries to look them up on the instance
+    if not hasattr(socks.socket, 'SOCK_STREAM'):
+        socks.socket.SOCK_STREAM = real_socket.SOCK_STREAM
+        socks.socket.SOCK_DGRAM = real_socket.SOCK_DGRAM
     
     # --- FIX 2: IPv4 FORCE HACK (Still needed for some proxies) ---
     # We patch the *original* getaddrinfo that PySocks will use internally
@@ -179,12 +187,12 @@ def create_app(config_name=None):
     csrf.init_app(app)
     cache.init_app(app)
     
-    # Configure Limiter - Use memory if no Redis to prevent startup warnings
+    # FIX for TypeError: Limiter.init_app() got an unexpected keyword argument 'storage_uri'
+    # Flask-Limiter 3.x+ requires configuration via app.config keys
     limiter_storage = "memory://"
     if os.environ.get('REDIS_URL'):
         limiter_storage = os.environ.get('REDIS_URL')
     
-    # Flask-Limiter 3.x+ configuration style
     app.config['RATELIMIT_STORAGE_URI'] = limiter_storage
     limiter.init_app(app)
     
