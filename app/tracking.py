@@ -1,71 +1,111 @@
-from flask import Blueprint, current_app, make_response, redirect, request, flash, url_for
+from flask import Blueprint, current_app, make_response, redirect, request, flash, url_for, render_template
 from app.models import Recipient, Suppression
 from app import db
 import base64
+from itsdangerous import URLSafeTimedSerializer as Serializer
 from datetime import datetime
 
 bp = Blueprint('tracking', __name__)
 
-
-@bp.route('/t/o/<int:campaign_id>/<int:recipient_id>')
-def track_open(campaign_id, recipient_id):
+@bp.route('/t/o/<token>')
+def track_open(token):
     try:
+        s = Serializer(current_app.config['SECRET_KEY'])
+        try:
+            data = s.loads(token, salt='track')
+        except:
+            return "Invalid token", 400
+
+        recipient_id = data.get('rid')
         recipient = Recipient.query.get(recipient_id)
-        if recipient and recipient.campaign_id == campaign_id:
+        
+        if recipient:
             if not recipient.opened_at:
                 recipient.opened_at = datetime.utcnow()
-                if recipient.status not in ['Clicked', 'Unsubscribed']: 
+                recipient.open_count = (recipient.open_count or 0) + 1
+                if recipient.status not in ['Clicked', 'Unsubscribed', 'Bounced']: 
                     recipient.status = 'Opened'
                 db.session.commit()
     except Exception as e: 
-        current_app.logger.error(f"Error tracking open for recipient {recipient_id}:  {e}")
+        current_app.logger.error(f"Error tracking open: {e}")
 
+    # Return 1x1 transparent pixel
     pixel_data = base64.b64decode(b'R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==')
     response = make_response(pixel_data)
     response.headers['Content-Type'] = 'image/gif'
-    response. headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
     response.headers['Pragma'] = 'no-cache'
-    response. headers['Expires'] = '0'
+    response.headers['Expires'] = '0'
     return response
 
 
-@bp.route('/t/c/<int:campaign_id>/<int:recipient_id>')
-def track_click(campaign_id, recipient_id):
-    redirect_url = "#"
+@bp.route('/t/c/<token>')
+def track_click(token):
+    redirect_url = "https://google.com" # Default fallback
     try:
-        redirect_url_encoded = request.args.get('url')
-        if redirect_url_encoded: 
-            redirect_url = base64.urlsafe_b64decode(redirect_url_encoded.encode()).decode()
+        s = Serializer(current_app.config['SECRET_KEY'])
+        try:
+            data = s.loads(token, salt='track')
+        except:
+            return "Invalid token", 400
+
+        recipient_id = data.get('rid')
+        if 'url' in data:
+            try:
+                redirect_url = base64.urlsafe_b64decode(data['url'].encode()).decode()
+            except:
+                pass
 
         recipient = Recipient.query.get(recipient_id)
-        if recipient and recipient.campaign_id == campaign_id: 
-            if not recipient. clicked_at:
+        if recipient: 
+            if not recipient.clicked_at:
                 recipient.clicked_at = datetime.utcnow()
-                if recipient.status != 'Unsubscribed': 
-                    recipient.status = 'Clicked'
-                db. session.commit()
+            recipient.click_count = (recipient.click_count or 0) + 1
+            if recipient.status != 'Unsubscribed': 
+                recipient.status = 'Clicked'
+            db.session.commit()
     except Exception as e:
-        current_app.logger.error(f"Error tracking click for recipient {recipient_id}: {e}")
+        current_app.logger.error(f"Error tracking click: {e}")
 
     return redirect(redirect_url)
 
 
-@bp.route('/unsub/<int:campaign_id>/<int:recipient_id>')
-def unsubscribe(campaign_id, recipient_id):
+@bp.route('/unsub/<token>')
+def unsubscribe(token):
     try:
-        recipient = Recipient.query. get(recipient_id)
-        if recipient and recipient.campaign_id == campaign_id:
-            recipient. status = 'Unsubscribed'
+        s = Serializer(current_app.config['SECRET_KEY'])
+        try:
+            data = s.loads(token, salt='track')
+        except:
+            return "Invalid or expired unsubscribe link", 400
+
+        recipient_id = data.get('rid')
+        recipient = Recipient.query.get(recipient_id)
+        
+        if recipient:
+            recipient.status = 'Unsubscribed'
+            recipient.unsubscribed_at = datetime.utcnow()
             db.session.commit()
 
-            if not Suppression.query. filter_by(email=recipient.email).first():
-                suppression = Suppression(email=recipient.email, reason='Unsubscribed')
+            if not Suppression.query.filter_by(email=recipient.email).first():
+                suppression = Suppression(
+                    email=recipient.email, 
+                    reason='Unsubscribed by user',
+                    source='campaign_link'
+                )
                 db.session.add(suppression)
                 db.session.commit()
 
-            flash("You have been successfully unsubscribed.", "info")
+            # Render a nice success page
+            return render_template('message.html', 
+                message_title='Unsubscribed',
+                message_body=f'You have been successfully unsubscribed from this list ({recipient.email}).',
+                message_type='success',
+                is_unsubscribe_page=True
+            )
+            
     except Exception as e: 
-        current_app.logger.error(f"Error processing unsubscribe for {recipient_id}: {e}")
-        flash("An error occurred while processing your request.", "danger")
+        current_app.logger.error(f"Error processing unsubscribe: {e}")
+        return "An error occurred while processing your request.", 500
 
-    return redirect(url_for('main.index'))
+    return "Invalid request", 400
