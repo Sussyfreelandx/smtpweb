@@ -264,9 +264,18 @@ def make_celery(app):
         broker_url=redis_url,
         result_backend=redis_url,
         
-        # SSL Configuration for Render
-        broker_use_ssl={'ssl_cert_reqs': ssl.CERT_NONE},
-        redis_backend_use_ssl={'ssl_cert_reqs': ssl.CERT_NONE},
+        # SSL Configuration for Render - CRITICAL FIX
+        # Explicitly disable SSL verification for internal Redis
+        broker_use_ssl={
+            'ssl_cert_reqs': ssl.CERT_NONE,
+            'ssl_ca_certs': None,
+            'ssl_context': None
+        },
+        redis_backend_use_ssl={
+            'ssl_cert_reqs': ssl.CERT_NONE,
+            'ssl_ca_certs': None,
+            'ssl_context': None
+        },
         
         # Connection Stability
         broker_transport_options={
@@ -274,6 +283,7 @@ def make_celery(app):
             'socket_timeout': 30,
             'socket_connect_timeout': 30,
             'socket_keepalive': True,
+            'health_check_interval': 10,
         },
         broker_connection_retry_on_startup=True,
         
