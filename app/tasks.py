@@ -14,7 +14,8 @@ from app.utils import log_activity
 # Configure module-level logger
 logger = logging.getLogger(__name__)
 
-# NOTE: Proxy patching is handled centrally in wsgi.py / gunicorn.conf.py
+# NOTE: Proxy patching and Eventlet monkey patching are now handled centrally 
+# in gunicorn.conf.py or wsgi.py to prevent RecursionErrors.
 
 @shared_task(bind=True, max_retries=3)
 def send_campaign_task(self, campaign_id):
@@ -119,6 +120,7 @@ def send_campaign_task(self, campaign_id):
             db.session.commit()
             
             # --- 4. Send Batch ---
+            # 5 workers used for robust threaded sending
             results = current_handler.send_bulk_threaded(email_tasks, max_workers=5)
             
             # --- 5. Process Results ---
