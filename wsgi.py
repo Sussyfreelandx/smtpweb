@@ -6,18 +6,36 @@ from app import create_app, db, socketio, celery
 from app.models import User, Campaign, Recipient, SMTPServer, Suppression
 
 # ==========================================
-#   FALLBACK PROXY CONFIGURATION
+#   SMART PROXY CONFIGURATION
 # ==========================================
-# This runs if started via 'python wsgi.py' directly (local debug)
 PROXY_HOST = os.environ.get('SMTP_PROXY_HOST')
-if PROXY_HOST and not getattr(socket, '_paris_proxy_patched', False):
+
+# Only apply if not already applied by Gunicorn
+if PROXY_HOST and socket.socket is not socks.socksocket and not getattr(socket, '_paris_proxy_patched', False):
     PROXY_PORT = int(os.environ.get('SMTP_PROXY_PORT', 1080))
     PROXY_USER = os.environ.get('SMTP_PROXY_USER')
     PROXY_PASS = os.environ.get('SMTP_PROXY_PASS')
     
-    print(f"🔌 WSGI (Fallback): Applying Proxy Patch ({PROXY_HOST}:{PROXY_PORT})...")
+    print(f"🔌 WSGI (Fallback): Applying Smart Proxy Patch...")
     
-    # 1. Force IPv4 Resolution
+    # Define Smart Socket
+    class SmartSocket(socks.socksocket):
+        def connect(self, dest_pair):
+            host, port = dest_pair
+            # BYPASS PROXY for Redis (red-xxx), localhost, or internal IPs
+            if (isinstance(host, str) and (host.startswith("red-") or "render.internal" in host or host == "127.0.0.1")):
+                self.set_proxy(None)
+            else:
+                if PROXY_USER and PROXY_PASS:
+                    self.set_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT, True, PROXY_USER, PROXY_PASS)
+                else:
+                    self.set_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT)
+            return super(SmartSocket, self).connect(dest_pair)
+
+    # Apply Patch
+    socket.socket = SmartSocket
+    
+    # Force IPv4
     original_getaddrinfo = socket.getaddrinfo
     def patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
         if family == 0 or family == socket.AF_INET6:
@@ -28,14 +46,6 @@ if PROXY_HOST and not getattr(socket, '_paris_proxy_patched', False):
         return original_getaddrinfo(host, port, family, type, proto, flags)
     socket.getaddrinfo = patched_getaddrinfo
     
-    # 2. Configure Proxy
-    if PROXY_USER and PROXY_PASS: 
-        socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT, username=PROXY_USER, password=PROXY_PASS)
-    else:
-        socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT)
-    
-    # 3. Wrap SMTP
-    socks.wrap_module(smtplib)
     socket._paris_proxy_patched = True
 
 # ==========================================
@@ -54,5 +64,4 @@ def make_shell_context():
     }
 
 if __name__ == '__main__': 
-    # Debug mode uses threading by default, perfectly safe
     socketio.run(app, debug=False, host='0.0.0.0', port=5000)
