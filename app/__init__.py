@@ -1,11 +1,5 @@
-# ==========================================
-#   CRITICAL FIX: EVENTLET MONKEY PATCHING
-#   MUST BE THE VERY FIRST LINES OF CODE
-# ==========================================
-import eventlet
-eventlet.monkey_patch()
-
 import os
+import sys
 import logging
 import socket
 import socks  # pip install PySocks
@@ -25,15 +19,31 @@ from flask_limiter.util import get_remote_address
 from config import config
 
 # ==========================================
-#   CRITICAL:  SURGICAL PROXY CONFIGURATION
+#   CRITICAL: EVENTLET & PROXY SETUP
 # ==========================================
+
+# Detect if we are running as a Celery Worker
+IS_CELERY = 'celery' in sys.argv[0] or (len(sys.argv) > 1 and 'celery' in sys.argv[1])
+
+# 1. Eventlet Patching
+# - Gunicorn needs us to patch explicitly.
+# - Celery (-P eventlet) patches itself, so we SKIP it to prevent conflicts.
+if not IS_CELERY:
+    try:
+        import eventlet
+        eventlet.monkey_patch()
+    except ImportError:
+        pass
+
+# 2. Surgical Proxy Configuration
+# We only want to proxy SMTP (Emails), NOT Redis or Database.
 PROXY_HOST = os.environ.get('SMTP_PROXY_HOST')
 PROXY_PORT = int(os.environ.get('SMTP_PROXY_PORT', 1080))
 PROXY_USER = os.environ.get('SMTP_PROXY_USER')
 PROXY_PASS = os.environ.get('SMTP_PROXY_PASS')
 
 if PROXY_HOST:
-    # 1. Configure the Proxy Settings in the library
+    # Set the default proxy settings (used by socks.socksocket)
     if PROXY_USER and PROXY_PASS:
         socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT, username=PROXY_USER, password=PROXY_PASS)
         print(f"🔌 SMTP Proxy Configured: {PROXY_HOST}:{PROXY_PORT} (Auth: Yes)")
@@ -41,10 +51,9 @@ if PROXY_HOST:
         socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT)
         print(f"🔌 SMTP Proxy Configured: {PROXY_HOST}:{PROXY_PORT} (Auth: No)")
 
-    # 2. CRITICAL: APPLY PROXY ONLY TO SMTP
-    # We do NOT patch socket.socket globally, because that breaks Redis/Eventlet.
-    # We ONLY wrap the smtplib module. This forces emails to go through the proxy
-    # while Redis continues to use the standard direct connection.
+    # CRITICAL: ONLY patch smtplib. Do NOT patch the global socket module.
+    # This ensures Redis/DB connections go direct (fast/internal), 
+    # while Emails go through the Proxy (bypassing Render blocks).
     socks.wrap_module(smtplib)
 
 # ==========================================
@@ -223,11 +232,20 @@ def make_celery(app):
     """Create Celery instance with SSL support for Render."""
     from celery import Celery
     
-    # 1. Get the Redis URL
-    redis_url = os.environ.get('REDIS_URL', app.config.get('CELERY_BROKER_URL'))
+    # 1. Get the Redis URL - PRIORITIZE CLEAN CONFIG
+    # We use app.config first because config.py already cleaned the URL.
+    # We fallback to environ but MUST strip trailing slashes manually to be safe.
+    redis_url = app.config.get('CELERY_BROKER_URL')
+    if not redis_url:
+        redis_url = os.environ.get('REDIS_URL', '')
+    
+    # AGGRESSIVE CLEANING
+    redis_url = redis_url.strip()
+    while redis_url.endswith('/'):
+        redis_url = redis_url[:-1]
     
     # 2. CRITICAL FIX: If using SSL options, URL MUST be 'rediss://'
-    if redis_url and redis_url.startswith('redis://'):
+    if redis_url and redis_url.startswith('redis://') and os.environ.get('RENDER'):
         redis_url = redis_url.replace('redis://', 'rediss://', 1)
 
     celery_app = Celery(
