@@ -158,8 +158,8 @@ def send_campaign_task(self, campaign_id):
                 personalizer = PersonalizationEngine(campaign, recipient)
                 p_subject, p_body_html, p_body_plain = personalizer.personalize()
                 
+                # FIXED: Use the token-based route we just created in tracking.py
                 unsubscribe_token = recipient.get_tracking_token('unsubscribe')
-                # FIXED: Point to tracking.unsubscribe instead of main.unsubscribe
                 unsubscribe_url = url_for('tracking.unsubscribe', token=unsubscribe_token, _external=True)
                 
                 task = {
@@ -243,7 +243,7 @@ def send_campaign_task(self, campaign_id):
         if ctx:
             ctx.pop()
 
-# ... (Helper functions remain unchanged)
+# ... (Helper functions)
 def _fail_campaign(campaign, message):
     campaign.status = 'Failed'
     db.session.commit()
@@ -334,6 +334,7 @@ def send_single_email_task(self, recipient_id, campaign_id):
         engine = PersonalizationEngine(campaign, recipient)
         subj, body, plain = engine.personalize()
         
+        # FIXED: Use token-based route
         unsub = url_for('tracking.unsubscribe', token=recipient.get_tracking_token('unsubscribe'), _external=True)
         
         success, msg = handler.send_email_sync(
@@ -359,6 +360,7 @@ def send_single_email_task(self, recipient_id, campaign_id):
     finally:
         if ctx: ctx.pop()
 
+# ... (Rest of the shared_tasks remain the same)
 @shared_task
 def process_scheduled_campaigns():
     from flask import current_app
