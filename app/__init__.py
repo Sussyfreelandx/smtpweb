@@ -3,7 +3,7 @@ import os
 import socket
 
 # ==========================================
-#   CRITICAL:  ENVIRONMENT SETUP
+#   CRITICAL:   ENVIRONMENT SETUP
 # ==========================================
 
 # 1. Detect Celery
@@ -48,9 +48,9 @@ PROXY_PORT = int(os.environ.get('SMTP_PROXY_PORT', 1080))
 PROXY_USER = os.environ.get('SMTP_PROXY_USER')
 PROXY_PASS = os.environ.get('SMTP_PROXY_PASS')
 
-if PROXY_HOST: 
+if PROXY_HOST:  
     if PROXY_USER and PROXY_PASS:
-        socks.set_default_proxy(socks. SOCKS5, PROXY_HOST, PROXY_PORT, username=PROXY_USER, password=PROXY_PASS)
+        socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT, username=PROXY_USER, password=PROXY_PASS)
         print(f"🔌 SMTP Proxy Configured: {PROXY_HOST}:{PROXY_PORT} (Auth: Yes)")
     else:
         socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT)
@@ -80,7 +80,7 @@ celery = None  # Will be initialized only when needed
 def get_celery():
     """Get or create the Celery instance lazily."""
     global celery
-    if celery is None: 
+    if celery is None:  
         celery = make_celery(app)
     return celery
 
@@ -91,34 +91,44 @@ def get_celery():
 def get_clean_redis_url():
     """
     Get and clean the Redis URL for Render deployment.
-    Handles both internal (redis://) and external (rediss://) connections.
+    Determines if SSL is needed based on URL format.
+    
+    Internal Render Redis:  redis://red-xxxxx:6379 (NO SSL)
+    External Render Redis: rediss://...render.com:6379 (SSL)
     """
     redis_url = os.environ.get('REDIS_URL', '')
     
     if not redis_url:
-        return None
+        return None, False
     
     # Step 1: Strip whitespace and trailing slashes
     redis_url = redis_url.strip().rstrip('/')
     
-    # Step 2: Debug logging
-    print(f"DEBUG: Original REDIS_URL: {redis_url[: 50]}...")
+    # Step 2: Detect if this is an internal Render Redis URL
+    # Internal URLs:  redis://red-xxxxx:6379 (no .render.com domain)
+    # External URLs: rediss://....render.com:6379
+    is_internal = (
+        redis_url.startswith('redis://red-') and 
+        '.render.com' not in redis_url and
+        not redis_url.startswith('rediss://')
+    )
     
-    # Step 3: Detect if this is an internal Render Redis URL
-    # Internal URLs look like: redis://red-xxxxx: 6379
-    # External URLs look like: rediss://red-xxxxx. oregon-postgres.render.com:6379
-    is_internal = redis_url.startswith('redis://red-') and '. render.com' not in redis_url
+    # Step 3: Determine SSL requirement
+    # - Internal connections:  NO SSL
+    # - External connections or rediss:// URLs: YES SSL
+    use_ssl = not is_internal and (
+        redis_url.startswith('rediss://') or 
+        '.render.com' in redis_url
+    )
     
-    if is_internal:
-        # Internal connections on Render don't need SSL
-        print(f"DEBUG: Using internal Redis connection (no SSL)")
-        return redis_url
-    else:
-        # External connections need SSL (rediss://)
-        if redis_url.startswith('redis://') and os.environ.get('RENDER'):
-            redis_url = redis_url.replace('redis://', 'rediss://', 1)
-            print(f"DEBUG:  Converted to SSL: {redis_url[:50]}...")
-        return redis_url
+    print(f"DEBUG: Original REDIS_URL: {redis_url[:50]}...")
+    print(f"DEBUG: Internal connection: {is_internal}, SSL required: {use_ssl}")
+    
+    # Step 4: Convert URL scheme if needed for external connections
+    if use_ssl and redis_url.startswith('redis://'):
+        redis_url = redis_url.replace('redis://', 'rediss://', 1)
+    
+    return redis_url, use_ssl
 
 
 def create_app(config_name=None):
@@ -131,7 +141,7 @@ def create_app(config_name=None):
     
     if os.environ.get('RENDER'):
         app.config['SERVER_NAME'] = 'paris-sender-web.onrender.com'
-        app. config['PREFERRED_URL_SCHEME'] = 'https'
+        app.config['PREFERRED_URL_SCHEME'] = 'https'
 
     # Initialize extensions with app
     db.init_app(app)
@@ -145,7 +155,7 @@ def create_app(config_name=None):
     async_mode = 'eventlet' if not IS_CELERY else 'threading'
     
     # Get clean Redis URL for SocketIO
-    redis_url = get_clean_redis_url()
+    redis_url, _ = get_clean_redis_url()
     
     socketio.init_app(
         app,
@@ -154,11 +164,11 @@ def create_app(config_name=None):
         async_mode=async_mode
     )
     
-    os.makedirs(app.config. get('UPLOAD_FOLDER', 'uploads'), exist_ok=True)
-    os.makedirs(app.config. get('EMAIL_TEMPLATES_FOLDER', 'templates'), exist_ok=True)
+    os.makedirs(app.config.get('UPLOAD_FOLDER', 'uploads'), exist_ok=True)
+    os.makedirs(app.config.get('EMAIL_TEMPLATES_FOLDER', 'templates'), exist_ok=True)
     
     from app.main import bp as main_bp
-    app. register_blueprint(main_bp)
+    app.register_blueprint(main_bp)
     
     from app.api import bp as api_bp
     app.register_blueprint(api_bp, url_prefix='/api/v1')
@@ -180,7 +190,7 @@ def create_app(config_name=None):
                 integrations=[FlaskIntegration()],
                 traces_sample_rate=0.1
             )
-        except ImportError:
+        except ImportError: 
             pass
     
     register_cli_commands(app)
@@ -219,7 +229,7 @@ def register_error_handlers(app):
     
     @app.errorhandler(429)
     def ratelimit_error(error):
-        if request. path.startswith('/api/'):
+        if request.path.startswith('/api/'):
             return jsonify({'error':  'Too Many Requests', 'message':  'Rate limit exceeded'}), 429
         return render_template('errors/429.html'), 429
 
@@ -232,7 +242,7 @@ def setup_logging(app):
     file_handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'))
     file_handler.setLevel(logging.INFO)
     app.logger.addHandler(file_handler)
-    app.logger.setLevel(logging. INFO)
+    app.logger.setLevel(logging.INFO)
     app.logger.info('Paris Sender startup')
 
 
@@ -270,7 +280,7 @@ def register_context_processors(app):
         from datetime import datetime
         return {
             'now': datetime.utcnow(),
-            'app_name':  'Paris Sender',
+            'app_name': 'Paris Sender',
             'app_version': '9.0.0',
             'features': app.config.get('FEATURES', {})
         }
@@ -283,25 +293,15 @@ def make_celery(flask_app):
     """Create Celery instance with proper SSL handling for Render."""
     from celery import Celery
     
-    # Step 1: Get Redis URL from config or environment
-    redis_url = flask_app.config.get('CELERY_BROKER_URL')
-    if not redis_url: 
-        redis_url = os. environ.get('REDIS_URL', '')
+    # Use the centralized Redis URL helper
+    redis_url, use_ssl = get_clean_redis_url()
     
-    # Step 2: Clean the URL (remove trailing slashes)
-    redis_url = redis_url.strip().rstrip('/')
+    if not redis_url:
+        print("WARNING: No REDIS_URL configured for Celery!")
+        redis_url = 'redis://localhost:6379'
+        use_ssl = False
     
-    # Step 3: Detect connection type
-    # Internal Render Redis:  redis://red-xxxxx:6379 (no SSL needed)
-    # External Render Redis: rediss://red-xxxxx.xxx.render.com:6379 (SSL needed)
-    is_internal = redis_url.startswith('redis://red-') and '.render.com' not in redis_url
-    use_ssl = redis_url.startswith('rediss://') or (not is_internal and os.environ. get('RENDER'))
-    
-    # Step 4: Convert to SSL if external connection on Render
-    if use_ssl and redis_url.startswith('redis://'):
-        redis_url = redis_url.replace('redis://', 'rediss://', 1)
-    
-    print(f"DEBUG:  Celery connecting to {redis_url[: 50]}...  (SSL: {use_ssl})")
+    print(f"DEBUG:  Celery connecting to {redis_url[:50]}...  (SSL: {use_ssl})")
     
     celery_app = Celery(
         flask_app.import_name,
@@ -309,7 +309,7 @@ def make_celery(flask_app):
         broker=redis_url
     )
     
-    # Step 5: Build configuration based on connection type
+    # Build configuration
     celery_config = {
         'broker_url': redis_url,
         'result_backend': redis_url,
@@ -328,8 +328,8 @@ def make_celery(flask_app):
         'enable_utc': True
     }
     
-    # Step 6: Only add SSL config if using SSL connection
-    if use_ssl: 
+    # CRITICAL: Only add SSL config if actually using SSL (external connection)
+    if use_ssl:
         celery_config['broker_use_ssl'] = {'ssl_cert_reqs': ssl.CERT_NONE}
         celery_config['redis_backend_use_ssl'] = {'ssl_cert_reqs': ssl.CERT_NONE}
     
