@@ -1,6 +1,9 @@
+import sys
 import os
+import socket
 import logging
 import ssl
+from logging.handlers import RotatingFileHandler
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
@@ -14,7 +17,9 @@ from flask_limiter.util import get_remote_address
 from celery import Celery
 from config import config
 
-# Initialize extensions
+# ==========================================
+#   EXTENSIONS
+# ==========================================
 db = SQLAlchemy()
 migrate = Migrate()
 login = LoginManager()
@@ -25,27 +30,52 @@ socketio = SocketIO()
 cache = Cache()
 limiter = Limiter(key_func=get_remote_address)
 
-# Initialize Celery placeholder
+# Initialize global Celery object
+# This must exist at module level for 'celery -A wsgi.celery' to work
 celery = Celery(__name__)
 
-def get_redis_url():
-    """Helper to get clean Redis URL with SSL logic."""
+# ==========================================
+#   REDIS HELPER
+# ==========================================
+def get_clean_redis_url():
+    """
+    Get and clean the Redis URL for Render deployment.
+    Determines if SSL is needed based on URL format.
+    """
     redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
     
-    # Render External Redis Fix:
-    # If the URL is external (rediss:// or contains render.com) but starts with redis://,
-    # force it to rediss:// to satisfy SSL requirements.
-    if os.environ.get('RENDER'):
-        if redis_url.startswith('redis://') and ('render.com' in redis_url):
-             redis_url = redis_url.replace('redis://', 'rediss://', 1)
-             
-    return redis_url
+    if not redis_url:
+        return 'redis://localhost:6379/0', False
+    
+    # Strip whitespace
+    redis_url = redis_url.strip().rstrip('/')
+    
+    # Detect internal vs external Render Redis
+    is_internal = (
+        redis_url.startswith('redis://red-') and 
+        '.render.com' not in redis_url and
+        not redis_url.startswith('rediss://')
+    )
+    
+    # Determine SSL requirement
+    use_ssl = not is_internal and (
+        redis_url.startswith('rediss://') or 
+        '.render.com' in redis_url
+    )
+    
+    # Convert scheme if SSL is needed but scheme is redis://
+    if use_ssl and redis_url.startswith('redis://'):
+        redis_url = redis_url.replace('redis://', 'rediss://', 1)
+    
+    return redis_url, use_ssl
 
 def init_celery(app, celery):
     """Configure the global Celery object with app config."""
-    redis_url = get_redis_url()
+    redis_url, use_ssl = get_clean_redis_url()
     
-    # Update Celery configuration explicitly
+    print(f"DEBUG: Celery connecting to {redis_url[:30]}... SSL={use_ssl}")
+    
+    # Explicitly update configuration to prevent AMQP fallback
     celery.conf.update(
         broker_url=redis_url,
         result_backend=redis_url,
@@ -55,7 +85,6 @@ def init_celery(app, celery):
         result_serializer='json',
         timezone='UTC',
         enable_utc=True,
-        # Force broker settings to ensure it doesn't default to AMQP
         broker_transport_options={
             'visibility_timeout': 3600,
             'socket_timeout': 30,
@@ -64,8 +93,8 @@ def init_celery(app, celery):
         }
     )
     
-    # SSL Configuration for Celery (Render requirement for external Redis)
-    if redis_url.startswith('rediss://'):
+    # Apply SSL settings if needed
+    if use_ssl:
         ssl_opts = {'ssl_cert_reqs': ssl.CERT_NONE}
         celery.conf.update(
             broker_use_ssl=ssl_opts,
@@ -79,20 +108,21 @@ def init_celery(app, celery):
 
     celery.Task = ContextTask
 
+# ==========================================
+#   APP FACTORY
+# ==========================================
 def create_app(config_name=None):
-    """Application factory pattern."""
     if config_name is None:
         config_name = os.environ.get('FLASK_CONFIG', 'default')
     
     app = Flask(__name__)
     app.config.from_object(config[config_name])
     
-    # Render-specific configuration
     if os.environ.get('RENDER'):
         app.config['SERVER_NAME'] = 'paris-sender-web.onrender.com'
         app.config['PREFERRED_URL_SCHEME'] = 'https'
 
-    # Initialize extensions with app
+    # Initialize extensions
     db.init_app(app)
     migrate.init_app(app, db)
     login.init_app(app)
@@ -105,9 +135,11 @@ def create_app(config_name=None):
     init_celery(app, celery)
     
     # Configure SocketIO
-    async_mode = 'eventlet' 
-    redis_url = get_redis_url()
+    redis_url, use_ssl = get_clean_redis_url()
+    async_mode = 'eventlet'
     
+    # SocketIO needs 'redis://' scheme even with SSL options on some versions,
+    # but let's stick to standard behavior first.
     socketio.init_app(
         app,
         message_queue=redis_url,
@@ -115,11 +147,11 @@ def create_app(config_name=None):
         async_mode=async_mode
     )
     
-    # Create necessary folders
+    # Folders
     os.makedirs(app.config.get('UPLOAD_FOLDER', 'app/static/uploads'), exist_ok=True)
     os.makedirs(app.config.get('EMAIL_TEMPLATES_FOLDER', 'app/static/email_templates'), exist_ok=True)
     
-    # Register Blueprints
+    # Blueprints
     from app.main import bp as main_bp
     app.register_blueprint(main_bp)
     
@@ -129,19 +161,101 @@ def create_app(config_name=None):
     from app.webhooks import bp as webhooks_bp
     app.register_blueprint(webhooks_bp, url_prefix='/webhooks')
     
-    # Setup Logging
+    # Error Handlers
+    register_error_handlers(app)
+    
+    # Logging
     if not app.debug and not app.testing:
         setup_logging(app)
     
+    # CLI Commands
+    register_cli_commands(app)
+    register_context_processors(app)
+    
     return app
 
+def register_error_handlers(app):
+    from flask import render_template, jsonify, request
+    
+    @app.errorhandler(400)
+    def bad_request_error(error):
+        if request.path.startswith('/api/'):
+            return jsonify({'error': 'Bad Request', 'message': str(error)}), 400
+        return render_template('errors/400.html'), 400
+    
+    @app.errorhandler(403)
+    def forbidden_error(error):
+        if request.path.startswith('/api/'):
+            return jsonify({'error': 'Forbidden', 'message': str(error)}), 403
+        return render_template('errors/403.html'), 403
+    
+    @app.errorhandler(404)
+    def not_found_error(error):
+        if request.path.startswith('/api/'):
+            return jsonify({'error': 'Not Found', 'message': str(error)}), 404
+        return render_template('errors/404.html'), 404
+    
+    @app.errorhandler(500)
+    def internal_error(error):
+        db.session.rollback()
+        if request.path.startswith('/api/'):
+            return jsonify({'error': 'Internal Server Error', 'message': 'An unexpected error occurred'}), 500
+        return render_template('errors/500.html'), 500
+    
+    @app.errorhandler(429)
+    def ratelimit_error(error):
+        if request.path.startswith('/api/'):
+            return jsonify({'error': 'Too Many Requests', 'message': 'Rate limit exceeded'}), 429
+        return render_template('errors/429.html'), 429
+
 def setup_logging(app):
-    from logging.handlers import RotatingFileHandler
     if not os.path.exists('logs'):
         os.mkdir('logs')
+    
     file_handler = RotatingFileHandler('logs/paris_sender.log', maxBytes=10240000, backupCount=10)
     file_handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'))
     file_handler.setLevel(logging.INFO)
     app.logger.addHandler(file_handler)
     app.logger.setLevel(logging.INFO)
     app.logger.info('Paris Sender startup')
+
+def register_cli_commands(app):
+    @app.cli.command('init-db')
+    def init_db():
+        db.create_all()
+        print('Database initialized.')
+    
+    @app.cli.command('create-admin')
+    def create_admin():
+        from app.models import User
+        import click
+        username = click.prompt('Admin username')
+        email = click.prompt('Admin email')
+        password = click.prompt('Admin password', hide_input=True)
+        user = User(username=username, email=email)
+        user.set_password(password)
+        db.session.add(user)
+        db.session.commit()
+        print(f'Admin user {username} created.')
+    
+    @app.cli.command('cleanup-old-data')
+    def cleanup_old_data():
+        from app.models import Recipient
+        from datetime import datetime, timedelta
+        cutoff = datetime.utcnow() - timedelta(days=90)
+        old_recipients = Recipient.query.filter(Recipient.sent_at < cutoff).count()
+        print(f'Found {old_recipients} recipients older than 90 days.')
+
+def register_context_processors(app):
+    @app.context_processor
+    def inject_globals():
+        from datetime import datetime
+        return {
+            'now': datetime.utcnow(),
+            'app_name': 'Paris Sender',
+            'app_version': '9.0.0',
+            'features': app.config.get('FEATURES', {})
+        }
+
+# Initialize app immediately
+app = create_app()
