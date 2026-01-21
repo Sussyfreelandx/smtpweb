@@ -1,5 +1,6 @@
 import os
 import logging
+import ssl
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
@@ -12,7 +13,6 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from celery import Celery
 from config import config
-import ssl
 
 # Initialize extensions
 db = SQLAlchemy()
@@ -27,6 +27,57 @@ limiter = Limiter(key_func=get_remote_address)
 
 # Initialize Celery placeholder
 celery = Celery(__name__)
+
+def get_redis_url():
+    """Helper to get clean Redis URL with SSL logic."""
+    redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+    
+    # Render External Redis Fix:
+    # If the URL is external (rediss:// or contains render.com) but starts with redis://,
+    # force it to rediss:// to satisfy SSL requirements.
+    if os.environ.get('RENDER'):
+        if redis_url.startswith('redis://') and ('render.com' in redis_url):
+             redis_url = redis_url.replace('redis://', 'rediss://', 1)
+             
+    return redis_url
+
+def init_celery(app, celery):
+    """Configure the global Celery object with app config."""
+    redis_url = get_redis_url()
+    
+    # Update Celery configuration explicitly
+    celery.conf.update(
+        broker_url=redis_url,
+        result_backend=redis_url,
+        broker_connection_retry_on_startup=True,
+        task_serializer='json',
+        accept_content=['json'],
+        result_serializer='json',
+        timezone='UTC',
+        enable_utc=True,
+        # Force broker settings to ensure it doesn't default to AMQP
+        broker_transport_options={
+            'visibility_timeout': 3600,
+            'socket_timeout': 30,
+            'socket_connect_timeout': 30,
+            'socket_keepalive': True,
+        }
+    )
+    
+    # SSL Configuration for Celery (Render requirement for external Redis)
+    if redis_url.startswith('rediss://'):
+        ssl_opts = {'ssl_cert_reqs': ssl.CERT_NONE}
+        celery.conf.update(
+            broker_use_ssl=ssl_opts,
+            redis_backend_use_ssl=ssl_opts
+        )
+
+    class ContextTask(celery.Task):
+        def __call__(self, *args, **kwargs):
+            with app.app_context():
+                return self.run(*args, **kwargs)
+
+    celery.Task = ContextTask
 
 def create_app(config_name=None):
     """Application factory pattern."""
@@ -83,44 +134,6 @@ def create_app(config_name=None):
         setup_logging(app)
     
     return app
-
-def get_redis_url():
-    """Helper to get clean Redis URL with SSL logic."""
-    redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
-    if redis_url.startswith('redis://') and os.environ.get('RENDER'):
-        # Force SSL for external Render connections
-        redis_url = redis_url.replace('redis://', 'rediss://', 1)
-    return redis_url
-
-def init_celery(app, celery):
-    """Configure the global Celery object with app config."""
-    redis_url = get_redis_url()
-    
-    celery.conf.update(
-        broker_url=redis_url,
-        result_backend=redis_url,
-        broker_connection_retry_on_startup=True,
-        task_serializer='json',
-        accept_content=['json'],
-        result_serializer='json',
-        timezone='UTC',
-        enable_utc=True
-    )
-    
-    # SSL Configuration for Celery (Render requirement)
-    if redis_url.startswith('rediss://'):
-        ssl_opts = {'ssl_cert_reqs': ssl.CERT_NONE}
-        celery.conf.update(
-            broker_use_ssl=ssl_opts,
-            redis_backend_use_ssl=ssl_opts
-        )
-
-    class ContextTask(celery.Task):
-        def __call__(self, *args, **kwargs):
-            with app.app_context():
-                return self.run(*args, **kwargs)
-
-    celery.Task = ContextTask
 
 def setup_logging(app):
     from logging.handlers import RotatingFileHandler
