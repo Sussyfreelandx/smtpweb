@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from collections import deque
 
 # --- Eventlet Support ---
+# We check this to determine how to run concurrent tasks
 try:
     import eventlet
     from eventlet import GreenPool
@@ -23,70 +24,17 @@ except ImportError:
     EVENTLET_AVAILABLE = False
     from concurrent.futures import ThreadPoolExecutor
 
-# --- PySocks Support ---
-try:
-    import socks
-    SOCKS_AVAILABLE = True
-except ImportError:
-    SOCKS_AVAILABLE = False
-
 log = logging.getLogger(__name__)
 
 # --- GLOBAL PROXY CONFIGURATION ---
+# Note: The actual patching happens in app/__init__.py
+# We just read these values here to determine SSL context behavior
 PROXY_HOST = os.environ.get('SMTP_PROXY_HOST')
-PROXY_PORT = int(os.environ.get('SMTP_PROXY_PORT', 1080))
-PROXY_USER = os.environ.get('SMTP_PROXY_USER')
-PROXY_PASS = os.environ.get('SMTP_PROXY_PASS')
-
-# Singleton flag to prevent double-patching recursion
-_PROXY_PATCHED = False
-
-def apply_proxy_patch():
-    """
-    Safely apply the IPv4 and Proxy patches. 
-    Idempotent: calling this multiple times does nothing.
-    """
-    global _PROXY_PATCHED
-    if _PROXY_PATCHED:
-        return
-
-    if PROXY_HOST and SOCKS_AVAILABLE:
-        log.info(f"🔌 SMTP Proxy Active: Tunneling via {PROXY_HOST}:{PROXY_PORT}")
-        
-        # 1. IPv4 Force Hack (Fixes PySocks/Office365 crashes)
-        # We capture the *current* getaddrinfo, assuming it hasn't been patched by us yet.
-        original_getaddrinfo = socket.getaddrinfo
-
-        def patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
-            # Force IPv4 (AF_INET) if we are resolving a hostname
-            if family == 0 or family == socket.AF_INET6:
-                try:
-                    return original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
-                except socket.gaierror:
-                    # If IPv4 fails, fall back to original behavior
-                    pass
-            return original_getaddrinfo(host, port, family, type, proto, flags)
-
-        socket.getaddrinfo = patched_getaddrinfo
-        
-        # 2. Configure the Default Proxy
-        if PROXY_USER and PROXY_PASS:
-            socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT, username=PROXY_USER, password=PROXY_PASS)
-        else:
-            socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT)
-        
-        # 3. Wrap smtplib to force traffic through the tunnel
-        socks.wrap_module(smtplib)
-        
-    _PROXY_PATCHED = True
-
-# Apply patch immediately on module import
-apply_proxy_patch()
 
 class SMTPHandler:
     """
     Robust SMTP Handler integrated from Paris Sender Desktop logic.
-    Supports connection pooling, multi-threaded/green-threaded bulk sending, and SOCKS5 Proxying.
+    Supports connection pooling, multi-threaded/green-threaded bulk sending.
     """
     
     def __init__(self, smtp_config):
@@ -113,7 +61,8 @@ class SMTPHandler:
         """Create a secure SSL context."""
         context = ssl.create_default_context()
         
-        # If proxying, we must relax hostname checks because the tunnel resolves IPs differently
+        # If proxying, we must relax hostname checks because the tunnel 
+        # resolves IPs remotely, which often mismatches local DNS resolution
         if PROXY_HOST:
             context.check_hostname = False
             context.verify_mode = ssl.CERT_NONE
@@ -192,6 +141,9 @@ class SMTPHandler:
             try:
                 context = self._create_secure_ssl_context()
                 timeout_val = 30
+                
+                # Note: smtplib.SMTP is already patched globally in __init__.py 
+                # to use SOCKS5 if configured.
                 
                 if self.use_ssl or self.smtp_port == 465:
                     self._connection = smtplib.SMTP_SSL(
