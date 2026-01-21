@@ -2,8 +2,6 @@ import time
 import json
 import logging
 import os
-import socks
-import socket
 import smtplib
 from datetime import datetime, timedelta
 from celery import shared_task, current_task
@@ -16,47 +14,6 @@ from app.utils import log_activity
 
 # Configure module-level logger
 logger = logging.getLogger(__name__)
-
-# ==========================================
-#   CRITICAL:  WORKER PROXY CONFIGURATION
-# ==========================================
-# This block ensures the background worker tunnels traffic through your VPS
-# and forces IPv4 to prevent Office365/Gmail connection crashes. 
-
-PROXY_HOST = os.environ.get('SMTP_PROXY_HOST')
-PROXY_PORT = int(os.environ.get('SMTP_PROXY_PORT', 1080))
-PROXY_USER = os.environ.get('SMTP_PROXY_USER')
-PROXY_PASS = os.environ.get('SMTP_PROXY_PASS')
-
-if PROXY_HOST: 
-    # 1. Save original getaddrinfo to prevent recursion loops
-    original_getaddrinfo = socket.getaddrinfo
-
-    def patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
-        # Force IPv4 (AF_INET) if we are resolving a hostname
-        # This fixes the "PySocks doesn't support IPv6" error
-        if family == 0 or family == socket.AF_INET6:
-            try:
-                return original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
-            except socket.gaierror:
-                pass
-        return original_getaddrinfo(host, port, family, type, proto, flags)
-
-    # 2. Apply the IPv4 patch
-    socket.getaddrinfo = patched_getaddrinfo
-    
-    # 3. Configure the SOCKS5 Proxy
-    if PROXY_USER and PROXY_PASS: 
-        socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT, username=PROXY_USER, password=PROXY_PASS)
-        logger.info(f"🔌 Worker Proxy Active: {PROXY_HOST}:{PROXY_PORT} (Auth: Yes)")
-    else:
-        socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT)
-        logger.info(f"🔌 Worker Proxy Active: {PROXY_HOST}:{PROXY_PORT} (Auth: No)")
-    
-    # 4. Wrap smtplib to force all SMTP traffic through the tunnel
-    socks.wrap_module(smtplib)
-
-# ==========================================
 
 # ==========================================
 #   FLASK APP & CELERY INSTANCE CACHING
@@ -89,7 +46,7 @@ def get_celery_app():
 def send_campaign_task(self, campaign_id):
     """
     Main task to send a campaign.
-    Updated to use robust multi-threaded SMTP sending via Proxy.
+    Updated to use robust multi-threaded/green-threaded SMTP sending via Proxy.
     """
     app = get_app()
     
@@ -202,6 +159,7 @@ def send_campaign_task(self, campaign_id):
                 # --- 4. Send Batch in Parallel ---
                 # Use the robust threaded method from the new handler
                 # 5 workers = 5 simultaneous connections
+                # Uses GreenPool automatically if Eventlet is detected
                 results = current_handler.send_bulk_threaded(email_tasks, max_workers=5)
                 
                 # --- 5. Process Results ---
@@ -261,7 +219,7 @@ def send_campaign_task(self, campaign_id):
                 if campaign and campaign.status == 'Sending':
                     remaining = campaign.recipients.filter_by(status='Queued').count()
                     if remaining > 0 and delay_seconds > 0:
-                        # log_activity(f"Throttling:  waiting {delay_seconds}s.  {remaining} remaining.", "INFO")
+                        # Eventlet-safe sleep is just time.sleep() because eventlet patches time module
                         time.sleep(delay_seconds)
 
             # Cleanup
