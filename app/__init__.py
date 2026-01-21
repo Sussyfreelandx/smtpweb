@@ -6,17 +6,17 @@ import socket
 #   CRITICAL:   ENVIRONMENT SETUP
 # ==========================================
 
-# 1. Detect Celery
+# 1. Detect if we are running as a Celery Worker
 IS_CELERY = 'celery' in sys.argv[0] or (len(sys.argv) > 1 and 'celery' in sys.argv[1])
 
-# 2. Detect if Gunicorn/Eventlet already patched the system
-IS_ALREADY_PATCHED = 'eventlet' in str(socket.socket)
-
-# 3. Apply Patching ONLY if needed
-if not IS_CELERY and not IS_ALREADY_PATCHED:
+# 2. Apply Eventlet Patching ONLY for the Web Server (Not Celery)
+# Celery workers need standard threading/sockets for the SOCKS proxy to work correctly.
+if not IS_CELERY:
     try:
         import eventlet
-        eventlet.monkey_patch()
+        # Only patch if not already patched
+        if 'eventlet' not in str(socket.socket):
+            eventlet.monkey_patch()
     except ImportError:
         pass
 
@@ -28,7 +28,7 @@ import socks
 import smtplib
 import ssl
 from logging.handlers import RotatingFileHandler
-from flask import Flask
+from flask import Flask, jsonify, render_template
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_login import LoginManager
@@ -43,17 +43,12 @@ from config import config
 # ==========================================
 #   SURGICAL PROXY CONFIGURATION
 # ==========================================
+# Only apply global proxy settings if NOT using Eventlet (i.e., inside Celery)
+# or if specifically needed. For the web server, we avoid global patching to prevent recursion.
 PROXY_HOST = os.environ.get('SMTP_PROXY_HOST')
 PROXY_PORT = int(os.environ.get('SMTP_PROXY_PORT', 1080))
 PROXY_USER = os.environ.get('SMTP_PROXY_USER')
 PROXY_PASS = os.environ.get('SMTP_PROXY_PASS')
-
-if PROXY_HOST:  
-    if PROXY_USER and PROXY_PASS:
-        socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT, username=PROXY_USER, password=PROXY_PASS)
-    else:
-        socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT)
-    socks.wrap_module(smtplib)
 
 # ==========================================
 
@@ -71,38 +66,31 @@ limiter = Limiter(key_func=get_remote_address)
 # ==========================================
 #   CELERY INSTANCE (LAZY INITIALIZATION)
 # ==========================================
-celery = None  # Will be initialized only when needed
-
+celery = None
 
 # ==========================================
 #   REDIS URL HELPER
 # ==========================================
 def get_clean_redis_url():
-    """
-    Get and clean the Redis URL for Render deployment.
-    """
+    """Get and clean the Redis URL for Render deployment."""
     redis_url = os.environ.get('REDIS_URL', '')
     
     if not redis_url:
         return None, False
     
-    # Step 1: Strip whitespace and trailing slashes
     redis_url = redis_url.strip().rstrip('/')
     
-    # Step 2: Detect if this is an internal Render Redis URL
     is_internal = (
         redis_url.startswith('redis://red-') and 
         '.render.com' not in redis_url and
         not redis_url.startswith('rediss://')
     )
     
-    # Step 3: Determine SSL requirement
     use_ssl = not is_internal and (
         redis_url.startswith('rediss://') or 
         '.render.com' in redis_url
     )
     
-    # Step 4: Convert URL scheme if needed for external connections
     if use_ssl and redis_url.startswith('redis://'):
         redis_url = redis_url.replace('redis://', 'rediss://', 1)
     
@@ -130,10 +118,9 @@ def create_app(config_name=None):
     limiter.init_app(app)
     CORS(app, resources={r"/api/*": {"origins": "*"}})
     
-    async_mode = 'eventlet' if not IS_CELERY else 'threading'
-    
-    # Get clean Redis URL for SocketIO
+    # WebSocket Configuration
     redis_url, _ = get_clean_redis_url()
+    async_mode = 'eventlet' if not IS_CELERY else 'threading'
     
     socketio.init_app(
         app,
@@ -149,7 +136,6 @@ def create_app(config_name=None):
     from app.main import bp as main_bp
     app.register_blueprint(main_bp)
     
-    # CRITICAL: Register the Tracking Blueprint so 'tracking.unsubscribe' works
     from app.tracking import bp as tracking_bp
     app.register_blueprint(tracking_bp)
     
@@ -171,18 +157,18 @@ def create_app(config_name=None):
 
 
 def register_error_handlers(app):
-    from flask import render_template, jsonify, request
+    from flask import request
     
     @app.errorhandler(400)
     def bad_request_error(error):
         if request.path.startswith('/api/'):
-            return jsonify({'error':  'Bad Request', 'message': str(error)}), 400
+            return jsonify({'error': 'Bad Request', 'message': str(error)}), 400
         return render_template('400.html'), 400
     
     @app.errorhandler(403)
     def forbidden_error(error):
         if request.path.startswith('/api/'):
-            return jsonify({'error': 'Forbidden', 'message':  str(error)}), 403
+            return jsonify({'error': 'Forbidden', 'message': str(error)}), 403
         return render_template('403.html'), 403
     
     @app.errorhandler(404)
@@ -201,7 +187,7 @@ def register_error_handlers(app):
     @app.errorhandler(429)
     def ratelimit_error(error):
         if request.path.startswith('/api/'):
-            return jsonify({'error':  'Too Many Requests', 'message':  'Rate limit exceeded'}), 429
+            return jsonify({'error': 'Too Many Requests', 'message': 'Rate limit exceeded'}), 429
         return render_template('429.html'), 429
 
 
@@ -258,13 +244,12 @@ def register_context_processors(app):
 
 
 # =========================================================
-#   FIXED CELERY CONFIGURATION
+#   CELERY CONFIGURATION
 # =========================================================
 def make_celery(flask_app):
-    """Create Celery instance with proper SSL handling for Render."""
+    """Create Celery instance with proper SSL handling."""
     from celery import Celery
     
-    # Use the centralized Redis URL helper
     redis_url, use_ssl = get_clean_redis_url()
     
     if not redis_url:
@@ -278,7 +263,6 @@ def make_celery(flask_app):
         broker=redis_url
     )
     
-    # Build configuration
     celery_config = {
         'broker_url': redis_url,
         'result_backend': redis_url,
@@ -295,7 +279,8 @@ def make_celery(flask_app):
         'result_serializer': 'json',
         'timezone': 'UTC',
         'enable_utc': True,
-        'imports': ['app.tasks'] 
+        'worker_concurrency': 4,  # Limit concurrency to prevent resource exhaustion
+        'imports': ['app.tasks']
     }
     
     if use_ssl:
@@ -311,18 +296,15 @@ def make_celery(flask_app):
     
     celery_app.Task = ContextTask
     
-    # Ensure tasks are loaded
+    # Import tasks to ensure they are registered
     try:
         import app.tasks
-    except Exception as e:
-        print(f"ERROR: Failed to import app.tasks: {e}")
+    except ImportError:
+        pass
 
     return celery_app
 
 
-# =========================================================
-#   APP INITIALIZATION
-# =========================================================
 app = create_app()
 
 if IS_CELERY:
