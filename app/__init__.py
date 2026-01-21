@@ -162,12 +162,13 @@ def create_app(config_name=None):
     csrf.init_app(app)
     cache.init_app(app)
     
-    # Configure Limiter - Use memory if no Redis to prevent startup warnings
+    # FIX: Configure Limiter via app.config instead of init_app kwargs
     limiter_storage = "memory://"
     if os.environ.get('REDIS_URL'):
         limiter_storage = os.environ.get('REDIS_URL')
     
-    limiter.init_app(app, storage_uri=limiter_storage)
+    app.config['RATELIMIT_STORAGE_URI'] = limiter_storage
+    limiter.init_app(app)
     
     CORS(app, resources={r"/api/*": {"origins": "*"}})
     
@@ -370,4 +371,5 @@ def make_celery(flask_app):
 app = create_app()
 
 # Initialize Celery
-celery = make_celery(app)
+if IS_CELERY:
+    celery = make_celery(app)
