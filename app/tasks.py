@@ -8,7 +8,7 @@ import ipaddress
 from datetime import datetime, timedelta
 from celery import shared_task
 from flask import url_for
-from app import db
+from app import db  # This is fine, lazy import
 from app.models import Campaign, Recipient, SMTPServer, Suppression, Sequence, SequenceRecipient, DailyStats, HourlyStats
 from app.core_logic.smtp_handler import SMTPHandler, SMTPRotationManager
 from app.core_logic.personalization import PersonalizationEngine
@@ -71,10 +71,27 @@ if PROXY_HOST and socket.socket is not socks.socksocket and not getattr(socket, 
     socket._paris_proxy_patched = True
 # ==========================================
 
+# NOTE: We use get_app() pattern to avoid circular imports during startup
+def get_app():
+    from app import create_app
+    return create_app()
+
 @shared_task(bind=True, max_retries=3)
 def send_campaign_task(self, campaign_id):
-    # ... (Rest of the file remains unchanged, omitted for brevity)
-    # The fix is in the proxy configuration block above.
+    # Important: Create app context for every task execution
+    # This prevents the "working outside of application context" error
+    # We create a FRESH app instance or access the existing one
+    from flask import current_app
+    
+    # Check if we are already in a context (unlikely for a fresh worker task)
+    if current_app:
+        app = current_app
+        ctx = None
+    else:
+        app = get_app()
+        ctx = app.app_context()
+        ctx.push()
+
     try:
         campaign = Campaign.query.get(campaign_id)
         if not campaign:
@@ -173,6 +190,7 @@ def send_campaign_task(self, campaign_id):
             db.session.commit()
             
             # --- 4. Send Batch ---
+            # Max workers = 5 for parallelism
             results = current_handler.send_bulk_threaded(email_tasks, max_workers=5)
             
             # --- 5. Process Results ---
@@ -239,13 +257,15 @@ def send_campaign_task(self, campaign_id):
                 db.session.commit()
         except: pass
         raise self.retry(exc=e, countdown=60)
+    finally:
+        if ctx:
+            ctx.pop()
 
-
+# ... (Helper functions remain the same)
 def _fail_campaign(campaign, message):
     campaign.status = 'Failed'
     db.session.commit()
     log_activity(f"Campaign {campaign.id} failed: {message}", "ERROR")
-
 
 def _complete_campaign(campaign, sent, failed):
     campaign.status = 'Completed'
@@ -257,18 +277,15 @@ def _complete_campaign(campaign, sent, failed):
         trigger_campaign_event('campaign.completed', campaign)
     except: pass
 
-
 def _add_suppression(email, reason, user_id):
     if not Suppression.query.filter_by(email=email).first():
         sup = Suppression(email=email, reason=reason, source='campaign', user_id=user_id)
         db.session.add(sup)
 
-
 def _update_stats(user_id):
     try:
         today = datetime.utcnow().date()
         hour = datetime.utcnow().hour
-        
         daily = DailyStats.query.filter_by(user_id=user_id, date=today).first()
         if not daily: 
             daily = DailyStats(user_id=user_id, date=today)
@@ -285,38 +302,35 @@ def _update_stats(user_id):
     except Exception: 
         db.session.rollback()
 
-
 def get_rotation_smtp_profiles(user_id):
-    """Get active SMTP profiles formatted for RotationManager."""
-    profiles = SMTPServer.query.filter_by(
-        user_id=user_id,
-        is_active=True
-    ).order_by(SMTPServer.priority).all()
-    
+    profiles = SMTPServer.query.filter_by(user_id=user_id, is_active=True).order_by(SMTPServer.priority).all()
     valid_profiles = []
     for profile in profiles:
         if profile.last_reset_date != datetime.utcnow().date():
             profile.sent_today = 0
             profile.last_reset_date = datetime.utcnow().date()
             db.session.commit()
-
         if profile.sent_today >= profile.daily_limit:
             continue
-            
         password = profile.get_password()
         if not password:  continue
-        
         config = profile.to_dict()
         config['id'] = profile.id
         config['password'] = password
         valid_profiles.append(config)
-        
     return valid_profiles
-
 
 @shared_task(bind=True)
 def send_single_email_task(self, recipient_id, campaign_id):
-    """Task to send a single email."""
+    from flask import current_app
+    if current_app:
+        app = current_app
+        ctx = None
+    else:
+        app = get_app()
+        ctx = app.app_context()
+        ctx.push()
+        
     try:
         recipient = Recipient.query.get(recipient_id)
         campaign = Campaign.query.get(campaign_id)
@@ -360,61 +374,101 @@ def send_single_email_task(self, recipient_id, campaign_id):
             recipient.status_message = str(e)
             db.session.commit()
         return {"status": "error", "message": str(e)}
-
+    finally:
+        if ctx: ctx.pop()
 
 @shared_task
 def process_scheduled_campaigns():
-    now = datetime.utcnow()
-    scheduled = Campaign.query.filter(Campaign.status == 'Scheduled', Campaign.scheduled_at <= now).all()
-    for c in scheduled: 
-        log_activity(f"Starting scheduled campaign: {c.name}", "INFO")
-        c.status = 'Sending'
-        c.started_at = now
-        db.session.commit()
-        send_campaign_task.delay(c.id)
-    return {"processed": len(scheduled)}
-
+    from flask import current_app
+    if not current_app:
+        app = get_app()
+        ctx = app.app_context()
+        ctx.push()
+    else:
+        ctx = None
+        
+    try:
+        now = datetime.utcnow()
+        scheduled = Campaign.query.filter(Campaign.status == 'Scheduled', Campaign.scheduled_at <= now).all()
+        for c in scheduled: 
+            log_activity(f"Starting scheduled campaign: {c.name}", "INFO")
+            c.status = 'Sending'
+            c.started_at = now
+            db.session.commit()
+            send_campaign_task.delay(c.id)
+        return {"processed": len(scheduled)}
+    finally:
+        if ctx: ctx.pop()
 
 @shared_task
 def process_sequence_automation():
-    now = datetime.utcnow()
-    due = SequenceRecipient.query.filter(SequenceRecipient.status == 'Active', SequenceRecipient.next_action_at <= now).limit(100).all()
-    count = 0
-    for sr in due:
-        sequence = Sequence.query.get(sr.sequence_id)
-        if not sequence: continue
-        sr.current_step += 1
-        next_step = sequence.steps.filter_by(step_number=sr.current_step).first()
-        if next_step: 
-            sr.next_action_at = now + timedelta(days=next_step.delay_days, hours=next_step.delay_hours)
-        else:
-            sr.status = 'Completed'
-            sr.next_action_at = None
-        count += 1
-    db.session.commit()
-    return {"processed": count}
-
+    from flask import current_app
+    if not current_app:
+        app = get_app()
+        ctx = app.app_context()
+        ctx.push()
+    else:
+        ctx = None
+        
+    try:
+        now = datetime.utcnow()
+        due = SequenceRecipient.query.filter(SequenceRecipient.status == 'Active', SequenceRecipient.next_action_at <= now).limit(100).all()
+        count = 0
+        for sr in due:
+            sequence = Sequence.query.get(sr.sequence_id)
+            if not sequence: continue
+            sr.current_step += 1
+            next_step = sequence.steps.filter_by(step_number=sr.current_step).first()
+            if next_step: 
+                sr.next_action_at = now + timedelta(days=next_step.delay_days, hours=next_step.delay_hours)
+            else:
+                sr.status = 'Completed'
+                sr.next_action_at = None
+            count += 1
+        db.session.commit()
+        return {"processed": count}
+    finally:
+        if ctx: ctx.pop()
 
 @shared_task
 def check_imap_replies():
     return {"status":  "checked"}
 
-
 @shared_task
 def cleanup_old_data():
     return {"status": "cleaned"}
 
-
 @shared_task
 def reset_daily_smtp_counts():
-    today = datetime.utcnow().date()
-    updated = SMTPServer.query.filter(SMTPServer.last_reset_date != today).update({'sent_today': 0, 'last_reset_date': today}, synchronize_session=False)
-    db.session.commit()
-    return {"profiles_reset": updated}
-
+    from flask import current_app
+    if not current_app:
+        app = get_app()
+        ctx = app.app_context()
+        ctx.push()
+    else:
+        ctx = None
+        
+    try:
+        today = datetime.utcnow().date()
+        updated = SMTPServer.query.filter(SMTPServer.last_reset_date != today).update({'sent_today': 0, 'last_reset_date': today}, synchronize_session=False)
+        db.session.commit()
+        return {"profiles_reset": updated}
+    finally:
+        if ctx: ctx.pop()
 
 @shared_task
 def generate_campaign_report(campaign_id, user_email):
-    campaign = Campaign.query.get(campaign_id)
-    if not campaign: return
-    return {"status": "completed"}
+    from flask import current_app
+    if not current_app:
+        app = get_app()
+        ctx = app.app_context()
+        ctx.push()
+    else:
+        ctx = None
+        
+    try:
+        campaign = Campaign.query.get(campaign_id)
+        if not campaign: return
+        return {"status": "completed"}
+    finally:
+        if ctx: ctx.pop()
