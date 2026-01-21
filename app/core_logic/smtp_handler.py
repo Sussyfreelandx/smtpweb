@@ -2,7 +2,6 @@ import smtplib
 import ssl
 import logging
 import re
-import time
 import threading
 import os
 import socket
@@ -15,7 +14,7 @@ from email.header import Header
 from datetime import datetime, timedelta
 from collections import deque
 
-# Check for Eventlet
+# --- Eventlet Support ---
 try:
     import eventlet
     from eventlet import GreenPool
@@ -24,7 +23,7 @@ except ImportError:
     EVENTLET_AVAILABLE = False
     from concurrent.futures import ThreadPoolExecutor
 
-# Check for PySocks
+# --- PySocks Support ---
 try:
     import socks
     SOCKS_AVAILABLE = True
@@ -39,10 +38,14 @@ PROXY_PORT = int(os.environ.get('SMTP_PROXY_PORT', 1080))
 PROXY_USER = os.environ.get('SMTP_PROXY_USER')
 PROXY_PASS = os.environ.get('SMTP_PROXY_PASS')
 
+# Singleton flag to prevent double-patching recursion
 _PROXY_PATCHED = False
 
 def apply_proxy_patch():
-    """Singleton method to apply Proxy and IPv6 patches safely."""
+    """
+    Safely apply the IPv4 and Proxy patches. 
+    Idempotent: calling this multiple times does nothing.
+    """
     global _PROXY_PATCHED
     if _PROXY_PATCHED:
         return
@@ -51,32 +54,34 @@ def apply_proxy_patch():
         log.info(f"🔌 SMTP Proxy Active: Tunneling via {PROXY_HOST}:{PROXY_PORT}")
         
         # 1. IPv4 Force Hack (Fixes PySocks/Office365 crashes)
+        # We capture the *current* getaddrinfo, assuming it hasn't been patched by us yet.
         original_getaddrinfo = socket.getaddrinfo
 
         def patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+            # Force IPv4 (AF_INET) if we are resolving a hostname
             if family == 0 or family == socket.AF_INET6:
                 try:
                     return original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
                 except socket.gaierror:
+                    # If IPv4 fails, fall back to original behavior
                     pass
             return original_getaddrinfo(host, port, family, type, proto, flags)
 
         socket.getaddrinfo = patched_getaddrinfo
         
-        # 2. Configure Proxy
+        # 2. Configure the Default Proxy
         if PROXY_USER and PROXY_PASS:
             socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT, username=PROXY_USER, password=PROXY_PASS)
         else:
             socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT)
         
-        # 3. Wrap smtplib
+        # 3. Wrap smtplib to force traffic through the tunnel
         socks.wrap_module(smtplib)
         
     _PROXY_PATCHED = True
 
-# Apply patch immediately on import if needed
-if PROXY_HOST:
-    apply_proxy_patch()
+# Apply patch immediately on module import
+apply_proxy_patch()
 
 class SMTPHandler:
     """
@@ -244,7 +249,7 @@ class SMTPHandler:
 
     def send_email_sync(self, to_email, subject, html_content, plain_content=None,
                         unsubscribe_url=None, attachments=None, custom_headers=None):
-        """Send a single email synchronously."""
+        """Send a single email synchronously. Creates a fresh connection per send to ensure thread safety."""
         server = None
         try:
             context = self._create_secure_ssl_context()
@@ -284,8 +289,8 @@ class SMTPHandler:
 
     def send_bulk_threaded(self, email_tasks, max_workers=5):
         """
-        Send a batch of emails using GreenPool (if Eventlet) or ThreadPool.
-        This prevents blocking the main loop in Gunicorn/Eventlet workers.
+        Send a batch of emails.
+        Uses Eventlet GreenPool if available (prevents blocking mainloop), otherwise standard Threads.
         """
         results = []
         
@@ -306,12 +311,12 @@ class SMTPHandler:
             }
 
         if EVENTLET_AVAILABLE:
-            # Use Eventlet GreenPool for non-blocking concurrency
+            # Use GreenPool for cooperative multitasking (Fixes RuntimeError)
             pool = GreenPool(size=max_workers)
             for result in pool.imap(_send_single_task, email_tasks):
                 results.append(result)
         else:
-            # Fallback to Native Threads (Standard WSGI)
+            # Fallback to ThreadPool (Fixes missing Eventlet in non-gunicorn envs)
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 future_to_email = {executor.submit(_send_single_task, task): task for task in email_tasks}
                 for future in as_completed(future_to_email):
