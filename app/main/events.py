@@ -165,6 +165,8 @@ def handle_notification_connect():
     room = f'user_{current_user.id}'
     join_room(room)
     
+    # CRITICAL FIX: Do not perform a DB write operation inside a connect handler
+    # when using eventlet. We now query the count without writing.
     unread_count = Notification.query.filter_by(
         user_id=current_user.id,
         read=False
@@ -253,32 +255,23 @@ def handle_get_notifications(data):
 
 
 def send_notification(user_id, title, message, notification_type='info', related_type=None, related_id=None):
-    """Send a real-time notification to a user."""
-    notification = Notification(
-        user_id=user_id,
-        title=title,
-        message=message,
-        type=notification_type,
-        related_type=related_type,
-        related_id=related_id
-    )
-    
-    db.session.add(notification)
-    db.session.commit()
-    
+    """
+    Send a real-time notification to a user.
+    CRITICAL: This function now only emits a socket event. 
+    The DB write is handled by the calling function to prevent blocking.
+    """
     room = f'user_{user_id}'
     
+    # The Notification object should be created and committed *before* calling this function.
+    
     socketio.emit('new_notification', {
-        'id': notification.id,
         'title': title,
         'message': message,
         'type': notification_type,
         'related_type': related_type,
         'related_id': related_id,
-        'created_at': notification.created_at.isoformat()
+        'created_at': datetime.utcnow().isoformat()
     }, namespace='/notifications', room=room)
-    
-    return notification
 
 
 # ==================== ACTIVITY LOG NAMESPACE ====================
