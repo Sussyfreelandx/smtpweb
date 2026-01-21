@@ -16,11 +16,10 @@ def post_worker_init(worker):
     import eventlet
     import socket
     
-    # 1. Patch Eventlet immediately
+    # 1. Patch Eventlet immediately to prevent "blocking functions" error
     eventlet.monkey_patch()
     
-    # 2. Apply Proxy Patch (if configured)
-    # We do this here safely to avoid RecursionErrors
+    # 2. Apply Proxy Patch safely
     apply_proxy_patch()
 
 def apply_proxy_patch():
@@ -29,7 +28,7 @@ def apply_proxy_patch():
     import socks
     import smtplib
     
-    # Prevent double-patching which causes RecursionError
+    # Prevent double-patching which causes RecursionErrors
     if getattr(socket, '_paris_proxy_patched', False):
         return
 
@@ -42,12 +41,11 @@ def apply_proxy_patch():
         print(f"🔌 Worker: Applying Proxy Patch ({PROXY_HOST}:{PROXY_PORT})...")
         
         # Save original getaddrinfo to prevent infinite recursion
-        # This is the specific fix for "maximum recursion depth exceeded"
         original_getaddrinfo = socket.getaddrinfo
 
         def patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
             # Force IPv4 (AF_INET) if we are resolving a hostname
-            # This prevents PySocks from failing on IPv6 addresses (Render specific fix)
+            # This prevents PySocks from crashing on IPv6 addresses in Render
             if family == 0 or family == socket.AF_INET6:
                 try:
                     return original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
@@ -65,5 +63,5 @@ def apply_proxy_patch():
         
         socks.wrap_module(smtplib)
         
-        # Mark as patched
+        # Mark as patched to avoid recursion
         socket._paris_proxy_patched = True
