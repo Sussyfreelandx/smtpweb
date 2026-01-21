@@ -1,34 +1,12 @@
 import sys
 import os
 import socket
-
-# ==========================================
-#   CRITICAL:   ENVIRONMENT SETUP
-# ==========================================
-
-# 1. Detect if we are running as a Celery Worker
-IS_CELERY = 'celery' in sys.argv[0] or (len(sys.argv) > 1 and 'celery' in sys.argv[1])
-
-# 2. Apply Eventlet Patching ONLY for the Web Server (Not Celery)
-# Celery workers need standard threading/sockets for the SOCKS proxy to work correctly.
-if not IS_CELERY:
-    try:
-        import eventlet
-        # Only patch if not already patched
-        if 'eventlet' not in str(socket.socket):
-            eventlet.monkey_patch()
-    except ImportError:
-        pass
-
-# ==========================================
-#   STANDARD IMPORTS
-# ==========================================
 import logging
 import socks
 import smtplib
 import ssl
 from logging.handlers import RotatingFileHandler
-from flask import Flask, jsonify, render_template
+from flask import Flask, jsonify, render_template, request
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_login import LoginManager
@@ -41,14 +19,59 @@ from flask_limiter.util import get_remote_address
 from config import config
 
 # ==========================================
-#   SURGICAL PROXY CONFIGURATION
+#   CRITICAL:   ENVIRONMENT SETUP
 # ==========================================
-# Only apply global proxy settings if NOT using Eventlet (i.e., inside Celery)
-# or if specifically needed. For the web server, we avoid global patching to prevent recursion.
+
+# 1. Detect Celery
+IS_CELERY = 'celery' in sys.argv[0] or (len(sys.argv) > 1 and 'celery' in sys.argv[1])
+
+# 2. Detect if Gunicorn/Eventlet already patched the system
+IS_ALREADY_PATCHED = 'eventlet' in str(socket.socket)
+
+# 3. Apply Eventlet Patching ONLY if needed (and not running Celery)
+# Celery prefork workers dislike eventlet patching unless configured specifically
+if not IS_CELERY and not IS_ALREADY_PATCHED:
+    try:
+        import eventlet
+        eventlet.monkey_patch()
+    except ImportError:
+        pass
+
+# ==========================================
+#   SURGICAL PROXY CONFIGURATION (SINGLETON)
+# ==========================================
 PROXY_HOST = os.environ.get('SMTP_PROXY_HOST')
 PROXY_PORT = int(os.environ.get('SMTP_PROXY_PORT', 1080))
 PROXY_USER = os.environ.get('SMTP_PROXY_USER')
 PROXY_PASS = os.environ.get('SMTP_PROXY_PASS')
+
+# Prevent double-patching which causes recursion errors
+if PROXY_HOST and not getattr(socket, '_paris_proxy_patched', False):
+    # 1. Save original getaddrinfo
+    original_getaddrinfo = socket.getaddrinfo
+
+    def patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+        # Force IPv4 (AF_INET) to fix SOCKS/IPv6 compatibility
+        if family == 0 or family == socket.AF_INET6:
+            try:
+                return original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+            except socket.gaierror:
+                pass
+        return original_getaddrinfo(host, port, family, type, proto, flags)
+
+    socket.getaddrinfo = patched_getaddrinfo
+
+    # 2. Configure Proxy
+    if PROXY_USER and PROXY_PASS:
+        socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT, username=PROXY_USER, password=PROXY_PASS)
+        print(f"🔌 SMTP Proxy Configured: {PROXY_HOST}:{PROXY_PORT} (Auth: Yes)")
+    else:
+        socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT)
+        print(f"🔌 SMTP Proxy Configured: {PROXY_HOST}:{PROXY_PORT} (Auth: No)")
+
+    # 3. Wrap smtplib
+    socks.wrap_module(smtplib)
+    socket._paris_proxy_patched = True
 
 # ==========================================
 
@@ -64,7 +87,7 @@ cache = Cache()
 limiter = Limiter(key_func=get_remote_address)
 
 # ==========================================
-#   CELERY INSTANCE (LAZY INITIALIZATION)
+#   CELERY INSTANCE
 # ==========================================
 celery = None
 
@@ -80,6 +103,7 @@ def get_clean_redis_url():
     
     redis_url = redis_url.strip().rstrip('/')
     
+    # Detect internal vs external Render Redis
     is_internal = (
         redis_url.startswith('redis://red-') and 
         '.render.com' not in redis_url and
@@ -118,9 +142,10 @@ def create_app(config_name=None):
     limiter.init_app(app)
     CORS(app, resources={r"/api/*": {"origins": "*"}})
     
-    # WebSocket Configuration
-    redis_url, _ = get_clean_redis_url()
     async_mode = 'eventlet' if not IS_CELERY else 'threading'
+    
+    # Get clean Redis URL for SocketIO
+    redis_url, _ = get_clean_redis_url()
     
     socketio.init_app(
         app,
@@ -136,6 +161,7 @@ def create_app(config_name=None):
     from app.main import bp as main_bp
     app.register_blueprint(main_bp)
     
+    # CRITICAL: Register Tracking Blueprint
     from app.tracking import bp as tracking_bp
     app.register_blueprint(tracking_bp)
     
@@ -157,8 +183,6 @@ def create_app(config_name=None):
 
 
 def register_error_handlers(app):
-    from flask import request
-    
     @app.errorhandler(400)
     def bad_request_error(error):
         if request.path.startswith('/api/'):
@@ -243,11 +267,8 @@ def register_context_processors(app):
         }
 
 
-# =========================================================
-#   CELERY CONFIGURATION
-# =========================================================
 def make_celery(flask_app):
-    """Create Celery instance with proper SSL handling."""
+    """Create Celery instance with proper SSL handling for Render."""
     from celery import Celery
     
     redis_url, use_ssl = get_clean_redis_url()
@@ -279,8 +300,9 @@ def make_celery(flask_app):
         'result_serializer': 'json',
         'timezone': 'UTC',
         'enable_utc': True,
-        'worker_concurrency': 4,  # Limit concurrency to prevent resource exhaustion
-        'imports': ['app.tasks']
+        'imports': ['app.tasks'],
+        # IMPORTANT: Fix for "do not call blocking functions from mainloop"
+        'worker_hijack_root_logger': False
     }
     
     if use_ssl:
@@ -295,16 +317,12 @@ def make_celery(flask_app):
                 return self.run(*args, **kwargs)
     
     celery_app.Task = ContextTask
-    
-    # Import tasks to ensure they are registered
-    try:
-        import app.tasks
-    except ImportError:
-        pass
-
     return celery_app
 
 
+# =========================================================
+#   APP INITIALIZATION
+# =========================================================
 app = create_app()
 
 if IS_CELERY:
