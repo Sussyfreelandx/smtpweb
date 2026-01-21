@@ -265,17 +265,10 @@ def make_celery(app):
         result_backend=redis_url,
         
         # SSL Configuration for Render - CRITICAL FIX
-        # Explicitly disable SSL verification for internal Redis
-        broker_use_ssl={
-            'ssl_cert_reqs': ssl.CERT_NONE,
-            'ssl_ca_certs': None,
-            'ssl_context': None
-        },
-        redis_backend_use_ssl={
-            'ssl_cert_reqs': ssl.CERT_NONE,
-            'ssl_ca_certs': None,
-            'ssl_context': None
-        },
+        # We only set ssl_cert_reqs. 
+        # 'ssl_context' and 'ssl_ca_certs' are removed to prevent TypeError.
+        broker_use_ssl={'ssl_cert_reqs': ssl.CERT_NONE},
+        redis_backend_use_ssl={'ssl_cert_reqs': ssl.CERT_NONE},
         
         # Connection Stability
         broker_transport_options={
