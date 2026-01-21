@@ -1,13 +1,11 @@
 import time
 import logging
 import os
-import socks
-import socket
 import smtplib
 from datetime import datetime, timedelta
 from celery import shared_task
 from flask import url_for
-from app import db, celery
+from app import db
 from app.models import Campaign, Recipient, SMTPServer, Suppression, Sequence, SequenceRecipient, DailyStats, HourlyStats
 from app.core_logic.smtp_handler import SMTPHandler, SMTPRotationManager
 from app.core_logic.personalization import PersonalizationEngine
@@ -23,9 +21,6 @@ def send_campaign_task(self, campaign_id):
     """
     Main task to send a campaign.
     """
-    # Celery tasks in Flask-Celery (via init_app) usually have the context pushed automatically.
-    # However, if needed, we can access current_app safely.
-    
     try:
         campaign = Campaign.query.get(campaign_id)
         if not campaign:
@@ -191,8 +186,6 @@ def send_campaign_task(self, campaign_id):
         except: pass
         raise self.retry(exc=e, countdown=60)
 
-
-# --- Helper Functions ---
 
 def _fail_campaign(campaign, message):
     campaign.status = 'Failed'
