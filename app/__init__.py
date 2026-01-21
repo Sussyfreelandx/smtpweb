@@ -9,10 +9,6 @@ import sys
 IS_CELERY = 'celery' in sys.argv[0] or (len(sys.argv) > 1 and 'celery' in sys.argv[1])
 
 # Determine if we should patch. 
-# We patch if:
-# 1. We are NOT a celery worker (Gunicorn handles web requests)
-# 2. OR we are a celery worker using eventlet/gevent (optional, but safe to patch)
-# 3. We haven't explicitly disabled it via env var
 if not os.environ.get('SKIP_EVENTLET_PATCH'):
     try:
         import eventlet
@@ -20,11 +16,11 @@ if not os.environ.get('SKIP_EVENTLET_PATCH'):
         eventlet.monkey_patch()
         print("✅ Eventlet monkey_patch() applied successfully.")
     except ImportError:
-        # Eventlet not installed (e.g. running standard python app.py locally)
+        # Eventlet not installed
         pass
 
 # ==========================================
-#   STANDARD IMPORTS (NOW SAFE)
+#   STANDARD IMPORTS
 # ==========================================
 import logging
 import socket
@@ -45,7 +41,7 @@ from flask_limiter.util import get_remote_address
 from config import config
 
 # ==========================================
-#   SURGICAL PROXY CONFIGURATION
+#   SURGICAL PROXY CONFIGURATION (FIXED)
 # ==========================================
 PROXY_HOST = os.environ.get('SMTP_PROXY_HOST')
 PROXY_PORT = int(os.environ.get('SMTP_PROXY_PORT', 1080))
@@ -53,22 +49,35 @@ PROXY_USER = os.environ.get('SMTP_PROXY_USER')
 PROXY_PASS = os.environ.get('SMTP_PROXY_PASS')
 
 if PROXY_HOST:
-    # 1. Save original getaddrinfo to prevent recursion
-    original_getaddrinfo = socket.getaddrinfo
+    # --- FIX 1: RESTORE ORIGINAL SOCKET FOR PYSOCKS ---
+    # PySocks needs the real, OS-level socket to function without recursion loops
+    # when running under Eventlet. We grab it from eventlet.patcher if available.
+    try:
+        from eventlet.patcher import original
+        real_socket = original('socket')
+    except ImportError:
+        real_socket = socket
+
+    # Tell PySocks to use the real socket class, not the GreenSocket
+    socks.socket = real_socket.socket
+    
+    # --- FIX 2: IPv4 FORCE HACK (Still needed for some proxies) ---
+    # We patch the *original* getaddrinfo that PySocks will use internally
+    _orig_getaddrinfo = real_socket.getaddrinfo
 
     def patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
         # Force IPv4 (AF_INET) if we are resolving a hostname
         if family == 0 or family == socket.AF_INET6:
             try:
-                return original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+                return _orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
             except socket.gaierror:
                 pass
-        return original_getaddrinfo(host, port, family, type, proto, flags)
+        return _orig_getaddrinfo(host, port, family, type, proto, flags)
 
-    # 2. Apply IPv4 Force Hack
-    socket.getaddrinfo = patched_getaddrinfo
+    # Apply the IPv4 patch to the real socket module used by PySocks
+    real_socket.getaddrinfo = patched_getaddrinfo
 
-    # 3. Configure Proxy
+    # --- FIX 3: CONFIGURE PROXY ---
     if PROXY_USER and PROXY_PASS:
         socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT, username=PROXY_USER, password=PROXY_PASS)
         print(f"🔌 SMTP Proxy Configured: {PROXY_HOST}:{PROXY_PORT} (Auth: Yes)")
@@ -76,7 +85,8 @@ if PROXY_HOST:
         socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT)
         print(f"🔌 SMTP Proxy Configured: {PROXY_HOST}:{PROXY_PORT} (Auth: No)")
 
-    # 4. Wrap smtplib
+    # --- FIX 4: WRAP SMTPLIB ---
+    # This instructs smtplib to use the configured socks proxy
     socks.wrap_module(smtplib)
 
 # ==========================================
@@ -114,6 +124,9 @@ def get_clean_redis_url():
     """
     Get and clean the Redis URL for Render deployment.
     Determines if SSL is needed based on URL format.
+    
+    Internal Render Redis:  redis://red-xxxxx:6379 (NO SSL)
+    External Render Redis: rediss://...render.com:6379 (SSL)
     """
     redis_url = os.environ.get('REDIS_URL', '')
     
@@ -124,6 +137,8 @@ def get_clean_redis_url():
     redis_url = redis_url.strip().rstrip('/')
     
     # Step 2: Detect if this is an internal Render Redis URL
+    # Internal URLs:  redis://red-xxxxx:6379 (no .render.com domain)
+    # External URLs: rediss://....render.com:6379
     is_internal = (
         redis_url.startswith('redis://red-') and 
         '.render.com' not in redis_url and
@@ -131,6 +146,8 @@ def get_clean_redis_url():
     )
     
     # Step 3: Determine SSL requirement
+    # - Internal connections:  NO SSL
+    # - External connections or rediss:// URLs: YES SSL
     use_ssl = not is_internal and (
         redis_url.startswith('rediss://') or 
         '.render.com' in redis_url
@@ -162,11 +179,12 @@ def create_app(config_name=None):
     csrf.init_app(app)
     cache.init_app(app)
     
-    # FIX: Configure Limiter via app.config instead of init_app kwargs
+    # Configure Limiter - Use memory if no Redis to prevent startup warnings
     limiter_storage = "memory://"
     if os.environ.get('REDIS_URL'):
         limiter_storage = os.environ.get('REDIS_URL')
     
+    # Flask-Limiter 3.x+ configuration style
     app.config['RATELIMIT_STORAGE_URI'] = limiter_storage
     limiter.init_app(app)
     
