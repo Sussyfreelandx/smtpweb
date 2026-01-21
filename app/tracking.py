@@ -96,6 +96,7 @@ def unsubscribe(token):
                 db.session.add(suppression)
                 db.session.commit()
 
+            # Render a nice success page
             return render_template('message.html', 
                 message_title='Unsubscribed',
                 message_body=f'You have been successfully unsubscribed from this list ({recipient.email}).',
