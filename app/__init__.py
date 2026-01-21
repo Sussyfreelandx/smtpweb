@@ -102,7 +102,8 @@ def get_celery():
     """Get or create the Celery instance lazily."""
     global celery
     if celery is None:  
-        celery = make_celery(app)
+        # Import app here to avoid circular imports, but usually app is created globally below
+        celery = make_celery(create_app())
     return celery
 
 
@@ -113,9 +114,6 @@ def get_clean_redis_url():
     """
     Get and clean the Redis URL for Render deployment.
     Determines if SSL is needed based on URL format.
-    
-    Internal Render Redis:  redis://red-xxxxx:6379 (NO SSL)
-    External Render Redis: rediss://...render.com:6379 (SSL)
     """
     redis_url = os.environ.get('REDIS_URL', '')
     
@@ -126,8 +124,6 @@ def get_clean_redis_url():
     redis_url = redis_url.strip().rstrip('/')
     
     # Step 2: Detect if this is an internal Render Redis URL
-    # Internal URLs:  redis://red-xxxxx:6379 (no .render.com domain)
-    # External URLs: rediss://....render.com:6379
     is_internal = (
         redis_url.startswith('redis://red-') and 
         '.render.com' not in redis_url and
@@ -135,15 +131,10 @@ def get_clean_redis_url():
     )
     
     # Step 3: Determine SSL requirement
-    # - Internal connections:  NO SSL
-    # - External connections or rediss:// URLs: YES SSL
     use_ssl = not is_internal and (
         redis_url.startswith('rediss://') or 
         '.render.com' in redis_url
     )
-    
-    # print(f"DEBUG: Original REDIS_URL: {redis_url[:50]}...")
-    # print(f"DEBUG: Internal connection: {is_internal}, SSL required: {use_ssl}")
     
     # Step 4: Convert URL scheme if needed for external connections
     if use_ssl and redis_url.startswith('redis://'):
@@ -372,13 +363,11 @@ def make_celery(flask_app):
     celery_app.Task = ContextTask
     return celery_app
 
-
 # =========================================================
-#   APP INITIALIZATION
+#   APP INSTANTIATION (Fixes "Failed to find attribute 'app'")
 # =========================================================
+# Gunicorn looks for an object named 'app' in this file.
 app = create_app()
 
-# CRITICAL FIX: Only initialize Celery when running as a Celery worker
-# This prevents the blocking Redis connection during Gunicorn/eventlet startup
-if IS_CELERY:
-    celery = make_celery(app)
+# Initialize Celery
+celery = make_celery(app)
