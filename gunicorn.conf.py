@@ -1,15 +1,23 @@
 import os
 
 # ==========================================
-#   GUNICORN CONFIGURATION (THREADED)
+#   GUNICORN CONFIGURATION (EVENTLET)
 # ==========================================
 
-worker_class = 'gthread'
-workers = 2
-threads = 4
+# CRITICAL: Must match the worker class used in render.yaml and requirements
+worker_class = 'eventlet'
+
+# Eventlet workers can handle thousands of concurrent connections via greenlets,
+# so we typically only need 1 process per CPU core.
+workers = 1
+
+# Threads are not used with the eventlet worker class
+threads = 1
+
 timeout = 120
 keepalive = 5
 
-# REMOVED: post_worker_init hook that was patching sockets globally.
-# The proxy logic is now securely handled inside app/core_logic/smtp_handler.py
-# ensuring it only applies to SMTP connections and doesn't crash Redis/Celery.
+# Logging
+loglevel = 'info'
+accesslog = '-'  # Log to stdout
+errorlog = '-'   # Log to stderr
