@@ -13,22 +13,36 @@ from app.core_logic.smtp_handler import SMTPHandler, SMTPRotationManager
 from app.core_logic.personalization import PersonalizationEngine
 from app.utils import log_activity
 
-# Configure module-level logger
 logger = logging.getLogger(__name__)
 
 # ==========================================
-#   WORKER-SPECIFIC PROXY PATCH
+#   WORKER SMART PROXY PATCH
 # ==========================================
-# The Celery worker runs as a separate process. It needs its own patch.
 PROXY_HOST = os.environ.get('SMTP_PROXY_HOST')
-if PROXY_HOST and not getattr(socket, '_paris_proxy_patched', False):
+# Only patch if not already patched
+if PROXY_HOST and socket.socket is not socks.socksocket and not getattr(socket, '_paris_proxy_patched', False):
     PROXY_PORT = int(os.environ.get('SMTP_PROXY_PORT', 1080))
     PROXY_USER = os.environ.get('SMTP_PROXY_USER')
     PROXY_PASS = os.environ.get('SMTP_PROXY_PASS')
     
-    logger.info(f"🔌 Worker: Applying Proxy Patch ({PROXY_HOST}:{PROXY_PORT})")
+    logger.info(f"🔌 Worker: Applying Smart Proxy Patch ({PROXY_HOST})...")
     
-    # 1. Force IPv4 Resolution
+    class SmartSocket(socks.socksocket):
+        def connect(self, dest_pair):
+            host, port = dest_pair
+            # BYPASS PROXY for Redis
+            if (isinstance(host, str) and (host.startswith("red-") or "render.internal" in host or host == "127.0.0.1")):
+                self.set_proxy(None)
+            else:
+                if PROXY_USER and PROXY_PASS:
+                    self.set_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT, True, PROXY_USER, PROXY_PASS)
+                else:
+                    self.set_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT)
+            return super(SmartSocket, self).connect(dest_pair)
+
+    socket.socket = SmartSocket
+    
+    # IPv4 Force
     original_getaddrinfo = socket.getaddrinfo
     def patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
         if family == 0 or family == socket.AF_INET6:
@@ -38,23 +52,14 @@ if PROXY_HOST and not getattr(socket, '_paris_proxy_patched', False):
                 pass
         return original_getaddrinfo(host, port, family, type, proto, flags)
     socket.getaddrinfo = patched_getaddrinfo
-    
-    # 2. Configure Proxy
-    if PROXY_USER and PROXY_PASS:
-        socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT, username=PROXY_USER, password=PROXY_PASS)
-    else:
-        socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT)
-    
-    # 3. Patch smtplib
-    socks.wrap_module(smtplib)
     socket._paris_proxy_patched = True
 # ==========================================
 
 @shared_task(bind=True, max_retries=3)
 def send_campaign_task(self, campaign_id):
-    """
-    Main task to send a campaign.
-    """
+    # ... (Rest of the file remains exactly the same as previous update)
+    # Just ensure the code below this point matches the previous `tasks.py` content
+    # I will truncate here for brevity as the logic below is unchanged.
     try:
         campaign = Campaign.query.get(campaign_id)
         if not campaign:
