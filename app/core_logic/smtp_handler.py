@@ -1,540 +1,408 @@
-from collections import deque
-from datetime import datetime
+import smtplib
+import ssl
+import logging
 import re
-import csv
-import io
-import json
-import os
 import threading
+import os
+import socket
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email import encoders
+from email.utils import formataddr, formatdate, make_msgid
+from email.header import Header
+from datetime import datetime, timedelta
+from collections import deque
 
-# ==================== LOGGING ====================
+# --- Eventlet Support ---
+# We check this to determine how to run concurrent tasks
+try:
+    import eventlet
+    from eventlet import GreenPool
+    EVENTLET_AVAILABLE = True
+except ImportError:
+    EVENTLET_AVAILABLE = False
+    from concurrent.futures import ThreadPoolExecutor
 
-LOG_BUFFER = deque(maxlen=200)
-_LOG_LOCK = threading.RLock() # Re-entrant lock for thread safety
+log = logging.getLogger(__name__)
 
-def log_activity(message, level="INFO"):
-    """Log an activity message safely to prevent recursion loops."""
-    # Prevent recursion if logging triggers another log (e.g. via WebSocket error)
-    if not _LOG_LOCK.acquire(blocking=False):
-        # If we can't get the lock, we are likely in a recursion loop.
-        # Fallback to simple print and return to break the cycle.
-        try:
-            print(f"!!! RECURSION SAFEGUARD !!! [{level}] {message}")
-        except:
-            pass
-        return
+# --- GLOBAL PROXY CONFIGURATION ---
+# Note: The actual patching happens in app/__init__.py
+# We just read these values here to determine SSL context behavior
+PROXY_HOST = os.environ.get('SMTP_PROXY_HOST')
 
-    try:
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        entry = {
-            "timestamp": timestamp,
-            "message": str(message),
-            "level": str(level)
-        }
+class SMTPHandler:
+    """
+    Robust SMTP Handler integrated from Paris Sender Desktop logic.
+    Supports connection pooling, multi-threaded/green-threaded bulk sending.
+    """
+    
+    def __init__(self, smtp_config):
+        self.smtp_server = smtp_config.get('server')
+        self.smtp_port = int(smtp_config.get('port', 587))
+        self.username = smtp_config.get('username')
+        self.password = smtp_config.get('password')
+        self.use_tls = smtp_config.get('use_tls', True)
+        self.use_ssl = smtp_config.get('use_ssl', False)
+        self.sender_name = smtp_config.get('sender_name', '')
+        self.sender_email = smtp_config.get('sender_email') or self.username
+        self.reply_to_email = smtp_config.get('reply_to_email')
         
-        LOG_BUFFER.append(entry)
-        print(f"[{timestamp}] {level}: {message}")
+        # Connection management
+        self._connection = None
+        self._connection_time = None
+        self._max_connection_age = 300  # Refresh connection every 5 minutes
+        self._lock = threading.Lock()
         
-        # Broadcast via WebSocket if available, but wrap in try/except 
-        # to ensure socket errors don't crash the logger
-        try:
-            from flask_socketio import emit
-            from flask import current_app
-            
-            # Only emit if we are in a valid app context and socketio is init
-            if current_app:
-                extensions = getattr(current_app, 'extensions', {})
-                socketio = extensions.get('socketio')
-                if socketio:
-                    socketio.emit('new_log', entry, namespace='/')
-        except (ImportError, RuntimeError, Exception):
-            # Fail silently on websocket errors to prevent recursion
-            pass
-            
-    finally:
-        _LOG_LOCK.release()
-
-
-def get_logs():
-    """Get recent log entries."""
-    return list(LOG_BUFFER)
-
-
-def clear_logs():
-    """Clear the log buffer."""
-    LOG_BUFFER.clear()
-
-
-# ==================== VALIDATION ====================
-
-def is_valid_email(email):
-    """Validate email format."""
-    if not email:
-        return False
+        # Rate limiting tracking
+        self._recent_sends = deque(maxlen=1000)
     
-    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-    if not re.match(pattern, email):
-        return False
-    
-    # Check for disposable email domains
-    disposable_domains = {
-        '10minutemail.com', 'temp-mail.org', 'guerrillamail.com', 'mailinator.com',
-        'throwawaymail.com', 'getnada.com', 'mohmal.com', 'yopmail.com', 'maildrop.cc',
-        'tempail.com', 'fakeinbox.com', 'trashmail.com'
-    }
-    
-    try:
-        domain = email.split('@')[1].lower()
-        if domain in disposable_domains:
-            return False
-    except IndexError:
-        return False
-    
-    return True
-
-
-def validate_email_list(emails):
-    """Validate a list of emails and return valid/invalid counts."""
-    valid = []
-    invalid = []
-    
-    for email in emails:
-        email = str(email).strip().lower()
-        if is_valid_email(email):
-            valid.append(email)
+    def _create_secure_ssl_context(self):
+        """Create a secure SSL context."""
+        context = ssl.create_default_context()
+        
+        # If proxying, we must relax hostname checks because the tunnel 
+        # resolves IPs remotely, which often mismatches local DNS resolution
+        if PROXY_HOST:
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
         else:
-            invalid.append(email)
-    
-    return valid, invalid
-
-
-# ==================== FILE HANDLING ====================
-
-def allowed_file(filename, allowed_extensions=None):
-    """Check if a file extension is allowed."""
-    if allowed_extensions is None:
-        allowed_extensions = {'png', 'jpg', 'jpeg', 'gif', 'pdf', 'csv', 'xlsx'}
-    
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in allowed_extensions
-
-
-def parse_csv_file(file, campaign_id):
-    """Parse a CSV file and create recipients."""
-    from app import db
-    from app.models import Recipient, Suppression
-    
-    try:
-        stream = io.StringIO(file.stream.read().decode("UTF-8-sig"), newline=None)
-        csv_reader = csv.DictReader(stream)
-        
-        # Normalize headers
-        if csv_reader.fieldnames:
-            csv_reader.fieldnames = [h.strip().lower() for h in csv_reader.fieldnames]
-        
-        if not csv_reader.fieldnames or 'email' not in csv_reader.fieldnames:
-            return 0, ["CSV must have an 'email' column header"]
-        
-        added = 0
-        skipped = 0
-        errors = []
-        
-        for row_num, row in enumerate(csv_reader, start=2):
-            email = row.get('email', '').strip().lower()
+            context.minimum_version = ssl.TLSVersion.TLSv1_2
             
-            if not email:
-                continue
-            
-            if not is_valid_email(email):
-                skipped += 1
-                if len(errors) < 10:
-                    errors.append(f"Row {row_num}: Invalid email '{email}'")
-                continue
-            
-            # Check if already exists in campaign
-            existing = Recipient.query.filter_by(campaign_id=campaign_id, email=email).first()
-            if existing:
-                skipped += 1
-                continue
-            
-            # Check suppression
-            is_suppressed = Suppression.query.filter_by(email=email).first()
-            
-            recipient = Recipient(
-                email=email,
-                campaign_id=campaign_id,
-                data=json.dumps(row),
-                status='Suppressed' if is_suppressed else 'Queued',
-                status_message='Suppressed by global list' if is_suppressed else None
-            )
-            
-            db.session.add(recipient)
-            added += 1
-            
-            # Commit in batches
-            if added % 500 == 0:
-                db.session.commit()
-        
-        db.session.commit()
-        
-        if skipped > 0:
-            errors.insert(0, f"Skipped {skipped} invalid or duplicate emails")
-        
-        return added, errors
-    
-    except Exception as e: 
-        return 0, [f"Error parsing CSV: {str(e)}"]
+        return context
 
-
-def export_to_csv(data, headers):
-    """Export data to CSV format."""
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(headers)
-    
-    for row in data:
-        writer.writerow(row)
-    
-    return output.getvalue()
-
-
-# ==================== TEXT PROCESSING ====================
-
-def html_to_plain_text(html):
-    """Convert HTML to plain text."""
-    if not html:
-        return ""
-    
-    # Remove script and style elements
-    text = re.sub(r'<(script|style).*?>.*?</\1>', '', html, flags=re.DOTALL | re.IGNORECASE)
-    
-    # Add newlines for block elements
-    text = re.sub(r'</(p|h[1-6]|li|div|tr)\s*>', '\n', text, flags=re.IGNORECASE)
-    text = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
-    
-    # Remove remaining tags
-    text = re.sub(r'<[^>]+>', ' ', text)
-    
-    # Decode HTML entities
-    text = re.sub(r'&nbsp;', ' ', text)
-    text = re.sub(r'&amp;', '&', text)
-    text = re.sub(r'&lt;', '<', text)
-    text = re.sub(r'&gt;', '>', text)
-    text = re.sub(r'&quot;', '"', text)
-    text = re.sub(r'&#39;', "'", text)
-    
-    # Clean up whitespace
-    text = re.sub(r'[ \t]+', ' ', text)
-    lines = [line.strip() for line in text.split('\n')]
-    
-    return '\n'.join(line for line in lines if line)
-
-
-def truncate_text(text, max_length, suffix='...'):
-    """Truncate text to a maximum length."""
-    if not text or len(text) <= max_length:
-        return text
-    
-    return text[:max_length - len(suffix)] + suffix
-
-
-def sanitize_filename(filename):
-    """Sanitize a filename for safe storage."""
-    # Remove or replace unsafe characters
-    filename = re.sub(r'[^\w\s\-\.]', '', filename)
-    filename = re.sub(r'\s+', '_', filename)
-    return filename[:255]
-
-
-# ==================== DOMAIN UTILITIES ====================
-
-COMMON_ISP_DOMAINS = {
-    "gmail.com", "yahoo.com", "hotmail.com", "aol.com", "outlook.com",
-    "msn.com", "live.com", "icloud.com", "mail.com", "comcast.net",
-    "verizon.net", "att.net", "sbcglobal.net", "cox.net", "yandex.com",
-    "protonmail.com", "zoho.com", "gmx.com", "fastmail.com", "hey.com",
-    "tutanota.com", "riseup.net", "disroot.org", "mail.ru", "qq.com"
-}
-
-
-def extract_domain(email):
-    """Extract domain from email address."""
-    if not email or '@' not in email:
-        return None
-    return email.split('@')[1].lower()
-
-
-def is_isp_domain(domain):
-    """Check if a domain is a common ISP/consumer domain."""
-    return domain.lower() in COMMON_ISP_DOMAINS
-
-
-def extract_company_from_domain(domain):
-    """Extract company name from domain."""
-    if not domain:
-        return None
-    
-    domain = domain.lower()
-    
-    if domain in COMMON_ISP_DOMAINS:
-        return None
-    
-    # Remove common TLDs
-    parts = domain.split('.')
-    if len(parts) > 2 and parts[-2] in ('co', 'com', 'org', 'net', 'ac', 'gov', 'edu'):
-        company_part = parts[-3]
-    else:
-        company_part = parts[0]
-    
-    # Capitalize properly
-    return '-'.join(p.capitalize() for p in company_part.split('-'))
-
-
-def extract_firstname_from_email(email):
-    """Extract probable first name from email address."""
-    if not email or '@' not in email:
-        return None
-    
-    local_part = email.split('@')[0].lower()
-    
-    # Split by common separators
-    potential_parts = re.split(r'[._\-+]+', local_part)
-    
-    # Filter valid name parts
-    valid_parts = [p for p in potential_parts if len(p) > 1 and p.isalpha()]
-    
-    # Generic words to exclude
-    generic_words = {
-        'info', 'contact', 'admin', 'support', 'sales', 'mail', 'email',
-        'hello', 'test', 'demo', 'user', 'customer', 'press', 'jobs',
-        'careers', 'service', 'team', 'office', 'billing', 'accounts',
-        'dev', 'webmaster', 'media', 'noreply', 'no-reply', 'marketing',
-        'newsletter', 'updates', 'general', 'enquiry', 'staff', 'manager',
-        'hr', 'recruitment', 'inquiries', 'help', 'feedback', 'postmaster'
-    }
-    
-    for part in valid_parts:
-        if part not in generic_words:
-            return part.capitalize()
-    
-    return None
-
-
-# ==================== TIME UTILITIES ====================
-
-def get_greeting_by_time(hour=None):
-    """Get appropriate greeting based on time of day."""
-    if hour is None:
-        hour = datetime.now().hour
-    
-    if 5 <= hour < 12:
-        return "Good morning"
-    elif 12 <= hour < 18:
-        return "Good afternoon"
-    else:
-        return "Good evening"
-
-
-def format_datetime(dt, format_str=None):
-    """Format datetime object."""
-    if not dt:
-        return ""
-    
-    if format_str is None:
-        format_str = "%Y-%m-%d %H:%M:%S"
-    
-    return dt.strftime(format_str)
-
-
-def parse_datetime(dt_str, format_str=None):
-    """Parse datetime string."""
-    if not dt_str: 
-        return None
-    
-    formats = [
-        "%Y-%m-%d %H:%M:%S",
-        "%Y-%m-%dT%H:%M:%S",
-        "%Y-%m-%d %H:%M",
-        "%Y-%m-%d",
-        "%d/%m/%Y %H:%M:%S",
-        "%d/%m/%Y"
-    ]
-    
-    if format_str: 
-        formats.insert(0, format_str)
-    
-    for fmt in formats: 
+    def _html_to_text(self, html):
+        """Convert HTML to plain text using regex."""
+        if not html: return "Plain text content not available."
         try:
-            return datetime.strptime(dt_str, fmt)
-        except ValueError: 
-            continue
+            text = re.sub(r'<(script|style).*?>.*?</\1>', '', html, flags=re.DOTALL | re.IGNORECASE)
+            text = re.sub(r'</(p|h[1-6]|li|div|tr|br) *>', '\n', text, flags=re.IGNORECASE)
+            text = re.sub(r'<[^>]+>', ' ', text)
+            return text.strip()
+        except Exception:
+            return "HTML-only email. Please use a compatible client."
     
-    return None
-
-
-# ==================== SECURITY UTILITIES ====================
-
-def generate_csrf_token():
-    """Generate a CSRF token."""
-    import secrets
-    return secrets.token_hex(32)
-
-
-def mask_email(email):
-    """Mask an email address for display."""
-    if not email or '@' not in email:
-        return email
-    
-    local, domain = email.split('@')
-    
-    if len(local) <= 2:
-        masked_local = local[0] + '*'
-    else:
-        masked_local = local[0] + '*' * (len(local) - 2) + local[-1]
-    
-    return f"{masked_local}@{domain}"
-
-
-def mask_api_key(key):
-    """Mask an API key for display."""
-    if not key or len(key) < 12:
-        return '***'
-    
-    return key[:8] + '*' * 16 + key[-4:]
-
-
-# ==================== SPINTAX PROCESSING ====================
-
-def process_spintax(text):
-    """Process spintax {option1|option2|option3} in text."""
-    import random
-    
-    if not text:
-        return text
-    
-    pattern = re.compile(r'\{([^{}]*)\}')
-    
-    while True:
-        match = pattern.search(text)
-        if not match:
-            break
+    def _create_mime_message(self, to_email, subject, html_content, plain_content=None,
+                             unsubscribe_url=None, attachments=None, custom_headers=None):
+        """Create a MIME message with robust attachment and header support."""
+        msg_root = MIMEMultipart('related')
         
-        options = match.group(1).split('|')
-        replacement = random.choice(options)
-        text = text[:match.start()] + replacement + text[match.end():]
-    
-    return text
-
-
-# ==================== URL UTILITIES ====================
-
-def add_tracking_params(url, params):
-    """Add tracking parameters to a URL."""
-    from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
-    
-    parsed = urlparse(url)
-    query_params = parse_qs(parsed.query)
-    
-    for key, value in params.items():
-        query_params[key] = [value]
-    
-    new_query = urlencode(query_params, doseq=True)
-    
-    return urlunparse((
-        parsed.scheme,
-        parsed.netloc,
-        parsed.path,
-        parsed.params,
-        new_query,
-        parsed.fragment
-    ))
-
-
-def extract_links_from_html(html):
-    """Extract all href links from HTML content."""
-    if not html:
-        return []
-    
-    links = re.findall(r'href=["\']([^"\']+)["\']', html, re.IGNORECASE)
-    return [l for l in links if l.startswith(('http://', 'https://'))]
-
-
-# ==================== RATE LIMITING ====================
-
-class RateLimiter:
-    """Simple in-memory rate limiter."""
-    
-    def __init__(self, max_requests, window_seconds):
-        self.max_requests = max_requests
-        self.window_seconds = window_seconds
-        self.requests = {}
-    
-    def is_allowed(self, key):
-        """Check if a request is allowed."""
-        now = datetime.utcnow().timestamp()
+        # Proper UTF-8 Header Encoding
+        msg_root['Subject'] = Header(subject, 'utf-8').encode()
+        msg_root['From'] = formataddr((Header(self.sender_name, 'utf-8').encode(), self.sender_email))
+        msg_root['To'] = to_email
+        msg_root['Date'] = formatdate(localtime=True)
+        msg_root['Message-ID'] = make_msgid(domain=self.sender_email.split('@')[-1] if '@' in self.sender_email else 'local')
         
-        if key not in self.requests:
-            self.requests[key] = []
+        if self.reply_to_email:
+            msg_root['Reply-To'] = self.reply_to_email
         
-        # Remove old requests
-        self.requests[key] = [
-            t for t in self.requests[key]
-            if now - t < self.window_seconds
-        ]
+        # Headers for Unsubscribe and Tracking
+        if unsubscribe_url:
+            msg_root.add_header('List-Unsubscribe', f'<{unsubscribe_url}>')
+            msg_root.add_header('List-Unsubscribe-Post', 'List-Unsubscribe=One-Click')
         
-        if len(self.requests[key]) >= self.max_requests:
+        if custom_headers:
+            for key, value in custom_headers.items():
+                msg_root.add_header(key, value)
+        
+        msg_alternative = MIMEMultipart('alternative')
+        msg_root.attach(msg_alternative)
+        
+        # Content Parts
+        if not plain_content:
+            plain_content = self._html_to_text(html_content)
+            
+        msg_alternative.attach(MIMEText(plain_content, 'plain', 'utf-8'))
+        msg_alternative.attach(MIMEText(html_content, 'html', 'utf-8'))
+        
+        # Attachments
+        if attachments:
+            for filepath in attachments:
+                if os.path.exists(filepath):
+                    try:
+                        with open(filepath, "rb") as f:
+                            part = MIMEBase('application', 'octet-stream')
+                            part.set_payload(f.read())
+                        encoders.encode_base64(part)
+                        part.add_header(
+                            'Content-Disposition',
+                            f'attachment; filename="{os.path.basename(filepath)}"'
+                        )
+                        msg_root.attach(part)
+                    except Exception as e:
+                        log.error(f"⚠️ Could not attach {filepath}: {e}")
+        
+        return msg_root
+
+    def connect(self):
+        """Establish connection to SMTP server."""
+        with self._lock:
+            try:
+                context = self._create_secure_ssl_context()
+                timeout_val = 30
+                
+                # Note: smtplib.SMTP is already patched globally in __init__.py 
+                # to use SOCKS5 if configured.
+                
+                if self.use_ssl or self.smtp_port == 465:
+                    self._connection = smtplib.SMTP_SSL(
+                        self.smtp_server, self.smtp_port, context=context, timeout=timeout_val
+                    )
+                else: 
+                    self._connection = smtplib.SMTP(
+                        self.smtp_server, self.smtp_port, timeout=timeout_val
+                    )
+                
+                try:
+                    self._connection.ehlo()
+                except smtplib.SMTPHeloError:
+                    self._connection.helo()
+                
+                if not self.use_ssl and self.use_tls:
+                    if self._connection.has_extn('STARTTLS'):
+                        self._connection.starttls(context=context)
+                        self._connection.ehlo()
+                
+                self._connection.login(self.username, self.password)
+                self._connection_time = datetime.utcnow()
+                
+                status_msg = "Connected via Proxy" if PROXY_HOST else "Connected Direct"
+                return True, status_msg
+            
+            except smtplib.SMTPAuthenticationError as e:
+                error_msg = e.smtp_error.decode() if isinstance(e.smtp_error, bytes) else str(e.smtp_error)
+                return False, f"Auth Failed: {error_msg}"
+            except Exception as e:
+                log.error(f"Connection Error: {e}")
+                return False, f"Connection Error: {str(e)}"
+
+    def disconnect(self):
+        """Safely close SMTP connection."""
+        with self._lock:
+            if self._connection:
+                try:
+                    self._connection.quit()
+                except Exception:
+                    try: self._connection.close()
+                    except Exception: pass
+                finally:
+                    self._connection = None
+                    self._connection_time = None
+
+    def test_connection(self):
+        """Test SMTP connection credentials."""
+        if not self.smtp_server or not self.username:
+            return False, "SMTP configuration incomplete"
+        
+        success, msg = self.connect()
+        self.disconnect()
+        return success, msg
+
+    def send_email_sync(self, to_email, subject, html_content, plain_content=None,
+                        unsubscribe_url=None, attachments=None, custom_headers=None):
+        """Send a single email synchronously. Creates a fresh connection per send to ensure thread safety."""
+        server = None
+        try:
+            context = self._create_secure_ssl_context()
+            timeout_val = 30
+            
+            if self.use_ssl or self.smtp_port == 465:
+                server = smtplib.SMTP_SSL(self.smtp_server, self.smtp_port, context=context, timeout=timeout_val)
+            else:
+                server = smtplib.SMTP(self.smtp_server, self.smtp_port, timeout=timeout_val)
+            
+            with server:
+                try: server.ehlo()
+                except: server.helo()
+                
+                if not self.use_ssl and self.use_tls and server.has_extn('STARTTLS'):
+                    server.starttls(context=context)
+                    server.ehlo()
+                
+                server.login(self.username, self.password)
+                
+                mime_message = self._create_mime_message(
+                    to_email, subject, html_content, plain_content,
+                    unsubscribe_url, attachments, custom_headers
+                )
+                
+                server.send_message(mime_message)
+            
+            self._recent_sends.append(datetime.utcnow())
+            return True, "Sent"
+            
+        except smtplib.SMTPAuthenticationError as e:
+            return False, f"Auth Error: {e}"
+        except Exception as e:
+            error_class = self.classify_failure(str(e))
+            log.error(f"Send failed to {to_email}: {e} ({error_class})")
+            return False, f"{error_class}: {str(e)}"
+
+    def send_bulk_threaded(self, email_tasks, max_workers=5):
+        """
+        Send a batch of emails.
+        Uses Eventlet GreenPool if available (prevents blocking mainloop), otherwise standard Threads.
+        """
+        results = []
+        
+        def _send_single_task(task):
+            success, msg = self.send_email_sync(
+                task['to_email'],
+                task['subject'],
+                task['html_content'],
+                task.get('plain_content'),
+                task.get('unsubscribe_url'),
+                task.get('attachments'),
+                task.get('custom_headers')
+            )
+            return {
+                'email': task['to_email'],
+                'success': success,
+                'error': msg if not success else None
+            }
+
+        if EVENTLET_AVAILABLE:
+            # Use GreenPool for cooperative multitasking (Fixes RuntimeError)
+            pool = GreenPool(size=max_workers)
+            for result in pool.imap(_send_single_task, email_tasks):
+                results.append(result)
+        else:
+            # Fallback to ThreadPool (Fixes missing Eventlet in non-gunicorn envs)
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_email = {executor.submit(_send_single_task, task): task for task in email_tasks}
+                for future in as_completed(future_to_email):
+                    try:
+                        results.append(future.result())
+                    except Exception as e:
+                        log.error(f"Thread worker failed: {e}")
+                        results.append({'email': 'unknown', 'success': False, 'error': str(e)})
+                    
+        return results
+
+    def get_sends_per_hour(self):
+        cutoff = datetime.utcnow() - timedelta(minutes=60)
+        return sum(1 for t in self._recent_sends if t > cutoff)
+
+    def classify_failure(self, error_message):
+        msg = str(error_message).lower()
+        if any(s in msg for s in ["mailbox unavailable", "user unknown", "no such user", "recipient rejected", "invalid address"]):
+            return "hard_bounce"
+        elif any(s in msg for s in ["quota", "over quota", "mailbox full"]):
+            return "soft_bounce"
+        elif any(s in msg for s in ["rate", "too many", "limit", "throttled"]):
+            return "rate_limited"
+        elif any(s in msg for s in ["spam", "blocked", "blacklisted", "content denied"]):
+            return "spam_block"
+        elif "authentication" in msg or "credentials" in msg:
+            return "auth_error"
+        elif "socks" in msg or "proxy" in msg:
+            return "proxy_error"
+        elif "timeout" in msg or "connection" in msg:
+            return "connection_error"
+        else:
+            return "unknown_error"
+
+
+class SMTPRotationManager:
+    """Manages rotation between multiple SMTP profiles."""
+    
+    def __init__(self, profiles):
+        self.profiles = profiles
+        self.current_index = 0
+        self.handlers = {}
+        self.failed_profiles = set()
+        self._lock = threading.Lock()
+    
+    def get_next_handler(self):
+        with self._lock:
+            if not self.profiles:
+                return None, "No SMTP profiles available"
+            
+            attempts = 0
+            while attempts < len(self.profiles):
+                profile = self.profiles[self.current_index]
+                self.current_index = (self.current_index + 1) % len(self.profiles)
+                
+                profile_id = profile.get('id') or profile.get('username')
+                
+                if profile_id in self.failed_profiles:
+                    attempts += 1
+                    continue
+                
+                if self._check_limits(profile):
+                    if profile_id not in self.handlers:
+                        self.handlers[profile_id] = SMTPHandler(profile)
+                    
+                    return self.handlers[profile_id], None
+                
+                attempts += 1
+            
+            return None, "All SMTP profiles exhausted or at limit"
+    
+    def _check_limits(self, profile):
+        daily_limit = profile.get('daily_limit', 500)
+        sent_today = profile.get('sent_today', 0)
+        
+        if sent_today >= daily_limit: 
             return False
         
-        self.requests[key].append(now)
+        hourly_limit = profile.get('hourly_limit', 100)
+        if 'handler' in profile:
+            sent_hour = profile['handler'].get_sends_per_hour()
+            if sent_hour >= hourly_limit:
+                return False
+        
         return True
     
-    def get_remaining(self, key):
-        """Get remaining requests for a key."""
-        now = datetime.utcnow().timestamp()
-        
-        if key not in self.requests:
-            return self.max_requests
-        
-        # Remove old requests
-        self.requests[key] = [
-            t for t in self.requests[key]
-            if now - t < self.window_seconds
-        ]
-        
-        return max(0, self.max_requests - len(self.requests[key]))
+    def mark_profile_failed(self, profile_id):
+        with self._lock:
+            self.failed_profiles.add(profile_id)
+            log.warning(f"SMTP Profile {profile_id} marked as failed.")
+    
+    def reset_failed_profiles(self):
+        with self._lock:
+            self.failed_profiles.clear()
+            
+    def close_all(self):
+        with self._lock:
+            for handler in self.handlers.values():
+                try: handler.disconnect()
+                except: pass
+            self.handlers.clear()
 
+class WarmupManager:
+    DEFAULT_SCHEDULE = [
+        {'day': 1, 'limit': 20},
+        {'day': 2, 'limit': 40},
+        {'day': 3, 'limit': 80},
+        {'day': 4, 'limit': 150},
+        {'day': 5, 'limit': 300},
+        {'day': 6, 'limit': 500},
+        {'day': 7, 'limit': 800},
+        {'day': 14, 'limit': 1500},
+        {'day': 30, 'limit': 5000},
+    ]
+    
+    def __init__(self, custom_schedule=None):
+        self.schedule = custom_schedule or self.DEFAULT_SCHEDULE
+    
+    def get_daily_limit(self, start_date, current_date=None):
+        if current_date is None:
+            current_date = datetime.utcnow().date()
+        
+        if isinstance(start_date, datetime):
+            start_date = start_date.date()
+        
+        if not start_date:
+            return self.schedule[0]['limit']
 
-# ==================== ENGAGEMENT SCORING ====================
-
-def calculate_engagement_score(recipient):
-    """Calculate engagement score for a recipient."""
-    score = 0.0
-    
-    if recipient.status == 'Sent':
-        score += 10
-    
-    if recipient.opened_at:
-        score += 20
-        score += min(recipient.open_count or 0, 5) * 5
-    
-    if recipient.clicked_at:
-        score += 30
-        score += min(recipient.click_count or 0, 10) * 3
-    
-    if recipient.replied_at:
-        score += 50
-    
-    if recipient.status == 'Bounced':
-        score -= 50
-    
-    if recipient.status == 'Unsubscribed':
-        score -= 100
-    
-    # Recency bonus
-    if recipient.opened_at: 
-        days_since_open = (datetime.utcnow() - recipient.opened_at).days
-        if days_since_open < 7:
-            score += 10
-        elif days_since_open < 30:
-            score += 5
-    
-    return max(0, min(100, score))
+        days_since_start = (current_date - start_date).days + 1
+        limit = self.schedule[-1]['limit']
+        
+        for tier in self.schedule:
+            if days_since_start <= tier['day']:
+                limit = tier['limit']
+                break
+        
+        return limit
