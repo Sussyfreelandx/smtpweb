@@ -25,57 +25,26 @@ from flask_limiter.util import get_remote_address
 from config import config
 
 # ==========================================
-#   CRITICAL:  GLOBAL PROXY CONFIGURATION
+#   CRITICAL:  SURGICAL PROXY CONFIGURATION
 # ==========================================
 PROXY_HOST = os.environ.get('SMTP_PROXY_HOST')
 PROXY_PORT = int(os.environ.get('SMTP_PROXY_PORT', 1080))
 PROXY_USER = os.environ.get('SMTP_PROXY_USER')
 PROXY_PASS = os.environ.get('SMTP_PROXY_PASS')
 
-if PROXY_HOST: 
-    # Capture the (now patched by eventlet) getaddrinfo
-    original_getaddrinfo = socket.getaddrinfo
-
-    def patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
-        # --- CRITICAL FIX: BYPASS PROXY FOR INTERNAL RENDER SERVICES ---
-        # 1. Check if it's Redis (port 6379)
-        # 2. Check if it's an internal Render hostname (starts with "red-")
-        # 3. Check if it's localhost/127.0.0.1
-        
-        is_redis_port = False
-        try:
-            if port is not None and int(port) == 6379:
-                is_redis_port = True
-        except (ValueError, TypeError):
-            pass
-
-        is_internal_host = False
-        if isinstance(host, str):
-             if host.startswith('red-') or 'onrender.com' in host or host in ('localhost', '127.0.0.1'):
-                 is_internal_host = True
-
-        if is_redis_port or is_internal_host:
-             # Use standard system DNS (no proxy) for internal services
-             return original_getaddrinfo(host, port, family, type, proto, flags)
-        # ---------------------------------------------------------------
-
-        # Force IPv4 (AF_INET) for external traffic (SMTP, etc)
-        if family == 0 or family == socket.AF_INET6:
-            try:
-                return original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
-            except socket.gaierror:
-                pass
-        return original_getaddrinfo(host, port, family, type, proto, flags)
-
-    socket.getaddrinfo = patched_getaddrinfo
-    
-    if PROXY_USER and PROXY_PASS: 
+if PROXY_HOST:
+    # 1. Configure the Proxy Settings in the library
+    if PROXY_USER and PROXY_PASS:
         socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT, username=PROXY_USER, password=PROXY_PASS)
-        print(f"🔌 Web/App Proxy Active: {PROXY_HOST}:{PROXY_PORT} (Auth: Yes)")
+        print(f"🔌 SMTP Proxy Configured: {PROXY_HOST}:{PROXY_PORT} (Auth: Yes)")
     else:
         socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT)
-        print(f"🔌 Web/App Proxy Active: {PROXY_HOST}:{PROXY_PORT} (Auth: No)")
-    
+        print(f"🔌 SMTP Proxy Configured: {PROXY_HOST}:{PROXY_PORT} (Auth: No)")
+
+    # 2. CRITICAL: APPLY PROXY ONLY TO SMTP
+    # We do NOT patch socket.socket globally, because that breaks Redis/Eventlet.
+    # We ONLY wrap the smtplib module. This forces emails to go through the proxy
+    # while Redis continues to use the standard direct connection.
     socks.wrap_module(smtplib)
 
 # ==========================================
