@@ -8,26 +8,17 @@ from app.models import User, Campaign, Recipient, SMTPServer, Suppression
 # ==========================================
 #   FALLBACK PROXY CONFIGURATION
 # ==========================================
-# This only runs if NOT started via Gunicorn (e.g. local debug)
-# to ensure we don't conflict with gunicorn.conf.py patching
+# This runs if started via 'python wsgi.py' directly (local debug)
 PROXY_HOST = os.environ.get('SMTP_PROXY_HOST')
 if PROXY_HOST and not getattr(socket, '_paris_proxy_patched', False):
-    try:
-        # Check if we are in a Gunicorn worker; if so, skip (conf handles it)
-        import eventlet
-        eventlet.monkey_patch()
-    except ImportError:
-        pass
-
     PROXY_PORT = int(os.environ.get('SMTP_PROXY_PORT', 1080))
     PROXY_USER = os.environ.get('SMTP_PROXY_USER')
     PROXY_PASS = os.environ.get('SMTP_PROXY_PASS')
     
     print(f"🔌 WSGI (Fallback): Applying Proxy Patch ({PROXY_HOST}:{PROXY_PORT})...")
     
-    # Save original to prevent recursion
+    # 1. Force IPv4 Resolution
     original_getaddrinfo = socket.getaddrinfo
-    
     def patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
         if family == 0 or family == socket.AF_INET6:
             try:
@@ -35,14 +26,15 @@ if PROXY_HOST and not getattr(socket, '_paris_proxy_patched', False):
             except socket.gaierror:
                 pass
         return original_getaddrinfo(host, port, family, type, proto, flags)
-    
     socket.getaddrinfo = patched_getaddrinfo
     
+    # 2. Configure Proxy
     if PROXY_USER and PROXY_PASS: 
         socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT, username=PROXY_USER, password=PROXY_PASS)
     else:
         socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT)
     
+    # 3. Wrap SMTP
     socks.wrap_module(smtplib)
     socket._paris_proxy_patched = True
 
@@ -62,4 +54,5 @@ def make_shell_context():
     }
 
 if __name__ == '__main__': 
+    # Debug mode uses threading by default, perfectly safe
     socketio.run(app, debug=False, host='0.0.0.0', port=5000)
