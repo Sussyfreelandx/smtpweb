@@ -8,7 +8,7 @@ import smtplib
 from datetime import datetime, timedelta
 from celery import shared_task, current_task
 from flask import url_for, current_app
-from app import db, create_app
+from app import db, create_app, IS_CELERY
 from app.models import Campaign, Recipient, SMTPServer, Suppression, Sequence, SequenceRecipient, DailyStats, HourlyStats
 from app.core_logic.smtp_handler import SMTPHandler, SMTPRotationManager, WarmupManager
 from app.core_logic.personalization import PersonalizationEngine
@@ -18,17 +18,17 @@ from app.utils import log_activity
 logger = logging.getLogger(__name__)
 
 # ==========================================
-#   CRITICAL: WORKER PROXY CONFIGURATION
+#   CRITICAL:  WORKER PROXY CONFIGURATION
 # ==========================================
 # This block ensures the background worker tunnels traffic through your VPS
-# and forces IPv4 to prevent Office365/Gmail connection crashes.
+# and forces IPv4 to prevent Office365/Gmail connection crashes. 
 
 PROXY_HOST = os.environ.get('SMTP_PROXY_HOST')
 PROXY_PORT = int(os.environ.get('SMTP_PROXY_PORT', 1080))
 PROXY_USER = os.environ.get('SMTP_PROXY_USER')
 PROXY_PASS = os.environ.get('SMTP_PROXY_PASS')
 
-if PROXY_HOST:
+if PROXY_HOST: 
     # 1. Save original getaddrinfo to prevent recursion loops
     original_getaddrinfo = socket.getaddrinfo
 
@@ -46,7 +46,7 @@ if PROXY_HOST:
     socket.getaddrinfo = patched_getaddrinfo
     
     # 3. Configure the SOCKS5 Proxy
-    if PROXY_USER and PROXY_PASS:
+    if PROXY_USER and PROXY_PASS: 
         socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT, username=PROXY_USER, password=PROXY_PASS)
         logger.info(f"🔌 Worker Proxy Active: {PROXY_HOST}:{PROXY_PORT} (Auth: Yes)")
     else:
@@ -58,9 +58,32 @@ if PROXY_HOST:
 
 # ==========================================
 
+# ==========================================
+#   FLASK APP & CELERY INSTANCE CACHING
+# ==========================================
+_app_instance = None
+_celery_instance = None
+
+
 def get_app():
-    """Get or create Flask app for Celery tasks."""
-    return create_app()
+    """Get or create Flask app for Celery tasks (cached)."""
+    global _app_instance
+    if _app_instance is None:
+        _app_instance = create_app()
+    return _app_instance
+
+
+def get_celery_app():
+    """Get Celery instance only when running as worker."""
+    global _celery_instance
+    if _celery_instance is None and IS_CELERY:
+        from app import celery
+        _celery_instance = celery
+    return _celery_instance
+
+
+# ==========================================
+
 
 @shared_task(bind=True, max_retries=3)
 def send_campaign_task(self, campaign_id):
@@ -97,23 +120,23 @@ def send_campaign_task(self, campaign_id):
                 smtp_profile = campaign.smtp_profile
                 if not smtp_profile:
                     _fail_campaign(campaign, "No SMTP profile assigned")
-                    return {"status": "error", "message": "No SMTP profile"}
+                    return {"status":  "error", "message": "No SMTP profile"}
                 
                 smtp_config = smtp_profile.to_dict()
                 if not smtp_config.get('password'):
                     _fail_campaign(campaign, "SMTP password not configured")
-                    return {"status": "error", "message": "SMTP password missing"}
+                    return {"status":  "error", "message": "SMTP password missing"}
                 
                 single_smtp_handler = SMTPHandler(smtp_config)
 
             # --- 2. Sending Configuration ---
-            # Batch size: Sends N emails in parallel threads per loop iteration
+            # Batch size:  Sends N emails in parallel threads per loop iteration
             # Default to 20 or user setting
             batch_size = campaign.throttle_amount or 20
             delay_seconds = campaign.throttle_delay or 60
             attachments = campaign.get_attachments()
             
-            log_activity(f"Starting campaign: {campaign.name}. Batch: {batch_size}, Delay: {delay_seconds}s", "INFO")
+            log_activity(f"Starting campaign:  {campaign.name}.  Batch:  {batch_size}, Delay:  {delay_seconds}s", "INFO")
             
             total_sent = 0
             total_failed = 0
@@ -145,7 +168,7 @@ def send_campaign_task(self, campaign_id):
                 if rotation_manager:
                     current_handler, err = rotation_manager.get_next_handler()
                     if not current_handler:
-                        log_activity(f"SMTP rotation exhausted: {err}", "WARNING")
+                        log_activity(f"SMTP rotation exhausted:  {err}", "WARNING")
                         campaign.status = 'Paused'
                         db.session.commit()
                         return {"status": "paused", "message": err}
@@ -168,7 +191,7 @@ def send_campaign_task(self, campaign_id):
                         'subject': p_subject,
                         'html_content': p_body_html,
                         'plain_content': p_body_plain,
-                        'unsubscribe_url': unsubscribe_url,
+                        'unsubscribe_url':  unsubscribe_url,
                         'attachments': attachments,
                         'custom_headers': {'X-Campaign-ID': str(campaign.id)}
                     }
@@ -191,7 +214,7 @@ def send_campaign_task(self, campaign_id):
                     error_msg = res.get('error')
                     
                     recipient = recipient_map.get(email)
-                    if not recipient: continue
+                    if not recipient:  continue
                     
                     if success:
                         recipient.status = 'Sent'
@@ -207,7 +230,7 @@ def send_campaign_task(self, campaign_id):
                         try:
                             from app.webhooks.routes import trigger_email_event
                             trigger_email_event('email.sent', recipient, campaign)
-                        except: pass
+                        except:  pass
                     else:
                         recipient.status = 'Failed'
                         recipient.status_message = error_msg[:250] if error_msg else "Unknown error"
@@ -217,7 +240,7 @@ def send_campaign_task(self, campaign_id):
                         # Classify failure for suppression
                         failure_type = current_handler.classify_failure(error_msg or "")
                         if failure_type == 'hard_bounce':
-                            _add_suppression(recipient.email, f"Hard bounce: {error_msg[:50]}", campaign.user_id)
+                            _add_suppression(recipient.email, f"Hard bounce:  {error_msg[:50]}", campaign.user_id)
                         
                         # Retry logic for connection errors
                         if failure_type == 'connection_error' and recipient.attempts < 3:
@@ -238,7 +261,7 @@ def send_campaign_task(self, campaign_id):
                 if campaign and campaign.status == 'Sending':
                     remaining = campaign.recipients.filter_by(status='Queued').count()
                     if remaining > 0 and delay_seconds > 0:
-                        # log_activity(f"Throttling: waiting {delay_seconds}s. {remaining} remaining.", "INFO")
+                        # log_activity(f"Throttling:  waiting {delay_seconds}s.  {remaining} remaining.", "INFO")
                         time.sleep(delay_seconds)
 
             # Cleanup
@@ -249,7 +272,7 @@ def send_campaign_task(self, campaign_id):
                 
             return {
                 "status": "completed",
-                "sent": total_sent,
+                "sent":  total_sent,
                 "failed": total_failed
             }
 
@@ -257,11 +280,12 @@ def send_campaign_task(self, campaign_id):
             log_activity(f"Campaign sending CRITICAL error: {str(e)}", "ERROR")
             try:
                 campaign = Campaign.query.get(campaign_id)
-                if campaign:
+                if campaign: 
                     campaign.status = 'Failed'
                     db.session.commit()
-            except: pass
+            except:  pass
             raise self.retry(exc=e, countdown=60)
+
 
 # --- Helper Functions ---
 
@@ -270,20 +294,23 @@ def _fail_campaign(campaign, message):
     db.session.commit()
     log_activity(f"Campaign {campaign.id} failed: {message}", "ERROR")
 
+
 def _complete_campaign(campaign, sent, failed):
     campaign.status = 'Completed'
     campaign.completed_at = datetime.utcnow()
     db.session.commit()
-    log_activity(f"Campaign {campaign.name} completed. Sent: {sent}, Failed: {failed}", "SUCCESS")
+    log_activity(f"Campaign {campaign.name} completed.  Sent: {sent}, Failed:  {failed}", "SUCCESS")
     try:
         from app.webhooks.routes import trigger_campaign_event
         trigger_campaign_event('campaign.completed', campaign)
     except: pass
 
+
 def _add_suppression(email, reason, user_id):
     if not Suppression.query.filter_by(email=email).first():
         sup = Suppression(email=email, reason=reason, source='campaign', user_id=user_id)
         db.session.add(sup)
+
 
 def _update_stats(user_id):
     try:
@@ -291,20 +318,21 @@ def _update_stats(user_id):
         hour = datetime.utcnow().hour
         
         daily = DailyStats.query.filter_by(user_id=user_id, date=today).first()
-        if not daily:
+        if not daily: 
             daily = DailyStats(user_id=user_id, date=today)
             db.session.add(daily)
         daily.emails_sent += 1
         
         hourly = HourlyStats.query.filter_by(user_id=user_id, hour_of_day=hour).first()
-        if not hourly:
+        if not hourly: 
             hourly = HourlyStats(user_id=user_id, hour_of_day=hour)
             db.session.add(hourly)
         hourly.total_sent += 1
         
         db.session.commit()
-    except Exception:
+    except Exception: 
         db.session.rollback()
+
 
 def get_rotation_smtp_profiles(user_id):
     """Get active SMTP profiles formatted for RotationManager."""
@@ -325,7 +353,7 @@ def get_rotation_smtp_profiles(user_id):
             continue
             
         password = profile.get_password()
-        if not password: continue
+        if not password:  continue
         
         config = profile.to_dict()
         config['id'] = profile.id # Important for tracking
@@ -333,6 +361,7 @@ def get_rotation_smtp_profiles(user_id):
         valid_profiles.append(config)
         
     return valid_profiles
+
 
 @shared_task(bind=True)
 def send_single_email_task(self, recipient_id, campaign_id):
@@ -342,7 +371,7 @@ def send_single_email_task(self, recipient_id, campaign_id):
         recipient = Recipient.query.get(recipient_id)
         campaign = Campaign.query.get(campaign_id)
         
-        if not recipient or not campaign: return {"status": "error"}
+        if not recipient or not campaign:  return {"status": "error"}
         
         smtp_profile = campaign.smtp_profile
         if not smtp_profile: return {"status": "error", "message": "No SMTP profile"}
@@ -382,6 +411,7 @@ def send_single_email_task(self, recipient_id, campaign_id):
             db.session.commit()
             return {"status": "error", "message": str(e)}
 
+
 @shared_task
 def process_scheduled_campaigns():
     """Check and start scheduled campaigns."""
@@ -389,13 +419,14 @@ def process_scheduled_campaigns():
     with app.app_context():
         now = datetime.utcnow()
         scheduled = Campaign.query.filter(Campaign.status == 'Scheduled', Campaign.scheduled_at <= now).all()
-        for c in scheduled:
+        for c in scheduled: 
             log_activity(f"Starting scheduled campaign: {c.name}", "INFO")
             c.status = 'Sending'
             c.started_at = now
             db.session.commit()
             send_campaign_task.delay(c.id)
         return {"processed": len(scheduled)}
+
 
 @shared_task
 def process_sequence_automation():
@@ -411,7 +442,7 @@ def process_sequence_automation():
             if not sequence: continue
             
             step = sequence.steps.filter_by(step_number=sr.current_step).first()
-            if not step: 
+            if not step:  
                 sr.status = 'Completed'
                 continue
                 
@@ -420,7 +451,7 @@ def process_sequence_automation():
             sr.current_step += 1
             next_step = sequence.steps.filter_by(step_number=sr.current_step).first()
             
-            if next_step:
+            if next_step: 
                 sr.next_action_at = now + timedelta(days=next_step.delay_days, hours=next_step.delay_hours)
             else:
                 sr.status = 'Completed'
@@ -431,17 +462,20 @@ def process_sequence_automation():
         db.session.commit()
         return {"processed": count}
 
+
 @shared_task
 def check_imap_replies():
     """Check IMAP for replies."""
     # Placeholder for IMAP logic
-    return {"status": "checked"}
+    return {"status":  "checked"}
+
 
 @shared_task
 def cleanup_old_data():
     """Cleanup old logs."""
     # Placeholder for cleanup
     return {"status": "cleaned"}
+
 
 @shared_task
 def reset_daily_smtp_counts():
@@ -452,6 +486,7 @@ def reset_daily_smtp_counts():
         updated = SMTPServer.query.filter(SMTPServer.last_reset_date != today).update({'sent_today': 0, 'last_reset_date': today}, synchronize_session=False)
         db.session.commit()
         return {"profiles_reset": updated}
+
 
 @shared_task
 def generate_campaign_report(campaign_id, user_email):
