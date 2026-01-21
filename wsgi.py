@@ -2,6 +2,7 @@ import os
 import socket
 import socks
 import smtplib
+import ipaddress
 from app import create_app, db, socketio, celery
 from app.models import User, Campaign, Recipient, SMTPServer, Suppression
 
@@ -22,8 +23,23 @@ if PROXY_HOST and socket.socket is not socks.socksocket and not getattr(socket, 
     class SmartSocket(socks.socksocket):
         def connect(self, dest_pair):
             host, port = dest_pair
-            # BYPASS PROXY for Redis (red-xxx), localhost, or internal IPs
-            if (isinstance(host, str) and (host.startswith("red-") or "render.internal" in host or host == "127.0.0.1")):
+            is_internal = False
+            
+            # Check Hostnames
+            if isinstance(host, str):
+                if host.startswith("red-") or "render.internal" in host or host == "localhost":
+                    is_internal = True
+            
+            # Check IPs
+            if not is_internal:
+                try:
+                    ip = ipaddress.ip_address(host)
+                    if ip.is_private or ip.is_loopback:
+                        is_internal = True
+                except ValueError:
+                    pass
+
+            if is_internal:
                 self.set_proxy(None)
             else:
                 if PROXY_USER and PROXY_PASS:
