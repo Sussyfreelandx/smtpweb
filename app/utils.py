@@ -1,28 +1,58 @@
 from collections import deque
 from datetime import datetime
-from flask import current_app
 import re
 import csv
 import io
 import json
 import os
-
+import threading
 
 # ==================== LOGGING ====================
 
 LOG_BUFFER = deque(maxlen=200)
-
+_LOG_LOCK = threading.RLock() # Re-entrant lock for thread safety
 
 def log_activity(message, level="INFO"):
-    """Log an activity message."""
-    timestamp = datetime.now().strftime("%H:%M:%S")
-    entry = {
-        "timestamp": timestamp,
-        "message": message,
-        "level": level
-    }
-    LOG_BUFFER.append(entry)
-    print(f"[{timestamp}] {level}: {message}")
+    """Log an activity message safely to prevent recursion loops."""
+    # Prevent recursion if logging triggers another log (e.g. via WebSocket error)
+    if not _LOG_LOCK.acquire(blocking=False):
+        # If we can't get the lock, we are likely in a recursion loop.
+        # Fallback to simple print and return to break the cycle.
+        try:
+            print(f"!!! RECURSION SAFEGUARD !!! [{level}] {message}")
+        except:
+            pass
+        return
+
+    try:
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        entry = {
+            "timestamp": timestamp,
+            "message": str(message),
+            "level": str(level)
+        }
+        
+        LOG_BUFFER.append(entry)
+        print(f"[{timestamp}] {level}: {message}")
+        
+        # Broadcast via WebSocket if available, but wrap in try/except 
+        # to ensure socket errors don't crash the logger
+        try:
+            from flask_socketio import emit
+            from flask import current_app
+            
+            # Only emit if we are in a valid app context and socketio is init
+            if current_app:
+                extensions = getattr(current_app, 'extensions', {})
+                socketio = extensions.get('socketio')
+                if socketio:
+                    socketio.emit('new_log', entry, namespace='/')
+        except (ImportError, RuntimeError, Exception):
+            # Fail silently on websocket errors to prevent recursion
+            pass
+            
+    finally:
+        _LOG_LOCK.release()
 
 
 def get_logs():
@@ -53,8 +83,11 @@ def is_valid_email(email):
         'tempail.com', 'fakeinbox.com', 'trashmail.com'
     }
     
-    domain = email.split('@')[1].lower()
-    if domain in disposable_domains:
+    try:
+        domain = email.split('@')[1].lower()
+        if domain in disposable_domains:
+            return False
+    except IndexError:
         return False
     
     return True
@@ -66,7 +99,7 @@ def validate_email_list(emails):
     invalid = []
     
     for email in emails:
-        email = email.strip().lower()
+        email = str(email).strip().lower()
         if is_valid_email(email):
             valid.append(email)
         else:
