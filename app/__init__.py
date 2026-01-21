@@ -1,29 +1,33 @@
-import sys
+# ==========================================
+#   CRITICAL:   EVENTLET MONKEY PATCHING
+#   MUST RUN BEFORE ANY OTHER IMPORTS
+# ==========================================
 import os
-import socket
+import sys
 
-# ==========================================
-#   CRITICAL:   ENVIRONMENT SETUP
-# ==========================================
-
-# 1. Detect Celery
+# Detect if we are running in a Celery worker context
 IS_CELERY = 'celery' in sys.argv[0] or (len(sys.argv) > 1 and 'celery' in sys.argv[1])
 
-# 2. Detect if Gunicorn/Eventlet already patched the system
-IS_ALREADY_PATCHED = 'eventlet' in str(socket.socket)
-
-# 3. Apply Patching ONLY if needed
-if not IS_CELERY and not IS_ALREADY_PATCHED:
+# Determine if we should patch. 
+# We patch if:
+# 1. We are NOT a celery worker (Gunicorn handles web requests)
+# 2. OR we are a celery worker using eventlet/gevent (optional, but safe to patch)
+# 3. We haven't explicitly disabled it via env var
+if not os.environ.get('SKIP_EVENTLET_PATCH'):
     try:
         import eventlet
+        # Patch everything including socket, ssl, threading, time, etc.
         eventlet.monkey_patch()
+        print("✅ Eventlet monkey_patch() applied successfully.")
     except ImportError:
+        # Eventlet not installed (e.g. running standard python app.py locally)
         pass
 
 # ==========================================
-#   STANDARD IMPORTS
+#   STANDARD IMPORTS (NOW SAFE)
 # ==========================================
 import logging
+import socket
 import socks
 import smtplib
 import ssl
@@ -48,7 +52,23 @@ PROXY_PORT = int(os.environ.get('SMTP_PROXY_PORT', 1080))
 PROXY_USER = os.environ.get('SMTP_PROXY_USER')
 PROXY_PASS = os.environ.get('SMTP_PROXY_PASS')
 
-if PROXY_HOST:  
+if PROXY_HOST:
+    # 1. Save original getaddrinfo to prevent recursion
+    original_getaddrinfo = socket.getaddrinfo
+
+    def patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+        # Force IPv4 (AF_INET) if we are resolving a hostname
+        if family == 0 or family == socket.AF_INET6:
+            try:
+                return original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+            except socket.gaierror:
+                pass
+        return original_getaddrinfo(host, port, family, type, proto, flags)
+
+    # 2. Apply IPv4 Force Hack
+    socket.getaddrinfo = patched_getaddrinfo
+
+    # 3. Configure Proxy
     if PROXY_USER and PROXY_PASS:
         socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT, username=PROXY_USER, password=PROXY_PASS)
         print(f"🔌 SMTP Proxy Configured: {PROXY_HOST}:{PROXY_PORT} (Auth: Yes)")
@@ -56,6 +76,7 @@ if PROXY_HOST:
         socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT)
         print(f"🔌 SMTP Proxy Configured: {PROXY_HOST}:{PROXY_PORT} (Auth: No)")
 
+    # 4. Wrap smtplib
     socks.wrap_module(smtplib)
 
 # ==========================================
@@ -121,8 +142,8 @@ def get_clean_redis_url():
         '.render.com' in redis_url
     )
     
-    print(f"DEBUG: Original REDIS_URL: {redis_url[:50]}...")
-    print(f"DEBUG: Internal connection: {is_internal}, SSL required: {use_ssl}")
+    # print(f"DEBUG: Original REDIS_URL: {redis_url[:50]}...")
+    # print(f"DEBUG: Internal connection: {is_internal}, SSL required: {use_ssl}")
     
     # Step 4: Convert URL scheme if needed for external connections
     if use_ssl and redis_url.startswith('redis://'):
@@ -149,9 +170,17 @@ def create_app(config_name=None):
     login.init_app(app)
     csrf.init_app(app)
     cache.init_app(app)
-    limiter.init_app(app)
+    
+    # Configure Limiter - Use memory if no Redis to prevent startup warnings
+    limiter_storage = "memory://"
+    if os.environ.get('REDIS_URL'):
+        limiter_storage = os.environ.get('REDIS_URL')
+    
+    limiter.init_app(app, storage_uri=limiter_storage)
+    
     CORS(app, resources={r"/api/*": {"origins": "*"}})
     
+    # IMPORTANT: Force eventlet async mode for SocketIO when running on Gunicorn
     async_mode = 'eventlet' if not IS_CELERY else 'threading'
     
     # Get clean Redis URL for SocketIO
