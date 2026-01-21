@@ -8,12 +8,15 @@ from celery import shared_task, current_task
 from flask import url_for, current_app
 from app import db, create_app, IS_CELERY
 from app.models import Campaign, Recipient, SMTPServer, Suppression, Sequence, SequenceRecipient, DailyStats, HourlyStats
-from app.core_logic.smtp_handler import SMTPHandler, SMTPRotationManager, WarmupManager
+from app.core_logic.smtp_handler import SMTPHandler, SMTPRotationManager, WarmupManager, apply_proxy_patch
 from app.core_logic.personalization import PersonalizationEngine
 from app.utils import log_activity
 
 # Configure module-level logger
 logger = logging.getLogger(__name__)
+
+# Ensure Proxy Patch is applied (Idempotent call)
+apply_proxy_patch()
 
 # ==========================================
 #   FLASK APP & CELERY INSTANCE CACHING
