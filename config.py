@@ -1,6 +1,7 @@
 import os
 import ssl
 from datetime import timedelta
+from sqlalchemy.pool import NullPool  # <--- CRITICAL IMPORT
 
 basedir = os.path.abspath(os.path.dirname(__file__))
 
@@ -12,9 +13,20 @@ class Config:
     SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL') or 'sqlite:///' + os.path.join(basedir, 'app.db')
     if SQLALCHEMY_DATABASE_URI and SQLALCHEMY_DATABASE_URI.startswith('postgres://'):
         SQLALCHEMY_DATABASE_URI = SQLALCHEMY_DATABASE_URI.replace('postgres://', 'postgresql://', 1)
+    
     SQLALCHEMY_TRACK_MODIFICATIONS = False
-    SQLALCHEMY_POOL_SIZE = 10
-    SQLALCHEMY_MAX_OVERFLOW = 20
+    
+    # --- CRITICAL FIX FOR EVENTLET/SQLALCHEMY LOCKING ISSUES ---
+    # We disable the connection pool (NullPool) because Eventlet's monkey-patching
+    # of the threading module breaks SQLAlchemy's default QueuePool locking.
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        'poolclass': NullPool,
+        'pool_pre_ping': True
+    }
+    # These settings are ignored when using NullPool, but we keep them for reference
+    # SQLALCHEMY_POOL_SIZE = 10
+    # SQLALCHEMY_MAX_OVERFLOW = 20
+    # -----------------------------------------------------------
     
     # --- REDIS CONFIGURATION (CRITICAL FIX FOR RENDER) ---
     _redis_url = os.environ.get('REDIS_URL') or 'redis://localhost:6379/0'
@@ -33,8 +45,6 @@ class Config:
     CELERY_RESULT_BACKEND = _redis_url
     
     # Render requires SSL for Redis.
-    # Note: We configure ssl_cert_reqs=None in __init__.py for the worker,
-    # but setting these here helps Flask components know we intend to use SSL.
     if os.environ.get('RENDER'):
         CELERY_BROKER_USE_SSL = {'ssl_cert_reqs': ssl.CERT_NONE}
         CELERY_REDIS_BACKEND_USE_SSL = {'ssl_cert_reqs': ssl.CERT_NONE}
