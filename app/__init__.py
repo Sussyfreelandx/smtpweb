@@ -31,7 +31,6 @@ cache = Cache()
 limiter = Limiter(key_func=get_remote_address)
 
 # Initialize global Celery object
-# This must exist at module level for 'celery -A wsgi.celery' to work
 celery = Celery(__name__)
 
 # ==========================================
@@ -40,7 +39,6 @@ celery = Celery(__name__)
 def get_clean_redis_url():
     """
     Get and clean the Redis URL for Render deployment.
-    Determines if SSL is needed based on URL format.
     """
     redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
     
@@ -57,7 +55,7 @@ def get_clean_redis_url():
         not redis_url.startswith('rediss://')
     )
     
-    # Determine SSL requirement
+    # Determine SSL requirement (External needs SSL)
     use_ssl = not is_internal and (
         redis_url.startswith('rediss://') or 
         '.render.com' in redis_url
@@ -73,9 +71,9 @@ def init_celery(app, celery):
     """Configure the global Celery object with app config."""
     redis_url, use_ssl = get_clean_redis_url()
     
-    print(f"DEBUG: Celery connecting to {redis_url[:30]}... SSL={use_ssl}")
+    print(f"DEBUG: Celery init -> Broker: {redis_url[:30]}... SSL={use_ssl}")
     
-    # Explicitly update configuration to prevent AMQP fallback
+    # Update Celery config explicitly
     celery.conf.update(
         broker_url=redis_url,
         result_backend=redis_url,
@@ -85,6 +83,7 @@ def init_celery(app, celery):
         result_serializer='json',
         timezone='UTC',
         enable_utc=True,
+        # IMPORTANT: Force transport options to avoid fallback issues
         broker_transport_options={
             'visibility_timeout': 3600,
             'socket_timeout': 30,
@@ -93,7 +92,7 @@ def init_celery(app, celery):
         }
     )
     
-    # Apply SSL settings if needed
+    # Apply SSL settings if needed (Render external Redis)
     if use_ssl:
         ssl_opts = {'ssl_cert_reqs': ssl.CERT_NONE}
         celery.conf.update(
@@ -138,8 +137,6 @@ def create_app(config_name=None):
     redis_url, use_ssl = get_clean_redis_url()
     async_mode = 'eventlet'
     
-    # SocketIO needs 'redis://' scheme even with SSL options on some versions,
-    # but let's stick to standard behavior first.
     socketio.init_app(
         app,
         message_queue=redis_url,
@@ -147,11 +144,11 @@ def create_app(config_name=None):
         async_mode=async_mode
     )
     
-    # Folders
+    # Create Folders
     os.makedirs(app.config.get('UPLOAD_FOLDER', 'app/static/uploads'), exist_ok=True)
     os.makedirs(app.config.get('EMAIL_TEMPLATES_FOLDER', 'app/static/email_templates'), exist_ok=True)
     
-    # Blueprints
+    # Register Blueprints
     from app.main import bp as main_bp
     app.register_blueprint(main_bp)
     
@@ -161,14 +158,11 @@ def create_app(config_name=None):
     from app.webhooks import bp as webhooks_bp
     app.register_blueprint(webhooks_bp, url_prefix='/webhooks')
     
-    # Error Handlers
     register_error_handlers(app)
     
-    # Logging
     if not app.debug and not app.testing:
         setup_logging(app)
     
-    # CLI Commands
     register_cli_commands(app)
     register_context_processors(app)
     
@@ -211,7 +205,6 @@ def register_error_handlers(app):
 def setup_logging(app):
     if not os.path.exists('logs'):
         os.mkdir('logs')
-    
     file_handler = RotatingFileHandler('logs/paris_sender.log', maxBytes=10240000, backupCount=10)
     file_handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'))
     file_handler.setLevel(logging.INFO)
@@ -257,5 +250,5 @@ def register_context_processors(app):
             'features': app.config.get('FEATURES', {})
         }
 
-# Initialize app immediately
+# Initialize app
 app = create_app()
