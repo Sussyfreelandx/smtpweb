@@ -55,7 +55,7 @@ def create_app(config_name=None):
     
     # Configure SocketIO
     async_mode = 'eventlet' 
-    redis_url = get_redis_url() # Use helper function
+    redis_url = get_redis_url()
     
     socketio.init_app(
         app,
@@ -81,20 +81,7 @@ def create_app(config_name=None):
     # Setup Logging
     if not app.debug and not app.testing:
         setup_logging(app)
-        
-    # Setup Sentry
-    if app.config.get('SENTRY_DSN'):
-        try:
-            import sentry_sdk
-            from sentry_sdk.integrations.flask import FlaskIntegration
-            sentry_sdk.init(
-                dsn=app.config['SENTRY_DSN'],
-                integrations=[FlaskIntegration()],
-                traces_sample_rate=0.1
-            )
-        except ImportError: 
-            pass
-            
+    
     return app
 
 def get_redis_url():
