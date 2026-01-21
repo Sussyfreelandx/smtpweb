@@ -231,7 +231,8 @@ class PersonalizationEngine:
         
         try:
             unsubscribe_token = self.recipient.get_tracking_token('unsubscribe')
-            context['unsubscribe_link'] = url_for('main.unsubscribe', token=unsubscribe_token, _external=True)
+            # FIXED: Point to tracking.unsubscribe
+            context['unsubscribe_link'] = url_for('tracking.unsubscribe', token=unsubscribe_token, _external=True)
             context['unsubscribe_url'] = context['unsubscribe_link']
         except Exception:
             context['unsubscribe_link'] = "#"
@@ -305,7 +306,8 @@ class PersonalizationEngine:
         
         try:
             open_token = self.recipient.get_tracking_token('open')
-            open_url = url_for('main.track_open', token=open_token, _external=True)
+            # FIXED: Point to tracking.track_open
+            open_url = url_for('tracking.track_open', campaign_id=self.campaign.id, recipient_id=self.recipient.id, _external=True)
             pixel_img = f'<img src="{open_url}" width="1" height="1" alt="" border="0" style="height:1px;width:1px;border:0;display:none;"/>'
             
             if '</body>' in html_content.lower():
@@ -328,8 +330,8 @@ class PersonalizationEngine:
                 
                 try:
                     encoded_url = base64.urlsafe_b64encode(original_url.encode()).decode()
-                    click_token = self.recipient.get_tracking_token('click', payload={'url': encoded_url})
-                    tracked_url = url_for('main.track_click', token=click_token, _external=True)
+                    # FIXED: Point to tracking.track_click
+                    tracked_url = url_for('tracking.track_click', campaign_id=self.campaign.id, recipient_id=self.recipient.id, url=encoded_url, _external=True)
                     return f'{match.group(1)}="{tracked_url}"'
                 except Exception:
                     return match.group(0)
