@@ -1,19 +1,22 @@
 import sys
 import os
+import socket
 
 # ==========================================
-#   CRITICAL: DETECT ENVIRONMENT FIRST
+#   CRITICAL: ENVIRONMENT SETUP
 # ==========================================
-# Check if we are running as a Celery Worker
+
+# 1. Detect Celery
 IS_CELERY = 'celery' in sys.argv[0] or (len(sys.argv) > 1 and 'celery' in sys.argv[1])
 
-# ==========================================
-#   CRITICAL: EVENTLET PATCHING
-# ==========================================
-# Must happen BEFORE 'import socket', 'import ssl', etc.
-# We ONLY patch if we are the Web Server. 
-# Celery Workers must stay un-patched (Prefork) for connection stability.
-if not IS_CELERY:
+# 2. Detect if Gunicorn/Eventlet already patched the system
+# If socket.socket is from 'eventlet', we are already patched.
+IS_ALREADY_PATCHED = 'eventlet' in str(socket.socket)
+
+# 3. Apply Patching ONLY if needed
+# - Skip if we are Celery (needs standard sockets for Redis stability)
+# - Skip if already patched (prevents "Working outside of request context" error)
+if not IS_CELERY and not IS_ALREADY_PATCHED:
     try:
         import eventlet
         eventlet.monkey_patch()
@@ -21,10 +24,9 @@ if not IS_CELERY:
         pass
 
 # ==========================================
-#   STANDARD IMPORTS (Safe now)
+#   STANDARD IMPORTS
 # ==========================================
 import logging
-import socket
 import socks  # pip install PySocks
 import smtplib
 import ssl
@@ -50,7 +52,6 @@ PROXY_USER = os.environ.get('SMTP_PROXY_USER')
 PROXY_PASS = os.environ.get('SMTP_PROXY_PASS')
 
 if PROXY_HOST:
-    # Configure proxy settings
     if PROXY_USER and PROXY_PASS:
         socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT, username=PROXY_USER, password=PROXY_PASS)
         print(f"🔌 SMTP Proxy Configured: {PROXY_HOST}:{PROXY_PORT} (Auth: Yes)")
@@ -59,7 +60,6 @@ if PROXY_HOST:
         print(f"🔌 SMTP Proxy Configured: {PROXY_HOST}:{PROXY_PORT} (Auth: No)")
 
     # CRITICAL: Only route SMTP (Email) through the proxy.
-    # Leave Redis and DB on standard direct connections.
     socks.wrap_module(smtplib)
 
 # ==========================================
@@ -255,8 +255,6 @@ def make_celery(app):
     if redis_url and redis_url.startswith('redis://') and os.environ.get('RENDER'):
         redis_url = redis_url.replace('redis://', 'rediss://', 1)
 
-    print(f"DEBUG: Celery connecting to {redis_url}")
-
     celery_app = Celery(
         app.import_name,
         backend=redis_url,
@@ -268,9 +266,7 @@ def make_celery(app):
         broker_url=redis_url,
         result_backend=redis_url,
         
-        # SSL Configuration for Render - CRITICAL FIX
-        # We only set ssl_cert_reqs. 
-        # 'ssl_context' and 'ssl_ca_certs' are removed to prevent TypeError.
+        # SSL Configuration for Render
         broker_use_ssl={'ssl_cert_reqs': ssl.CERT_NONE},
         redis_backend_use_ssl={'ssl_cert_reqs': ssl.CERT_NONE},
         
