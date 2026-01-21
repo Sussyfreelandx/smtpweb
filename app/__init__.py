@@ -49,58 +49,61 @@ PROXY_USER = os.environ.get('SMTP_PROXY_USER')
 PROXY_PASS = os.environ.get('SMTP_PROXY_PASS')
 
 if PROXY_HOST:
-    # --- FIX 1: RESTORE ORIGINAL SOCKET FOR PYSOCKS ---
-    # PySocks breaks if it uses Eventlet's GreenSocket. 
-    # We must give it the original standard library socket.
+    print(f"🔌 Configuring Proxy: {PROXY_HOST}:{PROXY_PORT}")
+    
+    # --- FIX 1: RETRIEVE ORIGINAL SOCKET MODULE ---
+    # We need the real, underlying OS socket module to bypass Eventlet
     try:
-        # If eventlet patched socket, retrieve original from internal patcher
         from eventlet.patcher import original
-        real_socket_module = original('socket')
+        real_socket = original('socket')
     except (ImportError, AttributeError):
-        # Fallback if eventlet isn't active
-        import socket as real_socket_module
+        import socket as real_socket
 
-    # 1. Force PySocks to inherit from the REAL OS socket, not GreenSocket
-    socks.socket = real_socket_module.socket
+    # --- FIX 2: FORCE PYSOCKS TO USE REAL SOCKET ---
+    # This prevents the recursion error by breaking the inheritance chain
+    # socks.socksocket will now inherit from standard socket, not GreenSocket
+    socks.socket = real_socket.socket
     
-    # 2. Restore missing attributes that PySocks expects on the socket module
-    # Eventlet sometimes hides these or PySocks looks for them on the wrong object
-    if not hasattr(socks.socket, 'error'):
-        socks.socket.error = real_socket_module.error
-    if not hasattr(socks.socket, 'timeout'):
-        socks.socket.timeout = real_socket_module.timeout
-    if not hasattr(socks.socket, 'SOCK_STREAM'):
-        socks.socket.SOCK_STREAM = real_socket_module.SOCK_STREAM
-    if not hasattr(socks.socket, 'SOCK_DGRAM'):
-        socks.socket.SOCK_DGRAM = real_socket_module.SOCK_DGRAM
-    if not hasattr(socks.socket, 'AF_INET'):
-        socks.socket.AF_INET = real_socket_module.AF_INET
+    # --- FIX 3: RESTORE ATTRIBUTES ONTO SOCKS MODULE ---
+    # PySocks looks for constants/exceptions on the 'socket' module it imported.
+    # Since that module is patched, we must manually restore specific attributes
+    # directly onto the socks.socket class or the socket module alias if used.
     
-    # 3. Patch the original getaddrinfo that PySocks uses internally
-    # This ensures DNS resolution happens via IPv4 inside the proxy logic
-    _orig_getaddrinfo = real_socket_module.getaddrinfo
+    # Common constants PySocks needs
+    for attr in ['AF_INET', 'AF_INET6', 'SOCK_STREAM', 'SOCK_DGRAM', 'SOL_TCP', 'TCP_NODELAY']:
+        if hasattr(real_socket, attr):
+            setattr(socks.socket, attr, getattr(real_socket, attr))
+
+    # Exceptions are critical
+    if hasattr(real_socket, 'error'):
+        socks.socket.error = real_socket.error
+    if hasattr(real_socket, 'timeout'):
+        socks.socket.timeout = real_socket.timeout
+
+    # --- FIX 4: IPv4 FORCE HACK (DNS Resolution) ---
+    # We patch the *original* getaddrinfo that PySocks uses internally
+    _orig_getaddrinfo = real_socket.getaddrinfo
 
     def patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
-        # Force IPv4 (AF_INET) if resolving a hostname
-        if family == 0 or family == real_socket_module.AF_INET6:
+        # If family is unspecified (0) or IPv6, try forcing IPv4 first
+        # This fixes crashes on platforms where IPv6 is flaky via proxy
+        if family == 0 or family == real_socket.AF_INET6:
             try:
-                return _orig_getaddrinfo(host, port, real_socket_module.AF_INET, type, proto, flags)
+                return _orig_getaddrinfo(host, port, real_socket.AF_INET, type, proto, flags)
             except Exception:
                 pass
         return _orig_getaddrinfo(host, port, family, type, proto, flags)
 
     # Apply the IPv4 patch to the real socket module
-    real_socket_module.getaddrinfo = patched_getaddrinfo
+    real_socket.getaddrinfo = patched_getaddrinfo
 
-    # --- FIX 2: CONFIGURE PROXY ---
+    # --- FIX 5: CONFIGURE PROXY ---
     if PROXY_USER and PROXY_PASS:
         socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT, username=PROXY_USER, password=PROXY_PASS)
-        print(f"🔌 SMTP Proxy Configured: {PROXY_HOST}:{PROXY_PORT} (Auth: Yes)")
     else:
         socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT)
-        print(f"🔌 SMTP Proxy Configured: {PROXY_HOST}:{PROXY_PORT} (Auth: No)")
 
-    # --- FIX 3: WRAP SMTPLIB ---
+    # --- FIX 6: WRAP SMTPLIB ---
     socks.wrap_module(smtplib)
 
 # ==========================================
