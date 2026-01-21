@@ -5,8 +5,10 @@ import smtplib
 from app import create_app, db, socketio, celery
 from app.models import User, Campaign, Recipient, SMTPServer, Suppression
 
-# Apply Proxy Patch fallback (if not handled by gunicorn config)
-# This check ensures we don't double-patch, which causes recursion errors.
+# ==========================================
+#   FALLBACK PROXY CONFIGURATION
+# ==========================================
+# Only runs if NOT patched by gunicorn.conf.py (e.g., local debugging)
 PROXY_HOST = os.environ.get('SMTP_PROXY_HOST')
 if PROXY_HOST and not getattr(socket, '_paris_proxy_patched', False):
     try:
@@ -19,10 +21,11 @@ if PROXY_HOST and not getattr(socket, '_paris_proxy_patched', False):
     PROXY_USER = os.environ.get('SMTP_PROXY_USER')
     PROXY_PASS = os.environ.get('SMTP_PROXY_PASS')
     
-    print(f"🔌 WSGI: Applying Proxy Patch ({PROXY_HOST}:{PROXY_PORT})...")
+    print(f"🔌 WSGI (Fallback): Applying Proxy Patch ({PROXY_HOST}:{PROXY_PORT})...")
     
     # Save original to prevent recursion
     original_getaddrinfo = socket.getaddrinfo
+    
     def patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
         if family == 0 or family == socket.AF_INET6:
             try:
@@ -30,6 +33,7 @@ if PROXY_HOST and not getattr(socket, '_paris_proxy_patched', False):
             except socket.gaierror:
                 pass
         return original_getaddrinfo(host, port, family, type, proto, flags)
+    
     socket.getaddrinfo = patched_getaddrinfo
     
     if PROXY_USER and PROXY_PASS: 
@@ -39,6 +43,8 @@ if PROXY_HOST and not getattr(socket, '_paris_proxy_patched', False):
     
     socks.wrap_module(smtplib)
     socket._paris_proxy_patched = True
+
+# ==========================================
 
 # Create app instance
 app = create_app()
