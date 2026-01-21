@@ -4,14 +4,15 @@ import os
 #   GUNICORN CONFIGURATION (EVENTLET)
 # ==========================================
 
-# CRITICAL: Must match the worker class used in render.yaml and requirements
+# CRITICAL: Must be 'eventlet' to support WebSockets and monkey-patching.
+# DO NOT use 'gthread' or 'sync' here, or it will crash with RuntimeError.
 worker_class = 'eventlet'
 
-# Eventlet workers can handle thousands of concurrent connections via greenlets,
-# so we typically only need 1 process per CPU core.
+# For Eventlet, 1 worker per CPU core is usually sufficient as it handles
+# concurrency via greenlets, not threads.
 workers = 1
 
-# Threads are not used with the eventlet worker class
+# Threads are NOT used with the eventlet worker class.
 threads = 1
 
 timeout = 120
@@ -19,5 +20,5 @@ keepalive = 5
 
 # Logging
 loglevel = 'info'
-accesslog = '-'  # Log to stdout
-errorlog = '-'   # Log to stderr
+accesslog = '-'
+errorlog = '-'
