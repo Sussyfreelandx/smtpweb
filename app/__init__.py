@@ -19,15 +19,15 @@ from flask_limiter.util import get_remote_address
 from config import config
 
 # ==========================================
-#   CRITICAL: EVENTLET & PROXY SETUP
+#   CRITICAL: ENVIRONMENT SETUP
 # ==========================================
 
 # Detect if we are running as a Celery Worker
 IS_CELERY = 'celery' in sys.argv[0] or (len(sys.argv) > 1 and 'celery' in sys.argv[1])
 
 # 1. Eventlet Patching
-# - Gunicorn needs us to patch explicitly.
-# - Celery (-P eventlet) patches itself, so we SKIP it to prevent conflicts.
+# ONLY patch if we are the Web Server. 
+# Celery Workers (prefork) MUST NOT be patched, or SSL/Redis will break.
 if not IS_CELERY:
     try:
         import eventlet
@@ -35,15 +35,14 @@ if not IS_CELERY:
     except ImportError:
         pass
 
-# 2. Surgical Proxy Configuration
-# We only want to proxy SMTP (Emails), NOT Redis or Database.
+# 2. Surgical Proxy Configuration (SMTP Only)
 PROXY_HOST = os.environ.get('SMTP_PROXY_HOST')
 PROXY_PORT = int(os.environ.get('SMTP_PROXY_PORT', 1080))
 PROXY_USER = os.environ.get('SMTP_PROXY_USER')
 PROXY_PASS = os.environ.get('SMTP_PROXY_PASS')
 
 if PROXY_HOST:
-    # Set the default proxy settings (used by socks.socksocket)
+    # Configure the proxy settings
     if PROXY_USER and PROXY_PASS:
         socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT, username=PROXY_USER, password=PROXY_PASS)
         print(f"🔌 SMTP Proxy Configured: {PROXY_HOST}:{PROXY_PORT} (Auth: Yes)")
@@ -51,9 +50,8 @@ if PROXY_HOST:
         socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT)
         print(f"🔌 SMTP Proxy Configured: {PROXY_HOST}:{PROXY_PORT} (Auth: No)")
 
-    # CRITICAL: ONLY patch smtplib. Do NOT patch the global socket module.
-    # This ensures Redis/DB connections go direct (fast/internal), 
-    # while Emails go through the Proxy (bypassing Render blocks).
+    # CRITICAL: Only route SMTP (Email) through the proxy.
+    # Leave Redis, Database, and internal traffic on standard sockets.
     socks.wrap_module(smtplib)
 
 # ==========================================
@@ -94,11 +92,14 @@ def create_app(config_name=None):
     CORS(app, resources={r"/api/*": {"origins": "*"}})
     
     # Initialize SocketIO
+    # When running as a worker, we force 'threading' mode to avoid Eventlet conflicts
+    async_mode = 'eventlet' if not IS_CELERY else 'threading'
+    
     socketio.init_app(
         app,
         message_queue=os.environ.get('REDIS_URL'), 
         cors_allowed_origins="*",
-        async_mode='eventlet'
+        async_mode=async_mode
     )
     
     # Create upload directories
@@ -233,13 +234,11 @@ def make_celery(app):
     from celery import Celery
     
     # 1. Get the Redis URL - PRIORITIZE CLEAN CONFIG
-    # We use app.config first because config.py already cleaned the URL.
-    # We fallback to environ but MUST strip trailing slashes manually to be safe.
     redis_url = app.config.get('CELERY_BROKER_URL')
     if not redis_url:
         redis_url = os.environ.get('REDIS_URL', '')
     
-    # AGGRESSIVE CLEANING
+    # AGGRESSIVE CLEANING - Remove any double slashes at the end
     redis_url = redis_url.strip()
     while redis_url.endswith('/'):
         redis_url = redis_url[:-1]
@@ -247,6 +246,8 @@ def make_celery(app):
     # 2. CRITICAL FIX: If using SSL options, URL MUST be 'rediss://'
     if redis_url and redis_url.startswith('redis://') and os.environ.get('RENDER'):
         redis_url = redis_url.replace('redis://', 'rediss://', 1)
+        
+    print(f"DEBUG: Celery connecting to {redis_url}")
 
     celery_app = Celery(
         app.import_name,
