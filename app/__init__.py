@@ -1,10 +1,33 @@
-import os
 import sys
+import os
+
+# ==========================================
+#   CRITICAL: DETECT ENVIRONMENT FIRST
+# ==========================================
+# Check if we are running as a Celery Worker
+IS_CELERY = 'celery' in sys.argv[0] or (len(sys.argv) > 1 and 'celery' in sys.argv[1])
+
+# ==========================================
+#   CRITICAL: EVENTLET PATCHING
+# ==========================================
+# Must happen BEFORE 'import socket', 'import ssl', etc.
+# We ONLY patch if we are the Web Server. 
+# Celery Workers must stay un-patched (Prefork) for connection stability.
+if not IS_CELERY:
+    try:
+        import eventlet
+        eventlet.monkey_patch()
+    except ImportError:
+        pass
+
+# ==========================================
+#   STANDARD IMPORTS (Safe now)
+# ==========================================
 import logging
 import socket
 import socks  # pip install PySocks
 import smtplib
-import ssl    # Required for Redis SSL checks
+import ssl
 from logging.handlers import RotatingFileHandler
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
@@ -19,30 +42,15 @@ from flask_limiter.util import get_remote_address
 from config import config
 
 # ==========================================
-#   CRITICAL: ENVIRONMENT SETUP
+#   SURGICAL PROXY CONFIGURATION
 # ==========================================
-
-# Detect if we are running as a Celery Worker
-IS_CELERY = 'celery' in sys.argv[0] or (len(sys.argv) > 1 and 'celery' in sys.argv[1])
-
-# 1. Eventlet Patching
-# ONLY patch if we are the Web Server. 
-# Celery Workers (prefork) MUST NOT be patched, or SSL/Redis will break.
-if not IS_CELERY:
-    try:
-        import eventlet
-        eventlet.monkey_patch()
-    except ImportError:
-        pass
-
-# 2. Surgical Proxy Configuration (SMTP Only)
 PROXY_HOST = os.environ.get('SMTP_PROXY_HOST')
 PROXY_PORT = int(os.environ.get('SMTP_PROXY_PORT', 1080))
 PROXY_USER = os.environ.get('SMTP_PROXY_USER')
 PROXY_PASS = os.environ.get('SMTP_PROXY_PASS')
 
 if PROXY_HOST:
-    # Configure the proxy settings
+    # Configure proxy settings
     if PROXY_USER and PROXY_PASS:
         socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT, username=PROXY_USER, password=PROXY_PASS)
         print(f"🔌 SMTP Proxy Configured: {PROXY_HOST}:{PROXY_PORT} (Auth: Yes)")
@@ -51,7 +59,7 @@ if PROXY_HOST:
         print(f"🔌 SMTP Proxy Configured: {PROXY_HOST}:{PROXY_PORT} (Auth: No)")
 
     # CRITICAL: Only route SMTP (Email) through the proxy.
-    # Leave Redis, Database, and internal traffic on standard sockets.
+    # Leave Redis and DB on standard direct connections.
     socks.wrap_module(smtplib)
 
 # ==========================================
@@ -92,7 +100,7 @@ def create_app(config_name=None):
     CORS(app, resources={r"/api/*": {"origins": "*"}})
     
     # Initialize SocketIO
-    # When running as a worker, we force 'threading' mode to avoid Eventlet conflicts
+    # Worker = Threading (Stable) | Web = Eventlet (Fast)
     async_mode = 'eventlet' if not IS_CELERY else 'threading'
     
     socketio.init_app(
@@ -238,7 +246,7 @@ def make_celery(app):
     if not redis_url:
         redis_url = os.environ.get('REDIS_URL', '')
     
-    # AGGRESSIVE CLEANING - Remove any double slashes at the end
+    # AGGRESSIVE CLEANING
     redis_url = redis_url.strip()
     while redis_url.endswith('/'):
         redis_url = redis_url[:-1]
@@ -246,7 +254,7 @@ def make_celery(app):
     # 2. CRITICAL FIX: If using SSL options, URL MUST be 'rediss://'
     if redis_url and redis_url.startswith('redis://') and os.environ.get('RENDER'):
         redis_url = redis_url.replace('redis://', 'rediss://', 1)
-        
+
     print(f"DEBUG: Celery connecting to {redis_url}")
 
     celery_app = Celery(
