@@ -6,6 +6,7 @@ Flask-Migrate
 Flask-Login
 python-dotenv
 Werkzeug
+Flask-Session  # <-- ADDED: For server-side session management
 
 # Core Logic & Email
 css_inline
