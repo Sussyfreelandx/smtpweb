@@ -295,6 +295,6 @@ def make_celery(app):
     celery_app.Task = ContextTask
     return celery_app
 
-
-_app = create_app()
-celery = make_celery(_app)
+# --- VARIABLE RENAMED TO 'app' SO GUNICORN CAN FIND IT ---
+app = create_app()
+celery = make_celery(app)
