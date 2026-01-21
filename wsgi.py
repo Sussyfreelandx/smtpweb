@@ -8,10 +8,12 @@ from app.models import User, Campaign, Recipient, SMTPServer, Suppression
 # ==========================================
 #   FALLBACK PROXY CONFIGURATION
 # ==========================================
-# Only runs if NOT patched by gunicorn.conf.py (e.g., local debugging)
+# This only runs if NOT started via Gunicorn (e.g. local debug)
+# to ensure we don't conflict with gunicorn.conf.py patching
 PROXY_HOST = os.environ.get('SMTP_PROXY_HOST')
 if PROXY_HOST and not getattr(socket, '_paris_proxy_patched', False):
     try:
+        # Check if we are in a Gunicorn worker; if so, skip (conf handles it)
         import eventlet
         eventlet.monkey_patch()
     except ImportError:
@@ -46,7 +48,6 @@ if PROXY_HOST and not getattr(socket, '_paris_proxy_patched', False):
 
 # ==========================================
 
-# Create app instance
 app = create_app()
 
 @app.shell_context_processor
