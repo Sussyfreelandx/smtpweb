@@ -1,3 +1,10 @@
+# ==========================================
+#   CRITICAL FIX: EVENTLET MONKEY PATCHING
+#   MUST BE THE VERY FIRST LINES OF CODE
+# ==========================================
+import eventlet
+eventlet.monkey_patch()
+
 import os
 import logging
 import socket
@@ -26,6 +33,7 @@ PROXY_USER = os.environ.get('SMTP_PROXY_USER')
 PROXY_PASS = os.environ.get('SMTP_PROXY_PASS')
 
 if PROXY_HOST: 
+    # Capture the (now patched by eventlet) getaddrinfo
     original_getaddrinfo = socket.getaddrinfo
 
     def patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
