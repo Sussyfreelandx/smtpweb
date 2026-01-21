@@ -1,7 +1,7 @@
 import os
 import eventlet
 
-# Worker configuration
+# Gunicorn config variables
 workers = 1
 worker_class = 'eventlet'
 worker_connections = 1000
@@ -13,9 +13,10 @@ def post_worker_init(worker):
     Called just after a worker has been initialized.
     We patch here to ensure it happens before any app code runs.
     """
+    # 1. Patch Eventlet immediately
     eventlet.monkey_patch()
     
-    # Also apply our custom proxy patch here to ensure it's active in the worker
+    # 2. Apply Proxy Patch (if configured)
     apply_proxy_patch()
 
 def apply_proxy_patch():
@@ -24,20 +25,24 @@ def apply_proxy_patch():
     import socks
     import smtplib
     
+    # Only patch if not already patched to prevent RecursionError
+    if getattr(socket, '_paris_proxy_patched', False):
+        return
+
     PROXY_HOST = os.environ.get('SMTP_PROXY_HOST')
     PROXY_PORT = int(os.environ.get('SMTP_PROXY_PORT', 1080))
     PROXY_USER = os.environ.get('SMTP_PROXY_USER')
     PROXY_PASS = os.environ.get('SMTP_PROXY_PASS')
 
-    # Check if we've already patched to avoid recursion
-    if PROXY_HOST and not getattr(socket, '_paris_proxy_patched', False):
+    if PROXY_HOST:
         print(f"🔌 Worker: Applying Proxy Patch ({PROXY_HOST}:{PROXY_PORT})...")
         
-        # Save original getaddrinfo
+        # Save original getaddrinfo to prevent infinite recursion
         original_getaddrinfo = socket.getaddrinfo
 
         def patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
             # Force IPv4 (AF_INET) if we are resolving a hostname
+            # This prevents PySocks from failing on IPv6 addresses
             if family == 0 or family == socket.AF_INET6:
                 try:
                     return original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
@@ -45,15 +50,15 @@ def apply_proxy_patch():
                     pass
             return original_getaddrinfo(host, port, family, type, proto, flags)
 
+        # Apply the patches
         socket.getaddrinfo = patched_getaddrinfo
         
-        # Configure Proxy
         if PROXY_USER and PROXY_PASS: 
             socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT, username=PROXY_USER, password=PROXY_PASS)
         else:
             socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT)
         
-        # Patch smtplib
         socks.wrap_module(smtplib)
         
+        # Mark as patched
         socket._paris_proxy_patched = True
