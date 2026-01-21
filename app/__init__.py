@@ -1,29 +1,29 @@
+import sys
+import os
+import socket
+
 # ==========================================
 #   CRITICAL:   EVENTLET MONKEY PATCHING
 #   MUST RUN BEFORE ANY OTHER IMPORTS
 # ==========================================
-import os
-import sys
 
-# Detect if we are running in a Celery worker context
+# 1. Detect if we are running in a context that needs Eventlet
+# We only patch if we are NOT in a Celery worker (Celery handles its own concurrency)
 IS_CELERY = 'celery' in sys.argv[0] or (len(sys.argv) > 1 and 'celery' in sys.argv[1])
 
-# Determine if we should patch. 
-if not os.environ.get('SKIP_EVENTLET_PATCH'):
+# 2. Apply Eventlet Patching EARLY
+if not IS_CELERY and not os.environ.get('SKIP_EVENTLET_PATCH'):
     try:
         import eventlet
-        # Patch everything including socket, ssl, threading, time, etc.
         eventlet.monkey_patch()
         print("✅ Eventlet monkey_patch() applied successfully.")
     except ImportError:
-        # Eventlet not installed
         pass
 
 # ==========================================
 #   STANDARD IMPORTS
 # ==========================================
 import logging
-import socket
 import socks
 import smtplib
 import ssl
@@ -52,7 +52,7 @@ if PROXY_HOST:
     print(f"🔌 Configuring Proxy: {PROXY_HOST}:{PROXY_PORT}")
     
     # --- FIX 1: RETRIEVE ORIGINAL SOCKET MODULE ---
-    # We need the real, underlying OS socket module to bypass Eventlet
+    # We must grab the original 'socket' module hidden by Eventlet
     try:
         from eventlet.patcher import original
         real_socket = original('socket')
@@ -60,34 +60,35 @@ if PROXY_HOST:
         import socket as real_socket
 
     # --- FIX 2: FORCE PYSOCKS TO USE REAL SOCKET ---
-    # This prevents the recursion error by breaking the inheritance chain
-    # socks.socksocket will now inherit from standard socket, not GreenSocket
+    # This prevents the RecursionError.
+    # By default, socks.socksocket inherits from socket.socket. 
+    # If socket.socket is patched (GreenSocket), the recursion happens.
+    # We force socks.socket to be the REAL OS socket class.
     socks.socket = real_socket.socket
     
     # --- FIX 3: RESTORE ATTRIBUTES ONTO SOCKS MODULE ---
-    # PySocks looks for constants/exceptions on the 'socket' module it imported.
-    # Since that module is patched, we must manually restore specific attributes
-    # directly onto the socks.socket class or the socket module alias if used.
-    
-    # Common constants PySocks needs
+    # Since we swapped the underlying socket class, we must ensure
+    # PySocks can still find the constants it expects on 'socks.socket'
     for attr in ['AF_INET', 'AF_INET6', 'SOCK_STREAM', 'SOCK_DGRAM', 'SOL_TCP', 'TCP_NODELAY']:
         if hasattr(real_socket, attr):
-            setattr(socks.socket, attr, getattr(real_socket, attr))
+            try:
+                setattr(socks.socket, attr, getattr(real_socket, attr))
+            except AttributeError:
+                pass
 
-    # Exceptions are critical
+    # Restore Exceptions (Critical for try/except blocks in PySocks)
     if hasattr(real_socket, 'error'):
         socks.socket.error = real_socket.error
     if hasattr(real_socket, 'timeout'):
         socks.socket.timeout = real_socket.timeout
 
     # --- FIX 4: IPv4 FORCE HACK (DNS Resolution) ---
-    # We patch the *original* getaddrinfo that PySocks uses internally
+    # We patch the *original* getaddrinfo that PySocks uses internally to prevent IPv6 issues
     _orig_getaddrinfo = real_socket.getaddrinfo
 
     def patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
-        # If family is unspecified (0) or IPv6, try forcing IPv4 first
-        # This fixes crashes on platforms where IPv6 is flaky via proxy
-        if family == 0 or family == real_socket.AF_INET6:
+        # Force IPv4 (AF_INET) if family is unspecified (0) or explicitly IPv6
+        if family == 0 or family == getattr(real_socket, 'AF_INET6', 999):
             try:
                 return _orig_getaddrinfo(host, port, real_socket.AF_INET, type, proto, flags)
             except Exception:
@@ -104,6 +105,7 @@ if PROXY_HOST:
         socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT)
 
     # --- FIX 6: WRAP SMTPLIB ---
+    # This instructs smtplib to use the modified socks.socksocket (which is now based on the real socket)
     socks.wrap_module(smtplib)
 
 # ==========================================
@@ -183,7 +185,7 @@ def create_app(config_name=None):
     csrf.init_app(app)
     cache.init_app(app)
     
-    # Configure Limiter via app.config
+    # Configure Limiter via app.config (Fixes TypeError in newer Flask-Limiter)
     limiter_storage = "memory://"
     if os.environ.get('REDIS_URL'):
         limiter_storage = os.environ.get('REDIS_URL')
@@ -193,7 +195,7 @@ def create_app(config_name=None):
     
     CORS(app, resources={r"/api/*": {"origins": "*"}})
     
-    # Force eventlet async mode
+    # Force eventlet async mode if not in Celery
     async_mode = 'eventlet' if not IS_CELERY else 'threading'
     
     redis_url, _ = get_clean_redis_url()
@@ -374,6 +376,9 @@ def make_celery(flask_app):
     celery_app.Task = ContextTask
     return celery_app
 
+# =========================================================
+#   APP INSTANTIATION
+# =========================================================
 app = create_app()
 
 if IS_CELERY:
