@@ -4,6 +4,7 @@ import os
 import smtplib
 import socket
 import socks
+import ipaddress
 from datetime import datetime, timedelta
 from celery import shared_task
 from flask import url_for
@@ -30,8 +31,23 @@ if PROXY_HOST and socket.socket is not socks.socksocket and not getattr(socket, 
     class SmartSocket(socks.socksocket):
         def connect(self, dest_pair):
             host, port = dest_pair
-            # BYPASS PROXY for Redis
-            if (isinstance(host, str) and (host.startswith("red-") or "render.internal" in host or host == "127.0.0.1")):
+            is_internal = False
+            
+            # Check Hostnames
+            if isinstance(host, str):
+                if host.startswith("red-") or "render.internal" in host or host == "localhost":
+                    is_internal = True
+            
+            # Check IPs
+            if not is_internal:
+                try:
+                    ip = ipaddress.ip_address(host)
+                    if ip.is_private or ip.is_loopback:
+                        is_internal = True
+                except ValueError:
+                    pass
+
+            if is_internal:
                 self.set_proxy(None)
             else:
                 if PROXY_USER and PROXY_PASS:
@@ -57,9 +73,8 @@ if PROXY_HOST and socket.socket is not socks.socksocket and not getattr(socket, 
 
 @shared_task(bind=True, max_retries=3)
 def send_campaign_task(self, campaign_id):
-    # ... (Rest of the file remains exactly the same as previous update)
-    # Just ensure the code below this point matches the previous `tasks.py` content
-    # I will truncate here for brevity as the logic below is unchanged.
+    # ... (Rest of the file remains unchanged, omitted for brevity)
+    # The fix is in the proxy configuration block above.
     try:
         campaign = Campaign.query.get(campaign_id)
         if not campaign:
