@@ -50,42 +50,49 @@ PROXY_PASS = os.environ.get('SMTP_PROXY_PASS')
 
 if PROXY_HOST:
     # --- FIX 1: RESTORE ORIGINAL SOCKET FOR PYSOCKS ---
-    # PySocks needs the real, OS-level socket to function without recursion loops
-    # or AttributeErrors when running under Eventlet.
+    # PySocks breaks if it uses Eventlet's GreenSocket. 
+    # We must give it the original standard library socket.
     try:
-        # If eventlet patched socket, we can retrieve the original from eventlet.patcher
+        # If eventlet patched socket, retrieve original from internal patcher
         from eventlet.patcher import original
-        real_socket = original('socket')
+        real_socket_module = original('socket')
     except (ImportError, AttributeError):
-        # Fallback if eventlet isn't actually active or structure changed
-        import socket as real_socket
+        # Fallback if eventlet isn't active
+        import socket as real_socket_module
 
-    # Force PySocks to use the REAL socket class, not the GreenSocket
-    socks.socket = real_socket.socket
+    # 1. Force PySocks to inherit from the REAL OS socket, not GreenSocket
+    socks.socket = real_socket_module.socket
     
-    # Ensure PySocks can see standard constants (SOCK_STREAM, etc.)
-    # even if it tries to look them up on the instance
+    # 2. Restore missing attributes that PySocks expects on the socket module
+    # Eventlet sometimes hides these or PySocks looks for them on the wrong object
+    if not hasattr(socks.socket, 'error'):
+        socks.socket.error = real_socket_module.error
+    if not hasattr(socks.socket, 'timeout'):
+        socks.socket.timeout = real_socket_module.timeout
     if not hasattr(socks.socket, 'SOCK_STREAM'):
-        socks.socket.SOCK_STREAM = real_socket.SOCK_STREAM
-        socks.socket.SOCK_DGRAM = real_socket.SOCK_DGRAM
+        socks.socket.SOCK_STREAM = real_socket_module.SOCK_STREAM
+    if not hasattr(socks.socket, 'SOCK_DGRAM'):
+        socks.socket.SOCK_DGRAM = real_socket_module.SOCK_DGRAM
+    if not hasattr(socks.socket, 'AF_INET'):
+        socks.socket.AF_INET = real_socket_module.AF_INET
     
-    # --- FIX 2: IPv4 FORCE HACK (Still needed for some proxies) ---
-    # We patch the *original* getaddrinfo that PySocks will use internally
-    _orig_getaddrinfo = real_socket.getaddrinfo
+    # 3. Patch the original getaddrinfo that PySocks uses internally
+    # This ensures DNS resolution happens via IPv4 inside the proxy logic
+    _orig_getaddrinfo = real_socket_module.getaddrinfo
 
     def patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
-        # Force IPv4 (AF_INET) if we are resolving a hostname
-        if family == 0 or family == socket.AF_INET6:
+        # Force IPv4 (AF_INET) if resolving a hostname
+        if family == 0 or family == real_socket_module.AF_INET6:
             try:
-                return _orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
-            except socket.gaierror:
+                return _orig_getaddrinfo(host, port, real_socket_module.AF_INET, type, proto, flags)
+            except Exception:
                 pass
         return _orig_getaddrinfo(host, port, family, type, proto, flags)
 
-    # Apply the IPv4 patch to the real socket module used by PySocks
-    real_socket.getaddrinfo = patched_getaddrinfo
+    # Apply the IPv4 patch to the real socket module
+    real_socket_module.getaddrinfo = patched_getaddrinfo
 
-    # --- FIX 3: CONFIGURE PROXY ---
+    # --- FIX 2: CONFIGURE PROXY ---
     if PROXY_USER and PROXY_PASS:
         socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT, username=PROXY_USER, password=PROXY_PASS)
         print(f"🔌 SMTP Proxy Configured: {PROXY_HOST}:{PROXY_PORT} (Auth: Yes)")
@@ -93,8 +100,7 @@ if PROXY_HOST:
         socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT)
         print(f"🔌 SMTP Proxy Configured: {PROXY_HOST}:{PROXY_PORT} (Auth: No)")
 
-    # --- FIX 4: WRAP SMTPLIB ---
-    # This instructs smtplib to use the configured socks proxy
+    # --- FIX 3: WRAP SMTPLIB ---
     socks.wrap_module(smtplib)
 
 # ==========================================
@@ -120,7 +126,6 @@ def get_celery():
     """Get or create the Celery instance lazily."""
     global celery
     if celery is None:  
-        # Import app here to avoid circular imports, but usually app is created globally below
         celery = make_celery(create_app())
     return celery
 
@@ -131,37 +136,25 @@ def get_celery():
 def get_clean_redis_url():
     """
     Get and clean the Redis URL for Render deployment.
-    Determines if SSL is needed based on URL format.
-    
-    Internal Render Redis:  redis://red-xxxxx:6379 (NO SSL)
-    External Render Redis: rediss://...render.com:6379 (SSL)
     """
     redis_url = os.environ.get('REDIS_URL', '')
     
     if not redis_url:
         return None, False
     
-    # Step 1: Strip whitespace and trailing slashes
     redis_url = redis_url.strip().rstrip('/')
     
-    # Step 2: Detect if this is an internal Render Redis URL
-    # Internal URLs:  redis://red-xxxxx:6379 (no .render.com domain)
-    # External URLs: rediss://....render.com:6379
     is_internal = (
         redis_url.startswith('redis://red-') and 
         '.render.com' not in redis_url and
         not redis_url.startswith('rediss://')
     )
     
-    # Step 3: Determine SSL requirement
-    # - Internal connections:  NO SSL
-    # - External connections or rediss:// URLs: YES SSL
     use_ssl = not is_internal and (
         redis_url.startswith('rediss://') or 
         '.render.com' in redis_url
     )
     
-    # Step 4: Convert URL scheme if needed for external connections
     if use_ssl and redis_url.startswith('redis://'):
         redis_url = redis_url.replace('redis://', 'rediss://', 1)
     
@@ -187,8 +180,7 @@ def create_app(config_name=None):
     csrf.init_app(app)
     cache.init_app(app)
     
-    # FIX for TypeError: Limiter.init_app() got an unexpected keyword argument 'storage_uri'
-    # Flask-Limiter 3.x+ requires configuration via app.config keys
+    # Configure Limiter via app.config
     limiter_storage = "memory://"
     if os.environ.get('REDIS_URL'):
         limiter_storage = os.environ.get('REDIS_URL')
@@ -198,10 +190,9 @@ def create_app(config_name=None):
     
     CORS(app, resources={r"/api/*": {"origins": "*"}})
     
-    # IMPORTANT: Force eventlet async mode for SocketIO when running on Gunicorn
+    # Force eventlet async mode
     async_mode = 'eventlet' if not IS_CELERY else 'threading'
     
-    # Get clean Redis URL for SocketIO
     redis_url, _ = get_clean_redis_url()
     
     socketio.init_app(
@@ -333,14 +324,8 @@ def register_context_processors(app):
         }
 
 
-# =========================================================
-#   FIXED CELERY CONFIGURATION
-# =========================================================
 def make_celery(flask_app):
-    """Create Celery instance with proper SSL handling for Render."""
     from celery import Celery
-    
-    # Use the centralized Redis URL helper
     redis_url, use_ssl = get_clean_redis_url()
     
     if not redis_url:
@@ -348,15 +333,12 @@ def make_celery(flask_app):
         redis_url = 'redis://localhost:6379'
         use_ssl = False
     
-    print(f"DEBUG:  Celery connecting to {redis_url[:50]}...  (SSL: {use_ssl})")
-    
     celery_app = Celery(
         flask_app.import_name,
         backend=redis_url,
         broker=redis_url
     )
     
-    # Build configuration
     celery_config = {
         'broker_url': redis_url,
         'result_backend': redis_url,
@@ -375,7 +357,6 @@ def make_celery(flask_app):
         'enable_utc': True
     }
     
-    # CRITICAL: Only add SSL config if actually using SSL (external connection)
     if use_ssl:
         celery_config['broker_use_ssl'] = {'ssl_cert_reqs': ssl.CERT_NONE}
         celery_config['redis_backend_use_ssl'] = {'ssl_cert_reqs': ssl.CERT_NONE}
@@ -390,12 +371,7 @@ def make_celery(flask_app):
     celery_app.Task = ContextTask
     return celery_app
 
-# =========================================================
-#   APP INSTANTIATION (Fixes "Failed to find attribute 'app'")
-# =========================================================
-# Gunicorn looks for an object named 'app' in this file.
 app = create_app()
 
-# Initialize Celery
 if IS_CELERY:
     celery = make_celery(app)
