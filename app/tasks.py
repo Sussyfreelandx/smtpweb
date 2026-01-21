@@ -12,8 +12,6 @@ from app.utils import log_activity
 
 logger = logging.getLogger(__name__)
 
-# NOTE: Proxy patching is handled in app/__init__.py to prevent recursion errors.
-
 def get_app():
     from app import create_app
     return create_app()
@@ -23,7 +21,6 @@ def send_campaign_task(self, campaign_id):
     """
     Main task to send a campaign.
     """
-    # Ensure we have an app context
     if not current_app:
         app = get_app()
         ctx = app.app_context()
@@ -37,6 +34,16 @@ def send_campaign_task(self, campaign_id):
         if not campaign:
             log_activity(f"Campaign {campaign_id} not found", "ERROR")
             return {"status": "error", "message": "Campaign not found"}
+        
+        # --- CRASH RECOVERY LOGIC ---
+        # Reset any recipients stuck in 'Sending' state from a previous crash
+        stuck_recipients = Recipient.query.filter_by(campaign_id=campaign_id, status='Sending').all()
+        if stuck_recipients:
+            log_activity(f"Recovering {len(stuck_recipients)} stuck recipients for Campaign {campaign.name}", "WARNING")
+            for r in stuck_recipients:
+                r.status = 'Queued'
+            db.session.commit()
+        # ----------------------------
         
         if campaign.status != 'Sending':
             log_activity(f"Campaign {campaign.name} is not in Sending status (Current: {campaign.status})", "WARNING")
