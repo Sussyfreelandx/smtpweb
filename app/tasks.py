@@ -2,6 +2,8 @@ import time
 import logging
 import os
 import smtplib
+import socket
+import socks
 from datetime import datetime, timedelta
 from celery import shared_task
 from flask import url_for
@@ -14,8 +16,39 @@ from app.utils import log_activity
 # Configure module-level logger
 logger = logging.getLogger(__name__)
 
-# NOTE: Proxy patching and Eventlet monkey patching are now handled centrally 
-# in gunicorn.conf.py or wsgi.py to prevent RecursionErrors.
+# ==========================================
+#   WORKER-SPECIFIC PROXY PATCH
+# ==========================================
+# The Celery worker runs as a separate process. It needs its own patch.
+PROXY_HOST = os.environ.get('SMTP_PROXY_HOST')
+if PROXY_HOST and not getattr(socket, '_paris_proxy_patched', False):
+    PROXY_PORT = int(os.environ.get('SMTP_PROXY_PORT', 1080))
+    PROXY_USER = os.environ.get('SMTP_PROXY_USER')
+    PROXY_PASS = os.environ.get('SMTP_PROXY_PASS')
+    
+    logger.info(f"🔌 Worker: Applying Proxy Patch ({PROXY_HOST}:{PROXY_PORT})")
+    
+    # 1. Force IPv4 Resolution
+    original_getaddrinfo = socket.getaddrinfo
+    def patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+        if family == 0 or family == socket.AF_INET6:
+            try:
+                return original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+            except socket.gaierror:
+                pass
+        return original_getaddrinfo(host, port, family, type, proto, flags)
+    socket.getaddrinfo = patched_getaddrinfo
+    
+    # 2. Configure Proxy
+    if PROXY_USER and PROXY_PASS:
+        socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT, username=PROXY_USER, password=PROXY_PASS)
+    else:
+        socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT)
+    
+    # 3. Patch smtplib
+    socks.wrap_module(smtplib)
+    socket._paris_proxy_patched = True
+# ==========================================
 
 @shared_task(bind=True, max_retries=3)
 def send_campaign_task(self, campaign_id):
@@ -120,7 +153,6 @@ def send_campaign_task(self, campaign_id):
             db.session.commit()
             
             # --- 4. Send Batch ---
-            # 5 workers used for robust threaded sending
             results = current_handler.send_bulk_threaded(email_tasks, max_workers=5)
             
             # --- 5. Process Results ---
