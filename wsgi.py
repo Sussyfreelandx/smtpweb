@@ -1,7 +1,3 @@
-import eventlet
-# Ensure patching is active (idempotent)
-eventlet.monkey_patch()
-
 import os
 import socket
 import socks
@@ -9,16 +5,23 @@ import smtplib
 from app import create_app, db, socketio, celery
 from app.models import User, Campaign, Recipient, SMTPServer, Suppression
 
-# Apply Proxy Patch if not already applied by gunicorn.conf.py
-# (This handles the case where wsgi.py is run directly or by a different runner)
+# Apply Proxy Patch fallback (if not handled by gunicorn config)
+# This check ensures we don't double-patch, which causes recursion errors.
 PROXY_HOST = os.environ.get('SMTP_PROXY_HOST')
 if PROXY_HOST and not getattr(socket, '_paris_proxy_patched', False):
+    try:
+        import eventlet
+        eventlet.monkey_patch()
+    except ImportError:
+        pass
+
     PROXY_PORT = int(os.environ.get('SMTP_PROXY_PORT', 1080))
     PROXY_USER = os.environ.get('SMTP_PROXY_USER')
     PROXY_PASS = os.environ.get('SMTP_PROXY_PASS')
     
     print(f"🔌 WSGI: Applying Proxy Patch ({PROXY_HOST}:{PROXY_PORT})...")
     
+    # Save original to prevent recursion
     original_getaddrinfo = socket.getaddrinfo
     def patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
         if family == 0 or family == socket.AF_INET6:
