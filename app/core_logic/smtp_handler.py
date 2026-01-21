@@ -14,6 +14,7 @@ from email.header import Header
 from datetime import datetime, timedelta
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 log = logging.getLogger(__name__)
 
@@ -29,7 +30,6 @@ class ProxySMTP(smtplib.SMTP):
     """
     def _get_socket(self, host, port, timeout):
         if PROXY_HOST:
-            # Use PySocks to create the connection through the proxy
             log.debug(f"Connecting to {host}:{port} via proxy {PROXY_HOST}:{PROXY_PORT}")
             return socks.create_connection(
                 (host, port),
@@ -87,7 +87,7 @@ class SMTPHandler:
         # Connection management
         self._connection = None
         self._max_connection_age = 300
-        self._lock = threading.Lock() # Re-added lock import locally if needed, but using standard threading here
+        self._lock = threading.Lock()
         
         # Rate limiting tracking
         self._recent_sends = deque(maxlen=1000)
@@ -212,6 +212,18 @@ class SMTPHandler:
                 finally:
                     self._connection = None
 
+    def test_connection(self):
+        """
+        Test SMTP connection credentials.
+        Required for the 'Test Connection' button in UI.
+        """
+        if not self.smtp_server or not self.username:
+            return False, "SMTP configuration incomplete"
+        
+        success, msg = self.connect()
+        self.disconnect() # Always disconnect after a test
+        return success, msg
+
     def send_email_sync(self, to_email, subject, html_content, plain_content=None,
                         unsubscribe_url=None, attachments=None, custom_headers=None):
         """
@@ -312,8 +324,6 @@ class SMTPHandler:
             return "connection_error"
         else:
             return "unknown_error"
-
-import threading
 
 class SMTPRotationManager:
     def __init__(self, profiles):
