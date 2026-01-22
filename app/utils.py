@@ -42,7 +42,6 @@ def is_valid_email(email):
     if not email:
         return False
     
-    # Robust regex for email validation
     pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
     if not re.match(pattern, email):
         return False
@@ -54,11 +53,8 @@ def is_valid_email(email):
         'tempail.com', 'fakeinbox.com', 'trashmail.com'
     }
     
-    try:
-        domain = email.split('@')[1].lower()
-        if domain in disposable_domains:
-            return False
-    except IndexError:
+    domain = email.split('@')[1].lower()
+    if domain in disposable_domains:
         return False
     
     return True
@@ -84,100 +80,18 @@ def validate_email_list(emails):
 def allowed_file(filename, allowed_extensions=None):
     """Check if a file extension is allowed."""
     if allowed_extensions is None:
-        allowed_extensions = {'png', 'jpg', 'jpeg', 'gif', 'pdf', 'csv', 'xlsx', 'txt'}
+        allowed_extensions = {'png', 'jpg', 'jpeg', 'gif', 'pdf', 'csv', 'xlsx'}
     
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in allowed_extensions
 
-# ENHANCEMENT: Unified parser for both CSV and TXT
-def parse_recipient_file(file, campaign_id):
-    """
-    Parse a file (CSV or TXT) and create recipients.
-    Routes to the correct parser based on extension.
-    """
-    filename = file.filename.lower()
-    
-    if filename.endswith('.csv'):
-        return _parse_csv_file(file, campaign_id)
-    elif filename.endswith('.txt'):
-        return _parse_txt_file(file, campaign_id)
-    else:
-        return 0, ["Unsupported file format. Please upload .csv or .txt"]
 
-def _parse_txt_file(file, campaign_id):
-    """Parse a TXT file (one email per line)."""
-    from app import db
-    from app.models import Recipient, Suppression
-    
-    try:
-        content = file.stream.read().decode("UTF-8", errors='ignore')
-        lines = content.splitlines()
-        
-        added = 0
-        skipped = 0
-        errors = []
-        
-        for row_num, line in enumerate(lines, start=1):
-            email = line.strip().lower()
-            
-            # Skip empty lines
-            if not email:
-                continue
-                
-            # Basic cleanup if user pasted name <email> format in txt
-            if '<' in email and '>' in email:
-                match = re.search(r'<([^>]+)>', email)
-                if match:
-                    email = match.group(1)
-
-            if not is_valid_email(email):
-                skipped += 1
-                if len(errors) < 10:
-                    errors.append(f"Line {row_num}: Invalid email '{email}'")
-                continue
-            
-            # Check if already exists in campaign
-            existing = Recipient.query.filter_by(campaign_id=campaign_id, email=email).first()
-            if existing:
-                skipped += 1
-                continue
-            
-            # Check suppression
-            is_suppressed = Suppression.query.filter_by(email=email).first()
-            
-            # For TXT, we don't have extra data like firstname, so we just store email
-            recipient = Recipient(
-                email=email,
-                campaign_id=campaign_id,
-                data=json.dumps({'email': email}),
-                status='Suppressed' if is_suppressed else 'Queued',
-                status_message='Suppressed by global list' if is_suppressed else None
-            )
-            
-            db.session.add(recipient)
-            added += 1
-            
-            if added % 500 == 0:
-                db.session.commit()
-        
-        db.session.commit()
-        
-        if skipped > 0:
-            errors.insert(0, f"Skipped {skipped} invalid or duplicate emails")
-            
-        return added, errors
-
-    except Exception as e:
-        return 0, [f"Error parsing TXT: {str(e)}"]
-
-def _parse_csv_file(file, campaign_id):
+def parse_csv_file(file, campaign_id):
     """Parse a CSV file and create recipients."""
     from app import db
     from app.models import Recipient, Suppression
     
     try:
-        # Reset file pointer if it was read to check extension/mime
-        file.stream.seek(0)
-        stream = io.StringIO(file.stream.read().decode("UTF-8-sig", errors='ignore'), newline=None)
+        stream = io.StringIO(file.stream.read().decode("UTF-8-sig"), newline=None)
         csv_reader = csv.DictReader(stream)
         
         # Normalize headers
