@@ -9,10 +9,10 @@ Werkzeug==3.0.1
 SQLAlchemy==2.0.23
 Celery==5.3.6
 redis==5.0.1
-# UPDATED: These versions fix the Python 3.13 build error
-gevent==24.2.1
-greenlet==3.0.3
-eventlet==0.35.2
+# Using slightly older, rock-solid versions for stability on Python 3.11
+gevent==23.9.1
+greenlet==3.0.1
+eventlet==0.33.3
 gunicorn==21.2.0
 requests==2.31.0
 dnspython==2.6.1
