@@ -1,3 +1,5 @@
+import os
+import ssl
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
@@ -10,10 +12,58 @@ from flask_caching import Cache
 from flask_cors import CORS
 from celery import Celery
 from config import config
-import os
-import ssl
 
-# Initialize extensions
+# ==========================================
+# CELERY BROKER CONFIGURATION - MUST BE FIRST
+# ==========================================
+# Read Redis URL from environment BEFORE creating Celery instance
+_redis_url = os.environ.get('REDIS_URL', '')
+
+# Debug print for troubleshooting
+if _redis_url:
+    print(f"🔍 REDIS_URL found: {_redis_url[:40]}...")
+else:
+    print("⚠️ REDIS_URL not set, Celery will use default broker")
+
+# Clean and convert to SSL for Render
+if _redis_url:
+    if _redis_url.endswith('/'):
+        _redis_url = _redis_url.rstrip('/')
+    if _redis_url.startswith('redis://') and os.environ.get('RENDER'):
+        _redis_url = _redis_url.replace('redis://', 'rediss://', 1)
+        print(f"🔒 Converted to SSL: {_redis_url[:40]}...")
+
+# Create Celery with Redis broker if available
+if _redis_url:
+    celery = Celery(
+        __name__,
+        broker=_redis_url,
+        backend=_redis_url,
+        include=['app.tasks']
+    )
+    # Configure SSL for Render Redis
+    celery.conf.update(
+        broker_use_ssl={'ssl_cert_reqs': ssl.CERT_NONE},
+        redis_backend_use_ssl={'ssl_cert_reqs': ssl.CERT_NONE},
+        broker_connection_retry_on_startup=True,
+    )
+    print(f"✅ Celery configured with Redis broker")
+else:
+    celery = Celery(__name__)
+    print("⚠️ Celery using default configuration")
+
+# Configure Celery defaults
+celery.conf.update(
+    task_serializer='json',
+    accept_content=['json'],
+    result_serializer='json',
+    timezone='UTC',
+    enable_utc=True,
+)
+
+# ==========================================
+# FLASK EXTENSIONS
+# ==========================================
 db = SQLAlchemy()
 migrate = Migrate()
 login = LoginManager()
@@ -23,9 +73,6 @@ csrf = CSRFProtect()
 socketio = SocketIO(cors_allowed_origins="*", async_mode='threading')
 limiter = Limiter(key_func=get_remote_address)
 cache = Cache()
-
-# Celery instance - will be configured in create_app or celery_worker.py
-celery = Celery(__name__)
 
 
 def create_app(config_name=None):
@@ -44,8 +91,7 @@ def create_app(config_name=None):
     socketio.init_app(
         app,
         async_mode='threading',
-        cors_allowed_origins="*",
-        message_queue=app.config.get('SOCKETIO_MESSAGE_QUEUE')
+        cors_allowed_origins="*"
     )
     
     # Initialize rate limiter
@@ -56,40 +102,16 @@ def create_app(config_name=None):
     
     # Initialize cache
     try:
-        cache_config = {
-            'CACHE_TYPE': app.config.get('CACHE_TYPE', 'SimpleCache'),
-            'CACHE_DEFAULT_TIMEOUT': app.config.get('CACHE_DEFAULT_TIMEOUT', 300)
-        }
-        redis_url = app.config.get('CACHE_REDIS_URL')
-        if redis_url and app.config.get('CACHE_TYPE') == 'RedisCache':
-            cache_config['CACHE_REDIS_URL'] = redis_url
-        cache.init_app(app, config=cache_config)
+        cache.init_app(app, config={
+            'CACHE_TYPE': 'SimpleCache',
+            'CACHE_DEFAULT_TIMEOUT': 300
+        })
     except Exception as e:
         app.logger.warning(f"Cache initialization failed: {e}")
-        cache.init_app(app, config={'CACHE_TYPE': 'SimpleCache'})
     
     CORS(app, resources={r"/api/*": {"origins": "*"}})
     
-    # Configure Celery with app config
-    redis_url = app.config.get('CELERY_BROKER_URL')
-    if redis_url:
-        celery.conf.update(
-            broker_url=redis_url,
-            result_backend=redis_url,
-            task_serializer='json',
-            accept_content=['json'],
-            result_serializer='json',
-            timezone='UTC',
-            enable_utc=True,
-            broker_connection_retry_on_startup=True
-        )
-        
-        if os.environ.get('RENDER'):
-            celery.conf.update(
-                broker_use_ssl={'ssl_cert_reqs': ssl.CERT_NONE},
-                redis_backend_use_ssl={'ssl_cert_reqs': ssl.CERT_NONE}
-            )
-    
+    # Set up Celery context task
     class ContextTask(celery.Task):
         def __call__(self, *args, **kwargs):
             with app.app_context():
@@ -107,14 +129,14 @@ def create_app(config_name=None):
     try:
         from app.tracking import bp as tracking_bp
         app.register_blueprint(tracking_bp)
-    except ImportError: 
-        app.logger.info("Tracking blueprint not found")
+    except ImportError:
+        pass
     
     try:
         from app.webhooks import bp as webhooks_bp
         app.register_blueprint(webhooks_bp, url_prefix='/webhooks')
-    except ImportError: 
-        app.logger.info("Webhooks blueprint not found")
+    except ImportError:
+        pass
     
     # Create upload folder
     upload_folder = app.config.get('UPLOAD_FOLDER')
