@@ -14,7 +14,7 @@ from celery import Celery
 from config import config
 
 # ==========================================
-# CELERY BROKER CONFIGURATION - MUST BE FIRST
+# CELERY BROKER CONFIGURATION
 # ==========================================
 _redis_url = os.environ.get('REDIS_URL', '')
 
@@ -25,33 +25,31 @@ if _redis_url:
     if _redis_url.endswith('/'):
         _redis_url = _redis_url.rstrip('/')
     
-    # ALWAYS convert to SSL for Render Redis
+    # Convert to SSL for Render Redis
     if _redis_url.startswith('redis://'):
         _redis_url = _redis_url.replace('redis://', 'rediss://', 1)
-        print(f"🔒 Converted to SSL: {_redis_url[:40]}...")
+        print(f"🔒 Converted to SSL:  {_redis_url[:40]}...")
     
-    # Create Celery with Redis broker
-    celery = Celery(
-        __name__,
-        broker=_redis_url,
-        backend=_redis_url,
-        include=['app.tasks']
-    )
+    # SSL configuration for Redis
+    ssl_config = {'ssl_cert_reqs': ssl.CERT_NONE}
     
-    # Configure SSL for Redis
+    # Create Celery with explicit broker and backend URLs
+    celery = Celery(__name__)
     celery.conf.update(
         broker_url=_redis_url,
         result_backend=_redis_url,
-        broker_use_ssl={'ssl_cert_reqs': ssl.CERT_NONE},
-        redis_backend_use_ssl={'ssl_cert_reqs': ssl.CERT_NONE},
+        broker_use_ssl=ssl_config,
+        redis_backend_use_ssl=ssl_config,
+        broker_transport_options={'ssl_cert_reqs': ssl.CERT_NONE},
         broker_connection_retry_on_startup=True,
         task_serializer='json',
         accept_content=['json'],
         result_serializer='json',
         timezone='UTC',
         enable_utc=True,
+        include=['app.tasks'],
     )
-    print(f"✅ Celery configured with Redis broker:  {_redis_url[:40]}...")
+    print(f"✅ Celery configured with Redis broker: {_redis_url[:40]}...")
 else:
     print("⚠️ REDIS_URL not set!")
     celery = Celery(__name__)
@@ -119,7 +117,7 @@ def create_app(config_name=None):
     try:
         from app.tracking import bp as tracking_bp
         app.register_blueprint(tracking_bp)
-    except ImportError:
+    except ImportError: 
         pass
     
     try:
