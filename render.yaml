@@ -2,18 +2,22 @@ databases:
   - name: paris-sender-db
     databaseName: paris_sender_db
     user: paris_sender_user
+    plan: free
 
 services:
   - type: redis
     name: paris-sender-redis
-    ipAllowList: []
+    ipAllowList: [] # Keep this empty to allow all internal services
+    plan: free
 
   - type: web
     name: paris-sender-web
     env: python
-    pythonVersion: 3.11.4
-    buildCommand: chmod +x build.sh && ./build.sh
-    startCommand: gunicorn wsgi:app --bind 0.0.0.0:10000 --workers 2 --threads 4 --timeout 120
+    pythonVersion: 3.11
+    buildCommand: "./build.sh"
+    # The start command now uses the gunicorn.conf.py file for consistency
+    startCommand: "gunicorn -c gunicorn.conf.py wsgi:app"
+    healthCheckPath: /api/v1/health # Added health check for better monitoring
     envVars:
       - key: DATABASE_URL
         fromDatabase:
@@ -28,8 +32,11 @@ services:
         generateValue: true
       - key: FLASK_APP
         value: wsgi:app
+      - key: PYTHON_VERSION
+        value: 3.11.4
       - key: RENDER
         value: "true"
+      # Proxy settings are now only read by the application, not used for patching
       - key: SMTP_PROXY_HOST
         sync: false
       - key: SMTP_PROXY_PORT
@@ -42,9 +49,10 @@ services:
   - type: worker
     name: paris-sender-worker
     env: python
-    pythonVersion: 3.11.4
-    buildCommand: pip install -r requirements.txt
-    startCommand: celery -A app.celery worker --loglevel=info --pool=threads --concurrency=4
+    pythonVersion: 3.11
+    buildCommand: "pip install -r requirements.txt"
+    # Increased concurrency for workers to handle the new distributed task model
+    startCommand: "celery -A app.celery worker --loglevel=info --pool=threads --concurrency=8"
     envVars:
       - key: DATABASE_URL
         fromDatabase:
@@ -60,6 +68,8 @@ services:
           type: web
           name: paris-sender-web
           envVarKey: SECRET_KEY
+      - key: PYTHON_VERSION
+        value: 3.11.4
       - key: RENDER
         value: "true"
       - key: SMTP_PROXY_HOST
