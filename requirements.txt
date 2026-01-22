@@ -8,13 +8,13 @@ python-dotenv
 Werkzeug
 
 # Core Logic & Email
-css_inline
+css-inline
 dnspython
 Jinja2
-pypdf2
+pypdf
 requests
 itsdangerous
-# CRITICAL: Required for SOCKS5 Proxy Tunneling
+# CRITICAL:  Required for SOCKS5 Proxy Tunneling
 PySocks>=1.7.1
 
 # Background Jobs
