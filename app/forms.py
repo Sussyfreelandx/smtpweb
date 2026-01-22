@@ -42,6 +42,23 @@ class RegistrationForm(FlaskForm):
             raise ValidationError('Please use a different email address.')
 
 
+class EditProfileForm(FlaskForm):
+    """Form for editing user profile."""
+    username = StringField('Username', validators=[DataRequired()])
+    email = StringField('Email', validators=[DataRequired(), Email()])
+    submit = SubmitField('Submit')
+
+    def __init__(self, original_username, *args, **kwargs):
+        super(EditProfileForm, self).__init__(*args, **kwargs)
+        self.original_username = original_username
+
+    def validate_username(self, username):
+        if username.data != self.original_username:
+            user = User.query.filter_by(username=self.username.data).first()
+            if user is not None:
+                raise ValidationError('Please use a different username.')
+
+
 # ==================== CAMPAIGN & SETTINGS FORMS ====================
 
 class NewCampaignForm(FlaskForm):
@@ -49,13 +66,10 @@ class NewCampaignForm(FlaskForm):
     campaign_name = StringField('Campaign Name', validators=[DataRequired()])
     subject = StringField('Subject Line', validators=[DataRequired()])
     body_html = TextAreaField('HTML Body', validators=[DataRequired()])
-    
-    # Updated to allow 'txt' files
-    recipients_file = FileField('Recipients List (CSV or TXT)', validators=[
+    recipients_file = FileField('Recipients File (CSV or TXT)', validators=[
         DataRequired(),
         FileAllowed(['csv', 'txt'], 'CSV or TXT files only!')
     ])
-    
     smtp_profile_id = SelectField('SMTP Profile', coerce=int, validators=[DataRequired()])
     
     # A/B Testing
