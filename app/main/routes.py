@@ -97,6 +97,7 @@ def emit_campaign_update(campaign_id, data):
             **data
         }, namespace='/campaigns', room=f'campaign_{campaign_id}')
     except Exception as e: 
+        # Log error but don't crash the request if socket fails
         current_app.logger.error(f"WebSocket emit error: {e}")
 
 
@@ -133,12 +134,15 @@ def create_notification(user_id, title, message, notification_type='info', relat
         db.session.commit()
         
         # Emit real-time notification
-        socketio.emit('notification', notification.to_dict() if hasattr(notification, 'to_dict') else {
-            'id': notification.id,
-            'title': title,
-            'message': message,
-            'type': notification_type
-        }, namespace='/notifications', room=f'user_{user_id}')
+        try:
+            socketio.emit('notification', notification.to_dict() if hasattr(notification, 'to_dict') else {
+                'id': notification.id,
+                'title': title,
+                'message': message,
+                'type': notification_type
+            }, namespace='/notifications', room=f'user_{user_id}')
+        except Exception:
+            pass # Ignore socket errors for notifications
         
         return notification
     except Exception as e:
@@ -1451,9 +1455,9 @@ def api_get_logs():
     log_list = []
     for log in recent_logs:
         log_list.append({
-            'timestamp': log.timestamp.strftime('%H:%M:%S') if hasattr(log, 'timestamp') else log.get('timestamp'),
-            'level': log.level if hasattr(log, 'level') else log.get('level'),
-            'message': log.message if hasattr(log, 'message') else log.get('message')
+            'timestamp': log.get('timestamp'),
+            'level': log.get('level'),
+            'message': log.get('message')
         })
         
     return jsonify(log_list)
@@ -1508,7 +1512,6 @@ def analytics_dashboard():
     daily_labels_list = [stat.date.strftime('%Y-%m-%d') for stat in daily_stats]
     daily_counts_list = [stat.sent or 0 for stat in daily_stats]
     
-    # Safe dictionary keys (Avoiding 'values' to prevent Jinja2 collisions)
     daily_data = {
         'chart_labels': daily_labels_list,
         'chart_data': daily_counts_list
