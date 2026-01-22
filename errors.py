@@ -1,4 +1,4 @@
-from flask import render_template
+from flask import render_template, current_app
 from app.main import bp
 from app import db
 
@@ -21,4 +21,5 @@ def too_many_requests(error):
 @bp.app_errorhandler(500)
 def internal_error(error):
     db.session.rollback()
+    current_app.logger.exception("Unhandled server error: %s", error)
     return render_template('500.html'), 500
