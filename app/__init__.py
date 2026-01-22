@@ -55,17 +55,23 @@ def create_app(config_name=None):
     
     # Initialize rate limiter with Redis if available
     try:
-        limiter.init_app(app)
-    except Exception as e:
+        if app.config.get('RATELIMIT_STORAGE_URL'):
+            limiter.init_app(app)
+        else:
+            app.logger.warning("Rate limiter using in-memory storage")
+            limiter.init_app(app)
+    except Exception as e: 
         app.logger.warning(f"Rate limiter initialization failed: {e}")
     
     # Initialize cache
     try:
-        cache.init_app(app, config={
-            'CACHE_TYPE': app.config.get('CACHE_TYPE', 'simple'),
-            'CACHE_REDIS_URL': app.config.get('CACHE_REDIS_URL'),
+        cache_config = {
+            'CACHE_TYPE':  app.config.get('CACHE_TYPE', 'simple'),
             'CACHE_DEFAULT_TIMEOUT': app.config.get('CACHE_DEFAULT_TIMEOUT', 300)
-        })
+        }
+        if app.config.get('CACHE_REDIS_URL'):
+            cache_config['CACHE_REDIS_URL'] = app.config.get('CACHE_REDIS_URL')
+        cache.init_app(app, config=cache_config)
     except Exception as e: 
         app.logger.warning(f"Cache initialization failed: {e}")
         cache.init_app(app, config={'CACHE_TYPE': 'simple'})
@@ -101,37 +107,42 @@ def create_app(config_name=None):
     
     celery.Task = ContextTask
     
-    # Register blueprints
+    # Register main blueprint (includes error handlers via @bp.app_errorhandler)
     from app.main import bp as main_bp
     app.register_blueprint(main_bp)
     
+    # Register API blueprint
     from app.api import bp as api_bp
     app.register_blueprint(api_bp, url_prefix='/api/v1')
     
-    # Register tracking blueprint
+    # Register tracking blueprint (optional)
     try:
         from app.tracking import bp as tracking_bp
         app.register_blueprint(tracking_bp)
     except ImportError: 
-        app.logger.warning("Tracking blueprint not found")
+        app.logger.info("Tracking blueprint not found, skipping")
     
-    # Register webhooks blueprint
+    # Register webhooks blueprint (optional)
     try:
         from app.webhooks import bp as webhooks_bp
         app.register_blueprint(webhooks_bp, url_prefix='/webhooks')
     except ImportError: 
-        app.logger.warning("Webhooks blueprint not found")
+        app.logger.info("Webhooks blueprint not found, skipping")
     
-    # Register error handlers
-    from app.errors import bp as errors_bp
-    app.register_blueprint(errors_bp)
+    # Create upload folder if it doesn't exist
+    upload_folder = app.config.get('UPLOAD_FOLDER')
+    if upload_folder and not os.path.exists(upload_folder):
+        try:
+            os.makedirs(upload_folder)
+        except OSError:
+            app.logger.warning(f"Could not create upload folder: {upload_folder}")
     
     # Log proxy configuration
     proxy_host = os.environ.get('SMTP_PROXY_HOST')
     proxy_port = os.environ.get('SMTP_PROXY_PORT', '1080')
     proxy_user = os.environ.get('SMTP_PROXY_USER')
     
-    if proxy_host: 
+    if proxy_host:
         auth_status = "Yes" if proxy_user else "No"
         print(f"🔌 SMTP Proxy Configured: {proxy_host}:{proxy_port} (Auth: {auth_status})")
     
