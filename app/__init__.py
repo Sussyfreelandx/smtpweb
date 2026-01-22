@@ -13,20 +13,30 @@ from flask_cors import CORS
 from celery import Celery
 from config import config
 
+# ==========================================
+# REDIS/CELERY CONFIGURATION - MUST BE FIRST
+# ==========================================
 
 def get_redis_url():
-    """Get Redis URL with SSL conversion for Render."""
+    """Get and process Redis URL for both web and worker."""
     redis_url = os.environ.get('REDIS_URL', '')
     
     if not redis_url:
+        print("⚠️ WARNING: REDIS_URL environment variable is not set!")
         return None
     
     # Clean trailing slashes
     redis_url = redis_url.rstrip('/')
     
-    # Always convert to SSL on Render
-    if os.environ.get('RENDER') and redis_url.startswith('redis://'):
+    # Log original URL (masked)
+    masked_url = redis_url[:20] + "..." if len(redis_url) > 20 else redis_url
+    print(f"🔍 Original REDIS_URL: {masked_url}")
+    
+    # CRITICAL: Convert to SSL for Render Redis
+    # Render's internal Redis requires SSL (rediss://)
+    if redis_url.startswith('redis://') and os.environ.get('RENDER'):
         redis_url = redis_url.replace('redis://', 'rediss://', 1)
+        print(f"🔒 Converted to SSL: {redis_url[:25]}...")
     
     return redis_url
 
@@ -34,41 +44,60 @@ def get_redis_url():
 # Get the processed Redis URL
 REDIS_URL = get_redis_url()
 
-# Debug output
-if REDIS_URL:
-    print(f"🔍 REDIS_URL (processed): {REDIS_URL[:50]}...")
-else:
-    print("⚠️ REDIS_URL not set!")
-
 # Create Celery instance
-celery = Celery('app')
-
 if REDIS_URL:
-    # SSL settings for Redis
-    ssl_opts = {'ssl_cert_reqs': ssl.CERT_NONE} if REDIS_URL.startswith('rediss://') else {}
+    # SSL options for Redis
+    ssl_options = {
+        'ssl_cert_reqs': ssl.CERT_NONE
+    } if REDIS_URL.startswith('rediss://') else None
     
-    celery.conf.update(
-        broker_url=REDIS_URL,
-        result_backend=REDIS_URL,
-        broker_use_ssl=ssl_opts if ssl_opts else None,
-        redis_backend_use_ssl=ssl_opts if ssl_opts else None,
-        broker_connection_retry_on_startup=True,
-        task_serializer='json',
-        accept_content=['json'],
-        result_serializer='json',
-        timezone='UTC',
-        enable_utc=True,
-        task_track_started=True,
-        task_acks_late=True,
-        worker_prefetch_multiplier=1,
-        task_routes={
-            'app.tasks.*': {'queue': 'celery'},
-        },
+    # Create Celery with broker set in constructor
+    celery = Celery(
+        'app',
+        broker=REDIS_URL,
+        backend=REDIS_URL
     )
-    print(f"✅ Celery configured with broker: {REDIS_URL[:50]}...")
+    
+    # Build configuration
+    celery_conf = {
+        'broker_url': REDIS_URL,
+        'result_backend': REDIS_URL,
+        'task_serializer': 'json',
+        'accept_content': ['json'],
+        'result_serializer': 'json',
+        'timezone': 'UTC',
+        'enable_utc': True,
+        'broker_connection_retry_on_startup': True,
+        'task_track_started': True,
+        'task_acks_late': True,
+        'worker_prefetch_multiplier': 1,
+        'task_default_queue': 'celery',
+        'task_routes': {
+            'app.tasks.*': {'queue': 'celery'}
+        },
+        'include': ['app.tasks'],
+    }
+    
+    # Add SSL configuration if using rediss://
+    if ssl_options:
+        celery_conf['broker_use_ssl'] = ssl_options
+        celery_conf['redis_backend_use_ssl'] = ssl_options
+    
+    # Apply configuration
+    celery.conf.update(celery_conf)
+    
+    print(f"✅ Celery configured successfully")
+    print(f"   Broker: {REDIS_URL[:30]}...")
+    print(f"   SSL: {'Enabled' if ssl_options else 'Disabled'}")
+else:
+    print("❌ Celery NOT configured - REDIS_URL is missing!")
+    celery = Celery('app')
 
 
-# Flask Extensions
+# ==========================================
+# FLASK EXTENSIONS
+# ==========================================
+
 db = SQLAlchemy()
 migrate = Migrate()
 login = LoginManager()
@@ -89,16 +118,13 @@ def create_app(config_name=None):
     app = Flask(__name__)
     app.config.from_object(config[config_name])
     
-    # Store Redis URL in app config
-    app.config['REDIS_URL'] = REDIS_URL
-    
     # Initialize extensions
     db.init_app(app)
     migrate.init_app(app, db)
     login.init_app(app)
     csrf.init_app(app)
     
-    # Initialize SocketIO with threading mode
+    # Initialize SocketIO with threading mode (no eventlet)
     socketio.init_app(
         app,
         async_mode='threading',
@@ -116,7 +142,7 @@ def create_app(config_name=None):
     # Initialize cache
     try:
         cache.init_app(app, config={
-            'CACHE_TYPE':  'SimpleCache',
+            'CACHE_TYPE': 'SimpleCache',
             'CACHE_DEFAULT_TIMEOUT': 300
         })
     except Exception as e:
@@ -125,13 +151,16 @@ def create_app(config_name=None):
     # Initialize CORS
     CORS(app, resources={r"/api/*": {"origins": "*"}})
     
-    # Configure Celery with app context
+    # Configure Celery to use Flask app context
     class ContextTask(celery.Task):
         def __call__(self, *args, **kwargs):
             with app.app_context():
                 return self.run(*args, **kwargs)
     
     celery.Task = ContextTask
+    
+    # Store celery instance on app for easy access
+    app.celery = celery
     
     # Register blueprints
     from app.main import bp as main_bp
@@ -140,19 +169,21 @@ def create_app(config_name=None):
     from app.api import bp as api_bp
     app.register_blueprint(api_bp, url_prefix='/api/v1')
     
+    # Optional blueprints - tracking
     try:
         from app.tracking import bp as tracking_bp
         app.register_blueprint(tracking_bp)
-    except ImportError:
-        pass
+    except ImportError: 
+        app.logger.info("Tracking blueprint not available")
     
+    # Optional blueprints - webhooks
     try:
         from app.webhooks import bp as webhooks_bp
         app.register_blueprint(webhooks_bp, url_prefix='/webhooks')
     except ImportError: 
-        pass
+        app.logger.info("Webhooks blueprint not available")
     
-    # Create upload folder
+    # Create upload folder if needed
     upload_folder = app.config.get('UPLOAD_FOLDER')
     if upload_folder and not os.path.exists(upload_folder):
         try:
@@ -160,11 +191,12 @@ def create_app(config_name=None):
         except OSError:
             pass
     
-    # Log configuration
+    # Log SMTP proxy configuration
     proxy_host = os.environ.get('SMTP_PROXY_HOST')
     if proxy_host:
         proxy_port = os.environ.get('SMTP_PROXY_PORT', '1080')
         proxy_user = os.environ.get('SMTP_PROXY_USER')
-        print(f"🔌 SMTP Proxy Configured: {proxy_host}:{proxy_port} (Auth: {'Yes' if proxy_user else 'No'})")
+        auth_status = "Yes" if proxy_user else "No"
+        print(f"🔌 SMTP Proxy Configured: {proxy_host}:{proxy_port} (Auth: {auth_status})")
     
     return app
