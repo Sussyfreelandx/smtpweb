@@ -1,329 +1,138 @@
-import sys
-import os
-import socket
-import logging
-import socks
-import smtplib
-import ssl
-from logging.handlers import RotatingFileHandler
-from flask import Flask, jsonify, render_template, request
+from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_login import LoginManager
 from flask_wtf.csrf import CSRFProtect
 from flask_socketio import SocketIO
-from flask_caching import Cache
-from flask_cors import CORS
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+from flask_caching import Cache
+from flask_cors import CORS
+from celery import Celery
 from config import config
-
-# ==========================================
-#   CRITICAL:   ENVIRONMENT SETUP
-# ==========================================
-
-# 1. Detect Celery
-IS_CELERY = 'celery' in sys.argv[0] or (len(sys.argv) > 1 and 'celery' in sys.argv[1])
-
-# 2. Detect if Gunicorn/Eventlet already patched the system
-IS_ALREADY_PATCHED = 'eventlet' in str(socket.socket)
-
-# 3. Apply Eventlet Patching ONLY if needed (and not running Celery)
-# Celery prefork workers dislike eventlet patching unless configured specifically
-if not IS_CELERY and not IS_ALREADY_PATCHED:
-    try:
-        import eventlet
-        eventlet.monkey_patch()
-    except ImportError:
-        pass
-
-# ==========================================
-#   SURGICAL PROXY CONFIGURATION (SINGLETON)
-# ==========================================
-PROXY_HOST = os.environ.get('SMTP_PROXY_HOST')
-PROXY_PORT = int(os.environ.get('SMTP_PROXY_PORT', 1080))
-PROXY_USER = os.environ.get('SMTP_PROXY_USER')
-PROXY_PASS = os.environ.get('SMTP_PROXY_PASS')
-
-# Prevent double-patching which causes recursion errors
-if PROXY_HOST and not getattr(socket, '_paris_proxy_patched', False):
-    # 1. Save original getaddrinfo
-    original_getaddrinfo = socket.getaddrinfo
-
-    def patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
-        # Force IPv4 (AF_INET) to fix SOCKS/IPv6 compatibility
-        if family == 0 or family == socket.AF_INET6:
-            try:
-                return original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
-            except socket.gaierror:
-                pass
-        return original_getaddrinfo(host, port, family, type, proto, flags)
-
-    socket.getaddrinfo = patched_getaddrinfo
-
-    # 2. Configure Proxy
-    if PROXY_USER and PROXY_PASS:
-        socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT, username=PROXY_USER, password=PROXY_PASS)
-        print(f"🔌 SMTP Proxy Configured: {PROXY_HOST}:{PROXY_PORT} (Auth: Yes)")
-    else:
-        socks.set_default_proxy(socks.SOCKS5, PROXY_HOST, PROXY_PORT)
-        print(f"🔌 SMTP Proxy Configured: {PROXY_HOST}:{PROXY_PORT} (Auth: No)")
-
-    # 3. Wrap smtplib
-    socks.wrap_module(smtplib)
-    socket._paris_proxy_patched = True
-
-# ==========================================
+import os
+import ssl
 
 # Initialize extensions
 db = SQLAlchemy()
 migrate = Migrate()
 login = LoginManager()
 login.login_view = 'main.login'
-login.login_message_category = 'info'
+login.login_message = 'Please log in to access this page.'
 csrf = CSRFProtect()
-socketio = SocketIO()
-cache = Cache()
+
+# CRITICAL FIX: Use 'threading' mode instead of 'eventlet'
+# This prevents the blocking mainloop errors
+socketio = SocketIO(cors_allowed_origins="*", async_mode='threading')
+
 limiter = Limiter(key_func=get_remote_address)
+cache = Cache()
 
-# ==========================================
-#   CELERY INSTANCE
-# ==========================================
-celery = None
-
-# ==========================================
-#   REDIS URL HELPER
-# ==========================================
-def get_clean_redis_url():
-    """Get and clean the Redis URL for Render deployment."""
-    redis_url = os.environ.get('REDIS_URL', '')
-    
-    if not redis_url:
-        return None, False
-    
-    redis_url = redis_url.strip().rstrip('/')
-    
-    # Detect internal vs external Render Redis
-    is_internal = (
-        redis_url.startswith('redis://red-') and 
-        '.render.com' not in redis_url and
-        not redis_url.startswith('rediss://')
-    )
-    
-    use_ssl = not is_internal and (
-        redis_url.startswith('rediss://') or 
-        '.render.com' in redis_url
-    )
-    
-    if use_ssl and redis_url.startswith('redis://'):
-        redis_url = redis_url.replace('redis://', 'rediss://', 1)
-    
-    return redis_url, use_ssl
+# Celery instance
+celery = Celery(__name__)
 
 
 def create_app(config_name=None):
-    """Application factory pattern."""
     if config_name is None:
-        config_name = os.environ.get('FLASK_CONFIG', 'default')
+        config_name = os.environ.get('FLASK_CONFIG', 'production')
     
     app = Flask(__name__)
     app.config.from_object(config[config_name])
     
-    if os.environ.get('RENDER'):
-        app.config['SERVER_NAME'] = 'paris-sender-web.onrender.com'
-        app.config['PREFERRED_URL_SCHEME'] = 'https'
-
     # Initialize extensions with app
     db.init_app(app)
     migrate.init_app(app, db)
     login.init_app(app)
     csrf.init_app(app)
-    cache.init_app(app)
-    limiter.init_app(app)
-    CORS(app, resources={r"/api/*": {"origins": "*"}})
     
-    async_mode = 'eventlet' if not IS_CELERY else 'threading'
-    
-    # Get clean Redis URL for SocketIO
-    redis_url, _ = get_clean_redis_url()
-    
+    # CRITICAL FIX: Initialize SocketIO with threading mode
     socketio.init_app(
         app,
-        message_queue=redis_url,
+        async_mode='threading',
         cors_allowed_origins="*",
-        async_mode=async_mode
+        message_queue=app.config.get('SOCKETIO_MESSAGE_QUEUE')
     )
     
-    os.makedirs(app.config.get('UPLOAD_FOLDER', 'uploads'), exist_ok=True)
-    os.makedirs(app.config.get('EMAIL_TEMPLATES_FOLDER', 'templates'), exist_ok=True)
+    # Initialize rate limiter with Redis if available
+    try:
+        limiter.init_app(app)
+    except Exception as e:
+        app.logger.warning(f"Rate limiter initialization failed: {e}")
     
-    # --- BLUEPRINT REGISTRATION ---
+    # Initialize cache
+    try:
+        cache.init_app(app, config={
+            'CACHE_TYPE': app.config.get('CACHE_TYPE', 'simple'),
+            'CACHE_REDIS_URL': app.config.get('CACHE_REDIS_URL'),
+            'CACHE_DEFAULT_TIMEOUT': app.config.get('CACHE_DEFAULT_TIMEOUT', 300)
+        })
+    except Exception as e: 
+        app.logger.warning(f"Cache initialization failed: {e}")
+        cache.init_app(app, config={'CACHE_TYPE': 'simple'})
+    
+    # Initialize CORS
+    CORS(app, resources={r"/api/*": {"origins": "*"}})
+    
+    # Configure Celery
+    celery.conf.update(
+        broker_url=app.config.get('CELERY_BROKER_URL'),
+        result_backend=app.config.get('CELERY_RESULT_BACKEND'),
+        task_serializer='json',
+        accept_content=['json'],
+        result_serializer='json',
+        timezone='UTC',
+        enable_utc=True,
+        broker_connection_retry_on_startup=True
+    )
+    
+    # Add SSL settings for Redis if on Render
+    if os.environ.get('RENDER'):
+        celery.conf.update(
+            broker_use_ssl={'ssl_cert_reqs': ssl.CERT_NONE},
+            redis_backend_use_ssl={'ssl_cert_reqs': ssl.CERT_NONE}
+        )
+    
+    celery.conf.update(app.config)
+    
+    class ContextTask(celery.Task):
+        def __call__(self, *args, **kwargs):
+            with app.app_context():
+                return self.run(*args, **kwargs)
+    
+    celery.Task = ContextTask
+    
+    # Register blueprints
     from app.main import bp as main_bp
     app.register_blueprint(main_bp)
-    
-    # CRITICAL: Register Tracking Blueprint
-    from app.tracking import bp as tracking_bp
-    app.register_blueprint(tracking_bp)
     
     from app.api import bp as api_bp
     app.register_blueprint(api_bp, url_prefix='/api/v1')
     
-    from app.webhooks import bp as webhooks_bp
-    app.register_blueprint(webhooks_bp, url_prefix='/webhooks')
+    # Register tracking blueprint
+    try:
+        from app.tracking import bp as tracking_bp
+        app.register_blueprint(tracking_bp)
+    except ImportError: 
+        app.logger.warning("Tracking blueprint not found")
     
-    register_error_handlers(app)
+    # Register webhooks blueprint
+    try:
+        from app.webhooks import bp as webhooks_bp
+        app.register_blueprint(webhooks_bp, url_prefix='/webhooks')
+    except ImportError: 
+        app.logger.warning("Webhooks blueprint not found")
     
-    if not app.debug and not app.testing:
-        setup_logging(app)
+    # Register error handlers
+    from app.errors import bp as errors_bp
+    app.register_blueprint(errors_bp)
     
-    register_cli_commands(app)
-    register_context_processors(app)
+    # Log proxy configuration
+    proxy_host = os.environ.get('SMTP_PROXY_HOST')
+    proxy_port = os.environ.get('SMTP_PROXY_PORT', '1080')
+    proxy_user = os.environ.get('SMTP_PROXY_USER')
+    
+    if proxy_host: 
+        auth_status = "Yes" if proxy_user else "No"
+        print(f"🔌 SMTP Proxy Configured: {proxy_host}:{proxy_port} (Auth: {auth_status})")
     
     return app
-
-
-def register_error_handlers(app):
-    @app.errorhandler(400)
-    def bad_request_error(error):
-        if request.path.startswith('/api/'):
-            return jsonify({'error': 'Bad Request', 'message': str(error)}), 400
-        return render_template('400.html'), 400
-    
-    @app.errorhandler(403)
-    def forbidden_error(error):
-        if request.path.startswith('/api/'):
-            return jsonify({'error': 'Forbidden', 'message': str(error)}), 403
-        return render_template('403.html'), 403
-    
-    @app.errorhandler(404)
-    def not_found_error(error):
-        if request.path.startswith('/api/'):
-            return jsonify({'error': 'Not Found', 'message': str(error)}), 404
-        return render_template('404.html'), 404
-    
-    @app.errorhandler(500)
-    def internal_error(error):
-        db.session.rollback()
-        if request.path.startswith('/api/'):
-            return jsonify({'error': 'Internal Server Error', 'message': 'An unexpected error occurred'}), 500
-        return render_template('500.html'), 500
-    
-    @app.errorhandler(429)
-    def ratelimit_error(error):
-        if request.path.startswith('/api/'):
-            return jsonify({'error': 'Too Many Requests', 'message': 'Rate limit exceeded'}), 429
-        return render_template('429.html'), 429
-
-
-def setup_logging(app):
-    if not os.path.exists('logs'):
-        os.mkdir('logs')
-    
-    file_handler = RotatingFileHandler('logs/paris_sender.log', maxBytes=10240000, backupCount=10)
-    file_handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'))
-    file_handler.setLevel(logging.INFO)
-    app.logger.addHandler(file_handler)
-    app.logger.setLevel(logging.INFO)
-    app.logger.info('Paris Sender startup')
-
-
-def register_cli_commands(app):
-    @app.cli.command('init-db')
-    def init_db():
-        db.create_all()
-        print('Database initialized.')
-    
-    @app.cli.command('create-admin')
-    def create_admin():
-        from app.models import User
-        import click
-        username = click.prompt('Admin username')
-        email = click.prompt('Admin email')
-        password = click.prompt('Admin password', hide_input=True)
-        user = User(username=username, email=email)
-        user.set_password(password)
-        db.session.add(user)
-        db.session.commit()
-        print(f'Admin user {username} created.')
-    
-    @app.cli.command('cleanup-old-data')
-    def cleanup_old_data():
-        from app.models import Recipient
-        from datetime import datetime, timedelta
-        cutoff = datetime.utcnow() - timedelta(days=90)
-        old_recipients = Recipient.query.filter(Recipient.sent_at < cutoff).count()
-        print(f'Found {old_recipients} recipients older than 90 days.')
-
-
-def register_context_processors(app):
-    @app.context_processor
-    def inject_globals():
-        from datetime import datetime
-        return {
-            'now': datetime.utcnow(),
-            'app_name': 'Paris Sender',
-            'app_version': '9.0.0',
-            'features': app.config.get('FEATURES', {})
-        }
-
-
-def make_celery(flask_app):
-    """Create Celery instance with proper SSL handling for Render."""
-    from celery import Celery
-    
-    redis_url, use_ssl = get_clean_redis_url()
-    
-    if not redis_url:
-        print("WARNING: No REDIS_URL configured for Celery!")
-        redis_url = 'redis://localhost:6379'
-        use_ssl = False
-    
-    celery_app = Celery(
-        flask_app.import_name,
-        backend=redis_url,
-        broker=redis_url
-    )
-    
-    celery_config = {
-        'broker_url': redis_url,
-        'result_backend': redis_url,
-        'broker_connection_retry_on_startup': True,
-        'broker_transport_options': {
-            'visibility_timeout': 3600,
-            'socket_timeout': 30,
-            'socket_connect_timeout': 30,
-            'socket_keepalive': True,
-            'health_check_interval': 10,
-        },
-        'task_serializer': 'json',
-        'accept_content': ['json'],
-        'result_serializer': 'json',
-        'timezone': 'UTC',
-        'enable_utc': True,
-        'imports': ['app.tasks'],
-        # IMPORTANT: Fix for "do not call blocking functions from mainloop"
-        'worker_hijack_root_logger': False
-    }
-    
-    if use_ssl:
-        celery_config['broker_use_ssl'] = {'ssl_cert_reqs': ssl.CERT_NONE}
-        celery_config['redis_backend_use_ssl'] = {'ssl_cert_reqs': ssl.CERT_NONE}
-    
-    celery_app.conf.update(celery_config)
-    
-    class ContextTask(celery_app.Task):
-        def __call__(self, *args, **kwargs):
-            with flask_app.app_context():
-                return self.run(*args, **kwargs)
-    
-    celery_app.Task = ContextTask
-    return celery_app
-
-
-# =========================================================
-#   APP INITIALIZATION
-# =========================================================
-app = create_app()
-
-if IS_CELERY:
-    celery = make_celery(app)
