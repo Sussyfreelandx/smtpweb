@@ -1,7 +1,7 @@
 import os
 import ssl
 from datetime import timedelta
-from sqlalchemy.pool import NullPool  # <--- CRITICAL IMPORT
+from sqlalchemy.pool import NullPool
 
 basedir = os.path.abspath(os.path.dirname(__file__))
 
@@ -16,65 +16,61 @@ class Config:
     
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     
-    # --- CRITICAL FIX FOR EVENTLET/SQLALCHEMY LOCKING ISSUES ---
-    # We disable the connection pool (NullPool) because Eventlet's monkey-patching
-    # of the threading module breaks SQLAlchemy's default QueuePool locking.
+    # Disable connection pool for compatibility with threading
     SQLALCHEMY_ENGINE_OPTIONS = {
         'poolclass': NullPool,
         'pool_pre_ping': True
     }
-    # These settings are ignored when using NullPool, but we keep them for reference
-    # SQLALCHEMY_POOL_SIZE = 10
-    # SQLALCHEMY_MAX_OVERFLOW = 20
-    # -----------------------------------------------------------
     
-    # --- REDIS CONFIGURATION (CRITICAL FIX FOR RENDER) ---
+    # --- REDIS CONFIGURATION ---
     _redis_url = os.environ.get('REDIS_URL') or 'redis://localhost:6379/0'
     
-    # 1. Clean up trailing slashes that cause "//" errors
+    # Clean up trailing slashes
     if _redis_url.endswith('/'):
         _redis_url = _redis_url.rstrip('/')
         
-    # 2. Force SSL scheme (rediss://) for Render immediately
+    # Force SSL scheme for Render
     if os.environ.get('RENDER'):
         if _redis_url.startswith('redis://'):
             _redis_url = _redis_url.replace('redis://', 'rediss://', 1)
+    
+    REDIS_URL = _redis_url
             
     # Celery
     CELERY_BROKER_URL = _redis_url
     CELERY_RESULT_BACKEND = _redis_url
     
-    # Render requires SSL for Redis.
+    # Render requires SSL for Redis
     if os.environ.get('RENDER'):
         CELERY_BROKER_USE_SSL = {'ssl_cert_reqs': ssl.CERT_NONE}
         CELERY_REDIS_BACKEND_USE_SSL = {'ssl_cert_reqs': ssl.CERT_NONE}
     
     # Redis Cache
-    CACHE_TYPE = 'redis'
+    CACHE_TYPE = 'RedisCache'
     CACHE_REDIS_URL = _redis_url
     CACHE_DEFAULT_TIMEOUT = 300
     
-    # Rate Limiting
+    # Rate Limiting - Use Redis
     RATELIMIT_STORAGE_URL = _redis_url
+    RATELIMIT_STORAGE_OPTIONS = {}
+    if os.environ.get('RENDER'):
+        RATELIMIT_STORAGE_OPTIONS = {'ssl_cert_reqs': ssl.CERT_NONE}
     RATELIMIT_DEFAULT = "200 per day"
     RATELIMIT_HEADERS_ENABLED = True
     
-    # WebSocket Configuration
-    SOCKETIO_MESSAGE_QUEUE = _redis_url
+    # WebSocket Configuration - Disabled for threading mode
+    SOCKETIO_MESSAGE_QUEUE = None
     
-    # --- END REDIS CONFIGURATION ---
-
     # AI Configuration
     OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
     LOCAL_AI_URL = os.environ.get('LOCAL_AI_URL')
     
     # Session Configuration
-    SESSION_TYPE = 'redis'
-    SESSION_REDIS = None # Will be set in factory if needed
+    SESSION_TYPE = 'filesystem'
     PERMANENT_SESSION_LIFETIME = timedelta(days=7)
     
     # File Upload Configuration
-    MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB max
+    MAX_CONTENT_LENGTH = 50 * 1024 * 1024
     UPLOAD_FOLDER = os.path.join(basedir, 'app', 'static', 'uploads')
     ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'pdf', 'csv', 'xlsx'}
     
@@ -111,7 +107,8 @@ class Config:
 class DevelopmentConfig(Config):
     DEBUG = True
     SESSION_COOKIE_SECURE = False
-    SERVER_NAME = None 
+    SERVER_NAME = None
+    CACHE_TYPE = 'SimpleCache'
 
 
 class ProductionConfig(Config):
@@ -122,6 +119,7 @@ class ProductionConfig(Config):
 class TestingConfig(Config):
     TESTING = True
     SQLALCHEMY_DATABASE_URI = 'sqlite:///:memory:'
+    CACHE_TYPE = 'SimpleCache'
 
 
 config = {
