@@ -18,6 +18,8 @@ import threading
 
 log = logging.getLogger(__name__)
 
+# --- PROXY SETTINGS ---
+# These are read from the environment once, when the module is loaded.
 PROXY_HOST = os.environ.get('SMTP_PROXY_HOST')
 PROXY_PORT = int(os.environ.get('SMTP_PROXY_PORT', 1080))
 PROXY_USER = os.environ.get('SMTP_PROXY_USER')
@@ -25,8 +27,8 @@ PROXY_PASS = os.environ.get('SMTP_PROXY_PASS')
 
 class ProxySMTP(smtplib.SMTP):
     """
-    Custom SMTP class that uses SOCKS5 proxy for the connection
-    without patching the global socket module.
+    Custom SMTP class that uses a SOCKS5 proxy for the connection
+    without patching the global socket module. This is thread-safe.
     """
     def _get_socket(self, host, port, timeout):
         if PROXY_HOST: 
@@ -41,12 +43,13 @@ class ProxySMTP(smtplib.SMTP):
                 proxy_password=PROXY_PASS
             )
         else:
+            # Fallback to standard socket connection if no proxy is configured
             return socket.create_connection((host, port), timeout)
 
 class ProxySMTP_SSL(smtplib.SMTP_SSL):
     """
-    Custom SMTP_SSL class that uses SOCKS5 proxy for the connection
-    without patching the global socket module.
+    Custom SMTP_SSL class that uses a SOCKS5 proxy for the connection.
+    This is thread-safe and avoids global patching.
     """
     def _get_socket(self, host, port, timeout):
         if PROXY_HOST:
@@ -61,16 +64,17 @@ class ProxySMTP_SSL(smtplib.SMTP_SSL):
                 proxy_username=PROXY_USER,
                 proxy_password=PROXY_PASS
             )
-            # 2. Wrap the socket with SSL
+            # 2. Wrap the established socket with SSL for encryption
             new_socket = self.context.wrap_socket(sock, server_hostname=host)
             return new_socket
         else: 
+            # Fallback to standard SSL socket connection if no proxy is configured
             return super()._get_socket(host, port, timeout)
 
 class SMTPHandler:
     """
-    Robust SMTP Handler integrated from Paris Sender Desktop logic.
-    Supports connection pooling, multi-threaded bulk sending, warmup, and SOCKS5 Proxying.
+    Robust SMTP Handler supporting connection pooling, multi-threaded sending,
+    warmup, and safe SOCKS5 Proxying via custom SMTP classes.
     """
     
     def __init__(self, smtp_config):
@@ -84,39 +88,32 @@ class SMTPHandler:
         self.sender_email = smtp_config.get('sender_email') or self.username
         self.reply_to_email = smtp_config.get('reply_to_email')
         
-        # Connection management
-        self._connection = None
-        self._max_connection_age = 300
         self._lock = threading.Lock()
-        
-        # Rate limiting tracking
         self._recent_sends = deque(maxlen=1000)
     
     def _create_secure_ssl_context(self):
-        """Create a secure SSL context."""
+        """Create a secure SSL context for TLS/SSL connections."""
         context = ssl.create_default_context()
-        
-        # If proxying, relax hostname checks as tunneling might mismatch SNI
-        if PROXY_HOST:
-            context.check_hostname = False
-            context.verify_mode = ssl.CERT_NONE
-        else:
-            context.minimum_version = ssl.TLSVersion.TLSv1_2
-            
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
         return context
 
     def _html_to_text(self, html):
-        if not html:  return "Plain text content not available."
+        """Convert HTML to a reasonable plain text version."""
+        if not html:  return "This is an HTML-only email."
         try:
             text = re.sub(r'<(script|style).*?>.*?</\1>', '', html, flags=re.DOTALL | re.IGNORECASE)
-            text = re.sub(r'</(p|h[1-6]|li|div|tr|br) *>', '\n', text, flags=re.IGNORECASE)
+            text = re.sub(r'</(p|h[1-6]|li|div|tr|br)\s*>', '\n', text, flags=re.IGNORECASE)
             text = re.sub(r'<[^>]+>', ' ', text)
-            return text.strip()
+            text = re.sub(r'\s+', ' ', text).strip()
+            lines = (line.strip() for line in text.splitlines())
+            chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+            return '\n'.join(chunk for chunk in chunks if chunk)
         except Exception: 
-            return "HTML-only email.  Please use a compatible client."
+            return "HTML-only email. Please use a compatible client."
     
     def _create_mime_message(self, to_email, subject, html_content, plain_content=None,
                              unsubscribe_url=None, attachments=None, custom_headers=None):
+        """Construct the email message object."""
         msg_root = MIMEMultipart('related')
         
         msg_root['Subject'] = Header(subject, 'utf-8').encode()
@@ -156,122 +153,59 @@ class SMTPHandler:
                         part.add_header('Content-Disposition', f'attachment; filename="{os.path.basename(filepath)}"')
                         msg_root.attach(part)
                     except Exception as e:
-                        log.error(f"⚠️ Could not attach {filepath}: {e}")
+                        log.error(f"Could not attach file {filepath}: {e}")
         
         return msg_root
 
-    def connect(self):
-        """Establish connection to SMTP server using Custom Proxy Classes."""
-        with self._lock:
-            try:
-                context = self._create_secure_ssl_context()
-                timeout_val = 60 if PROXY_HOST else 30
-                
-                # Use our custom ProxySMTP classes instead of standard smtplib
-                if self.use_ssl or self.smtp_port == 465:
-                    self._connection = ProxySMTP_SSL(
-                        self.smtp_server, self.smtp_port, context=context, timeout=timeout_val
-                    )
-                else:  
-                    self._connection = ProxySMTP(
-                        self.smtp_server, self.smtp_port, timeout=timeout_val
-                    )
-                
-                # Handshake
-                try:
-                    self._connection.ehlo()
-                except smtplib.SMTPHeloError:
-                    self._connection.helo()
-                
-                # STARTTLS
-                if not self.use_ssl and self.use_tls:
-                    if self._connection.has_extn('STARTTLS'):
-                        self._connection.starttls(context=context)
-                        self._connection.ehlo()
-                
-                self._connection.login(self.username, self.password)
-                
-                status_msg = f"Connected via Proxy ({PROXY_HOST})" if PROXY_HOST else "Connected Direct"
-                return True, status_msg
-            
-            except smtplib.SMTPAuthenticationError as e:
-                error_msg = e.smtp_error.decode() if isinstance(e.smtp_error, bytes) else str(e.smtp_error)
-                return False, f"Auth Failed: {error_msg}"
-            except Exception as e:
-                log.error(f"Connection Error: {e}")
-                return False, f"Connection Error: {str(e)}"
-
-    def disconnect(self):
-        with self._lock:
-            if self._connection:
-                try:
-                    self._connection.quit()
-                except Exception:
-                    try:  self._connection.close()
-                    except: pass
-                finally:
-                    self._connection = None
-
     def test_connection(self):
-        """
-        Test SMTP connection credentials.
-        Required for the 'Test Connection' button in UI.
-        """
-        if not self.smtp_server or not self.username:
-            return False, "SMTP configuration incomplete"
+        """Test SMTP connection credentials by connecting and logging in."""
+        if not all([self.smtp_server, self.username, self.password]):
+            return False, "SMTP configuration is incomplete."
         
-        success, msg = self.connect()
-        self.disconnect() # Always disconnect after a test
-        return success, msg
+        try:
+            context = self._create_secure_ssl_context()
+            timeout_val = 45 if PROXY_HOST else 20
+            
+            if self.use_ssl or self.smtp_port == 465:
+                server = ProxySMTP_SSL(self.smtp_server, self.smtp_port, context=context, timeout=timeout_val)
+            else:
+                server = ProxySMTP(self.smtp_server, self.smtp_port, timeout=timeout_val)
+            
+            with server:
+                server.ehlo()
+                if not self.use_ssl and self.use_tls:
+                    server.starttls(context=context)
+                    server.ehlo()
+                server.login(self.username, self.password)
+            
+            return True, f"Successfully connected to {self.smtp_server}."
+        
+        except smtplib.SMTPAuthenticationError as e:
+            error_msg = e.smtp_error.decode('utf-8', 'ignore') if isinstance(e.smtp_error, bytes) else str(e.smtp_error)
+            return False, f"Authentication Failed: {error_msg}"
+        except Exception as e:
+            log.error(f"Connection Test Error: {e}", exc_info=True)
+            return False, f"Connection Error: {str(e)}"
 
     def send_email(self, to_email, subject, html_content, plain_content=None,
                    unsubscribe_url=None, attachments=None, custom_headers=None):
         """
-        Send a single email.  This is the main method called by the Celery task.
-        Wraps send_email_sync for compatibility.
-        
-        Args:
-            to_email:  Recipient email address
-            subject: Email subject
-            html_content: HTML body content
-            plain_content: Plain text body (optional, auto-generated from HTML if not provided)
-            unsubscribe_url: Unsubscribe link URL (optional)
-            attachments:  List of file paths to attach (optional)
-            custom_headers: Dict of custom email headers (optional)
-        
-        Returns:
-            tuple: (success:  bool, message: str)
-        """
-        return self.send_email_sync(
-            to_email=to_email,
-            subject=subject,
-            html_content=html_content,
-            plain_content=plain_content,
-            unsubscribe_url=unsubscribe_url,
-            attachments=attachments,
-            custom_headers=custom_headers
-        )
-
-    def send_email_sync(self, to_email, subject, html_content, plain_content=None,
-                        unsubscribe_url=None, attachments=None, custom_headers=None):
-        """
-        Send a single email synchronously.  
-        Uses the scoped ProxySMTP classes to ensure safe proxying.
+        Send a single email. This is the main method called by Celery tasks.
+        It's a self-contained, thread-safe operation.
         """
         try:
             context = self._create_secure_ssl_context()
             timeout_val = 60 if PROXY_HOST else 30
             
-            # Instantiate local server object for this send (Thread safe)
+            # Instantiate a new SMTP connection object for this specific send operation.
+            # This is crucial for thread safety.
             if self.use_ssl or self.smtp_port == 465:
                 server = ProxySMTP_SSL(self.smtp_server, self.smtp_port, context=context, timeout=timeout_val)
             else: 
                 server = ProxySMTP(self.smtp_server, self.smtp_port, timeout=timeout_val)
             
             with server:
-                try:  server.ehlo()
-                except:  server.helo()
-                
+                server.ehlo()
                 if not self.use_ssl and self.use_tls and server.has_extn('STARTTLS'):
                     server.starttls(context=context)
                     server.ehlo()
@@ -285,7 +219,9 @@ class SMTPHandler:
                 
                 server.send_message(mime_message)
             
-            self._recent_sends.append(datetime.utcnow())
+            with self._lock:
+                self._recent_sends.append(datetime.utcnow())
+            
             return True, "Sent"
             
         except smtplib.SMTPAuthenticationError as e:
@@ -295,105 +231,22 @@ class SMTPHandler:
             log.error(f"Send failed to {to_email}: {e} ({error_class})")
             return False, f"{error_class}: {str(e)}"
 
-    def send_bulk_threaded(self, email_tasks, max_workers=5):
-        results = []
-        
-        # Lower concurrency if using proxy to prevent congestion
-        actual_workers = 2 if PROXY_HOST else max_workers
-
-        def _send_single_task(task):
-            success, msg = self.send_email_sync(
-                task['to_email'],
-                task['subject'],
-                task['html_content'],
-                task.get('plain_content'),
-                task.get('unsubscribe_url'),
-                task.get('attachments'),
-                task.get('custom_headers')
-            )
-            return {
-                'email': task['to_email'],
-                'success': success,
-                'error': msg if not success else None
-            }
-
-        with ThreadPoolExecutor(max_workers=actual_workers) as executor:
-            future_to_email = {executor.submit(_send_single_task, task): task for task in email_tasks}
-            
-            for future in as_completed(future_to_email):
-                try:
-                    result = future.result()
-                    results.append(result)
-                except Exception as e:
-                    log.error(f"Thread worker failed: {e}")
-                    results.append({'email': 'unknown', 'success': False, 'error': str(e)})
-                    
-        return results
-
-    def get_sends_per_hour(self):
-        cutoff = datetime.utcnow() - timedelta(minutes=60)
-        return sum(1 for t in self._recent_sends if t > cutoff)
-
     def classify_failure(self, error_message):
+        """Categorize SMTP errors for better reporting."""
         msg = str(error_message).lower()
         if any(s in msg for s in ["mailbox unavailable", "user unknown", "no such user", "recipient rejected", "invalid address"]):
-            return "hard_bounce"
+            return "Hard Bounce"
         elif any(s in msg for s in ["quota", "over quota", "mailbox full"]):
-            return "soft_bounce"
+            return "Soft Bounce"
         elif any(s in msg for s in ["rate", "too many", "limit", "throttled"]):
-            return "rate_limited"
+            return "Rate Limited"
         elif any(s in msg for s in ["spam", "blocked", "blacklisted", "content denied"]):
-            return "spam_block"
+            return "Spam Block"
         elif "authentication" in msg or "credentials" in msg: 
-            return "auth_error"
+            return "Auth Error"
         elif "socks" in msg or "proxy" in msg: 
-            return "proxy_error"
+            return "Proxy Error"
         elif "timeout" in msg or "connection" in msg:
-            return "connection_error"
+            return "Connection Error"
         else:
-            return "unknown_error"
-
-
-class SMTPRotationManager: 
-    def __init__(self, profiles):
-        self.profiles = profiles
-        self.current_index = 0
-        self.handlers = {}
-        self.failed_profiles = set()
-        self._lock = threading.Lock()
-    
-    def get_next_handler(self):
-        with self._lock:
-            if not self.profiles:
-                return None, "No SMTP profiles available"
-            
-            attempts = 0
-            while attempts < len(self.profiles):
-                profile = self.profiles[self.current_index]
-                self.current_index = (self.current_index + 1) % len(self.profiles)
-                profile_id = profile.get('id') or profile.get('username')
-                
-                if profile_id in self.failed_profiles:
-                    attempts += 1
-                    continue
-                
-                if self._check_limits(profile):
-                    if profile_id not in self.handlers:
-                        self.handlers[profile_id] = SMTPHandler(profile)
-                    return self.handlers[profile_id], None
-                
-                attempts += 1
-            return None, "All SMTP profiles exhausted or at limit"
-    
-    def _check_limits(self, profile):
-        daily_limit = profile.get('daily_limit', 500)
-        sent_today = profile.get('sent_today', 0)
-        if sent_today >= daily_limit:  return False
-        return True
-    
-    def close_all(self):
-        with self._lock:
-            for handler in self.handlers.values():
-                try: handler.disconnect()
-                except: pass
-            self.handlers.clear()
+            return "Unknown Error"
