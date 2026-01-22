@@ -12,7 +12,7 @@ services:
     name: paris-sender-web
     env: python
     pythonVersion: 3.11.4
-    buildCommand: pip install -r requirements.txt
+    buildCommand: chmod +x build.sh && ./build.sh
     startCommand: gunicorn wsgi:app --config gunicorn.conf.py
     envVars:
       - key: DATABASE_URL
