@@ -12,9 +12,10 @@ services:
     name: paris-sender-web
     env: python
     pythonVersion: 3.11.4
-    buildCommand: chmod +x build.sh && ./build.sh
-    # Updated: Rely on gunicorn.conf.py for settings
-    startCommand: gunicorn wsgi:app -c gunicorn.conf.py
+    # The build command now also makes the new launcher executable
+    buildCommand: chmod +x build.sh launcher.sh && ./build.sh
+    # CRITICAL FIX: The start command now runs the launcher script.
+    startCommand: ./launcher.sh
     envVars:
       - key: DATABASE_URL
         fromDatabase:
@@ -43,7 +44,7 @@ services:
     env: python
     pythonVersion: 3.11.4
     buildCommand: pip install -r requirements.txt
-    # CRITICAL: Keep pool=threads for the worker to avoid eventlet conflicts in Celery
+    # This remains correct: the Celery worker uses threads, not eventlet.
     startCommand: celery -A app.celery worker --loglevel=info --pool=threads --concurrency=4
     envVars:
       - key: DATABASE_URL
