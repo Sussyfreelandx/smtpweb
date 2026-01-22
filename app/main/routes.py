@@ -1,5 +1,5 @@
 from flask import (render_template, flash, redirect, url_for, request,
-                   jsonify, current_app, Response, send_file, abort)
+                   jsonify, current_app, Response, send_file, abort, g)
 from flask_login import login_user, logout_user, current_user, login_required
 from werkzeug.utils import secure_filename
 from app import db, cache, socketio
@@ -97,7 +97,6 @@ def emit_campaign_update(campaign_id, data):
             **data
         }, namespace='/campaigns', room=f'campaign_{campaign_id}')
     except Exception as e: 
-        # Log error but don't crash the request if socket fails
         current_app.logger.error(f"WebSocket emit error: {e}")
 
 
@@ -134,15 +133,12 @@ def create_notification(user_id, title, message, notification_type='info', relat
         db.session.commit()
         
         # Emit real-time notification
-        try:
-            socketio.emit('notification', notification.to_dict() if hasattr(notification, 'to_dict') else {
-                'id': notification.id,
-                'title': title,
-                'message': message,
-                'type': notification_type
-            }, namespace='/notifications', room=f'user_{user_id}')
-        except Exception:
-            pass # Ignore socket errors for notifications
+        socketio.emit('notification', notification.to_dict() if hasattr(notification, 'to_dict') else {
+            'id': notification.id,
+            'title': title,
+            'message': message,
+            'type': notification_type
+        }, namespace='/notifications', room=f'user_{user_id}')
         
         return notification
     except Exception as e:
@@ -1043,6 +1039,8 @@ def test_smtp_connection():
         if not smtp_config.get('password'):
             return jsonify({'success': False, 'message': 'Password not set for this profile'}), 400
         
+        # --- FIXED LOGIC HERE FOR PROXY/RENDER COMPATIBILITY ---
+        # Explicitly initialize the robust SMTPHandler which supports the SOCKS5 proxy patch
         handler = SMTPHandler(smtp_config)
         success, msg = handler.test_connection()
         
@@ -1053,7 +1051,7 @@ def test_smtp_connection():
         
         if success:
             log_activity(f"SMTP Test successful for {profile.profile_name}", "SUCCESS")
-            return jsonify({'success': True, 'message': f'Connection successful!'})
+            return jsonify({'success': True, 'message': f'Connection successful! {msg}'})
         else:
             log_activity(f"SMTP Test failed for {profile.profile_name}: {msg}", "ERROR")
             return jsonify({'success': False, 'message': f'Failed: {msg}'})
@@ -1455,9 +1453,9 @@ def api_get_logs():
     log_list = []
     for log in recent_logs:
         log_list.append({
-            'timestamp': log.get('timestamp'),
-            'level': log.get('level'),
-            'message': log.get('message')
+            'timestamp': log.get('timestamp') if hasattr(log, 'get') else log.timestamp.strftime('%H:%M:%S'),
+            'level': log.get('level') if hasattr(log, 'get') else log.level,
+            'message': log.get('message') if hasattr(log, 'get') else log.message
         })
         
     return jsonify(log_list)
@@ -1512,6 +1510,7 @@ def analytics_dashboard():
     daily_labels_list = [stat.date.strftime('%Y-%m-%d') for stat in daily_stats]
     daily_counts_list = [stat.sent or 0 for stat in daily_stats]
     
+    # Safe dictionary keys (Avoiding 'values' to prevent Jinja2 collisions)
     daily_data = {
         'chart_labels': daily_labels_list,
         'chart_data': daily_counts_list
@@ -1636,79 +1635,3 @@ def bulk_delete_suppression():
         flash(f'Error deleting emails: {str(e)}', 'danger')
     
     return redirect(url_for('main.suppression_list'))
-
-
-# ==================== API KEY MANAGEMENT ====================
-
-@bp.route('/settings/api-keys')
-@login_required
-def api_keys():
-    """Manage API keys."""
-    keys = APIKey.query.filter_by(user_id=current_user.id).order_by(APIKey.created_at.desc()).all()
-    return render_template('api_keys.html', title='API Keys', api_keys=keys)
-
-
-@bp.route('/settings/api-keys/create', methods=['POST'])
-@login_required
-def create_api_key():
-    """Create a new API key."""
-    name = request.form.get('name', 'API Key')
-    scopes = request.form.getlist('scopes')
-    
-    if not scopes:
-        scopes = ['read']
-        
-    try:
-        # Generate new key
-        raw_key = APIKey.generate_key()
-        
-        new_key = APIKey(
-            name=name,
-            user_id=current_user.id,
-            is_active=True
-        )
-        new_key.set_key(raw_key)
-        new_key.set_scopes(scopes)
-        
-        # Handle expiry
-        expires_in = int(request.form.get('expires_in', 0))
-        if expires_in > 0:
-            new_key.expires_at = datetime.utcnow() + timedelta(days=expires_in)
-            
-        db.session.add(new_key)
-        db.session.commit()
-        
-        log_user_activity('api_key_created', f'Created API key: {name}')
-        flash('API Key created successfully. Copy it now as you won\'t see it again.', 'success')
-        
-        # We need to re-fetch keys to show the list, but pass the new key to template for display
-        keys = APIKey.query.filter_by(user_id=current_user.id).order_by(APIKey.created_at.desc()).all()
-        return render_template('api_keys.html', title='API Keys', api_keys=keys, new_api_key=raw_key)
-        
-    except Exception as e:
-        db.session.rollback()
-        flash(f'Error creating API key: {str(e)}', 'danger')
-        return redirect(url_for('main.api_keys'))
-
-
-@bp.route('/settings/api-keys/revoke/<int:key_id>', methods=['POST'])
-@login_required
-def revoke_api_key(key_id):
-    """Revoke an API key."""
-    key = APIKey.query.get_or_404(key_id)
-    
-    if key.user_id != current_user.id:
-        flash('Unauthorized.', 'danger')
-        return redirect(url_for('main.api_keys'))
-        
-    try:
-        db.session.delete(key)
-        db.session.commit()
-        
-        log_user_activity('api_key_revoked', f'Revoked API key: {key.name}')
-        flash('API Key revoked successfully.', 'success')
-    except Exception as e:
-        db.session.rollback()
-        flash(f'Error revoking API key: {str(e)}', 'danger')
-        
-    return redirect(url_for('main.api_keys'))
