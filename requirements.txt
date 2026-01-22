@@ -32,9 +32,7 @@ email-validator
 # Real-time WebSocket Support
 flask-socketio>=5.3.6
 python-socketio>=5.11.0
-eventlet>=0.33.3
-# REMOVED: gevent to prevent conflict with eventlet
-# gevent>=23.9.1
+simple-websocket>=1.0.0
 
 # Advanced Analytics & Charts
 pandas
