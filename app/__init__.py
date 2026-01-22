@@ -16,50 +16,45 @@ from config import config
 # ==========================================
 # CELERY BROKER CONFIGURATION - MUST BE FIRST
 # ==========================================
-# Read Redis URL from environment BEFORE creating Celery instance
 _redis_url = os.environ.get('REDIS_URL', '')
 
-# Debug print for troubleshooting
 if _redis_url:
     print(f"🔍 REDIS_URL found: {_redis_url[:40]}...")
-else:
-    print("⚠️ REDIS_URL not set, Celery will use default broker")
-
-# Clean and convert to SSL for Render
-if _redis_url:
+    
+    # Clean trailing slashes
     if _redis_url.endswith('/'):
         _redis_url = _redis_url.rstrip('/')
-    if _redis_url.startswith('redis://') and os.environ.get('RENDER'):
+    
+    # ALWAYS convert to SSL for Render Redis
+    if _redis_url.startswith('redis://'):
         _redis_url = _redis_url.replace('redis://', 'rediss://', 1)
         print(f"🔒 Converted to SSL: {_redis_url[:40]}...")
-
-# Create Celery with Redis broker if available
-if _redis_url:
+    
+    # Create Celery with Redis broker
     celery = Celery(
         __name__,
         broker=_redis_url,
         backend=_redis_url,
         include=['app.tasks']
     )
-    # Configure SSL for Render Redis
+    
+    # Configure SSL for Redis
     celery.conf.update(
+        broker_url=_redis_url,
+        result_backend=_redis_url,
         broker_use_ssl={'ssl_cert_reqs': ssl.CERT_NONE},
         redis_backend_use_ssl={'ssl_cert_reqs': ssl.CERT_NONE},
         broker_connection_retry_on_startup=True,
+        task_serializer='json',
+        accept_content=['json'],
+        result_serializer='json',
+        timezone='UTC',
+        enable_utc=True,
     )
-    print(f"✅ Celery configured with Redis broker")
+    print(f"✅ Celery configured with Redis broker:  {_redis_url[:40]}...")
 else:
+    print("⚠️ REDIS_URL not set!")
     celery = Celery(__name__)
-    print("⚠️ Celery using default configuration")
-
-# Configure Celery defaults
-celery.conf.update(
-    task_serializer='json',
-    accept_content=['json'],
-    result_serializer='json',
-    timezone='UTC',
-    enable_utc=True,
-)
 
 # ==========================================
 # FLASK EXTENSIONS
@@ -82,7 +77,7 @@ def create_app(config_name=None):
     app = Flask(__name__)
     app.config.from_object(config[config_name])
     
-    # Initialize extensions with app
+    # Initialize extensions
     db.init_app(app)
     migrate.init_app(app, db)
     login.init_app(app)
@@ -94,24 +89,19 @@ def create_app(config_name=None):
         cors_allowed_origins="*"
     )
     
-    # Initialize rate limiter
     try:
         limiter.init_app(app)
-    except Exception as e:
-        app.logger.warning(f"Rate limiter initialization failed: {e}")
+    except Exception as e: 
+        app.logger.warning(f"Rate limiter init failed: {e}")
     
-    # Initialize cache
     try:
-        cache.init_app(app, config={
-            'CACHE_TYPE': 'SimpleCache',
-            'CACHE_DEFAULT_TIMEOUT': 300
-        })
+        cache.init_app(app, config={'CACHE_TYPE': 'SimpleCache', 'CACHE_DEFAULT_TIMEOUT': 300})
     except Exception as e:
-        app.logger.warning(f"Cache initialization failed: {e}")
+        app.logger.warning(f"Cache init failed: {e}")
     
     CORS(app, resources={r"/api/*": {"origins": "*"}})
     
-    # Set up Celery context task
+    # Celery context
     class ContextTask(celery.Task):
         def __call__(self, *args, **kwargs):
             with app.app_context():
@@ -135,7 +125,7 @@ def create_app(config_name=None):
     try:
         from app.webhooks import bp as webhooks_bp
         app.register_blueprint(webhooks_bp, url_prefix='/webhooks')
-    except ImportError:
+    except ImportError: 
         pass
     
     # Create upload folder
@@ -146,12 +136,11 @@ def create_app(config_name=None):
         except OSError:
             pass
     
-    # Log proxy configuration
+    # Log proxy config
     proxy_host = os.environ.get('SMTP_PROXY_HOST')
     if proxy_host:
         proxy_port = os.environ.get('SMTP_PROXY_PORT', '1080')
         proxy_user = os.environ.get('SMTP_PROXY_USER')
-        auth_status = "Yes" if proxy_user else "No"
-        print(f"🔌 SMTP Proxy Configured: {proxy_host}:{proxy_port} (Auth: {auth_status})")
+        print(f"🔌 SMTP Proxy Configured: {proxy_host}:{proxy_port} (Auth: {'Yes' if proxy_user else 'No'})")
     
     return app
