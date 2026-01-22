@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}{{ title or 'Paris Sender' }}{% endblock %} - Paris Sender Web</title>
     <link rel="icon" type="image/png" href="https://upload.wikimedia.org/wikipedia/commons/0/0f/Afterlogic_Webmail_Lite_logo.png">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
     <style>
         :root {
             --primary-color: #4f46e5;
@@ -15,10 +15,12 @@
             --danger-color: #ef4444;
             --warning-color: #f59e0b;
             --info-color: #3b82f6;
+            --bs-primary-rgb: 79, 70, 229;
+            --bs-success-rgb: 16, 185, 129;
         }
         
         body { 
-            background-color: #f0f2f5; 
+            background-color: #f8f9fa; 
             padding-bottom: 200px; 
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
         }
@@ -152,18 +154,9 @@
             scrollbar-color: #444 #1e1e1e;
         }
         
-        #activity-log-content::-webkit-scrollbar {
-            width: 8px;
-        }
-        
-        #activity-log-content::-webkit-scrollbar-track {
-            background: #1e1e1e;
-        }
-        
-        #activity-log-content::-webkit-scrollbar-thumb {
-            background-color: #444;
-            border-radius: 4px;
-        }
+        #activity-log-content::-webkit-scrollbar { width: 8px; }
+        #activity-log-content::-webkit-scrollbar-track { background: #1e1e1e; }
+        #activity-log-content::-webkit-scrollbar-thumb { background-color: #444; border-radius: 4px; }
         
         .log-entry { 
             margin-bottom: 4px; 
@@ -178,19 +171,8 @@
             to { opacity: 1; transform: translateY(0); }
         }
         
-        .log-time { 
-            color: #569cd6; 
-            margin-right: 10px;
-            font-weight: 500;
-        }
-        
-        .log-icon { 
-            display: inline-block; 
-            width: 22px; 
-            text-align: center; 
-            margin-right: 6px;
-        }
-        
+        .log-time { color: #569cd6; margin-right: 10px; font-weight: 500; }
+        .log-icon { display: inline-block; width: 22px; text-align: center; margin-right: 6px; }
         .log-success { color: #4ade80; }
         .log-error { color: #f87171; }
         .log-warning { color: #fbbf24; }
@@ -198,12 +180,8 @@
         
         /* Status Badge Styles */
         .status-badge {
-            padding: 4px 10px;
-            border-radius: 6px;
-            font-size: 0.75rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
+            padding: 4px 10px; border-radius: 6px; font-size: 0.75rem;
+            font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
         }
         
         .status-sent { background-color: #d1fae5; color: #065f46; }
@@ -211,21 +189,15 @@
         .status-queued { background-color: #dbeafe; color: #1e40af; }
         .status-sending { background-color: #fef3c7; color: #92400e; }
         .status-opened { background-color: #e0e7ff; color: #3730a3; }
-        .status-clicked { background-color: #d1fae5; color: #065f46; }
-        .status-suppressed { background-color: #f3f4f6; color: #374151; }
-        .status-unsubscribed { background-color: #f3f4f6; color: #374151; }
+        .status-clicked { background-color: #cce7e0; color: #054e38; }
+        .status-suppressed, .status-unsubscribed { background-color: #f3f4f6; color: #374151; }
         .status-invalid { background-color: #fee2e2; color: #991b1b; }
         .status-replied { background-color: #ddd6fe; color: #5b21b6; }
         
         /* Campaign Status Styles */
         .campaign-status {
-            padding: 8px 16px;
-            border-radius: 8px;
-            font-weight: 600;
-            font-size: 0.875rem;
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
+            padding: 8px 16px; border-radius: 8px; font-weight: 600;
+            font-size: 0.875rem; display: inline-flex; align-items: center; gap: 6px;
         }
         
         .campaign-draft { background-color: #6b7280; color: white; }
@@ -233,165 +205,22 @@
         .campaign-sending { background-color: #10b981; color: white; }
         .campaign-paused { background-color: #f59e0b; color: #1f2937; }
         .campaign-completed { background-color: #3b82f6; color: white; }
-        .campaign-stopped { background-color: #ef4444; color: white; }
-        .campaign-failed { background-color: #dc2626; color: white; }
+        .campaign-stopped, .campaign-failed { background-color: #dc2626; color: white; }
         
-        /* Table Styles */
-        .table {
-            margin-bottom: 0;
-        }
-        
-        .table thead th {
-            font-weight: 600;
-            font-size: 0.8rem;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            color: #6b7280;
-            border-bottom: 2px solid #e5e7eb;
-            padding: 12px 16px;
-        }
-        
-        .table tbody td {
-            padding: 12px 16px;
-            vertical-align: middle;
-        }
-        
-        .table-hover tbody tr:hover {
-            background-color: #f9fafb;
-        }
-        
-        /* Form Styles */
         .form-control, .form-select {
-            border-radius: 8px;
-            border: 1px solid #d1d5db;
-            padding: 0.625rem 0.875rem;
-            transition: border-color 0.15s, box-shadow 0.15s;
+            border-radius: 8px; border: 1px solid #d1d5db;
+            padding: 0.625rem 0.875rem; transition: border-color 0.15s, box-shadow 0.15s;
         }
         
         .form-control:focus, .form-select:focus {
             border-color: var(--primary-color);
             box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
         }
-        
-        .form-label {
-            font-weight: 500;
-            color: #374151;
-            margin-bottom: 0.375rem;
-        }
-        
-        /* Alert Styles */
-        .alert {
-            border: none;
-            border-radius: 10px;
-            padding: 1rem 1.25rem;
-        }
-        
-        /* Dropdown Styles */
-        .dropdown-menu {
-            border: none;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.15);
-            border-radius: 10px;
-            padding: 0.5rem;
-        }
-        
-        .dropdown-item {
-            border-radius: 6px;
-            padding: 0.5rem 1rem;
-            font-weight: 500;
-        }
-        
-        .dropdown-item:hover {
-            background-color: #f3f4f6;
-        }
-        
-        /* Modal Styles */
-        .modal-content {
-            border: none;
-            border-radius: 16px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.2);
-        }
-        
-        .modal-header {
-            border-bottom: 1px solid #e5e7eb;
-            padding: 1.25rem 1.5rem;
-        }
-        
-        .modal-footer {
-            border-top: 1px solid #e5e7eb;
-            padding: 1rem 1.5rem;
-        }
-        
-        /* Utility Classes */
-        .font-monospace {
-            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-        }
-        
-        .text-truncate-2 {
-            display: -webkit-box;
-            -webkit-line-clamp: 2;
-            -webkit-box-orient: vertical;
-            overflow: hidden;
-        }
-        
-        /* Notification Badge */
-        .notification-badge {
-            position: absolute;
-            top: -5px;
-            right: -5px;
-            background-color: #ef4444;
-            color: white;
-            font-size: 0.65rem;
-            padding: 2px 6px;
-            border-radius: 10px;
-            font-weight: 600;
-        }
-        
-        /* Loading Spinner */
-        .spinner-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(255,255,255,0.8);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 9999;
-        }
-        
-        /* Progress Bar */
-        .progress {
-            height: 8px;
-            border-radius: 4px;
-            background-color: #e5e7eb;
-        }
-        
-        .progress-bar {
-            border-radius: 4px;
-        }
-        
-        /* Code Block */
-        pre {
-            background-color: #1e293b;
-            border-radius: 8px;
-            padding: 1rem;
-            overflow-x: auto;
-        }
-        
-        code {
-            color: #e879f9;
-            font-size: 0.875rem;
-        }
-        
-        pre code {
-            color: #e2e8f0;
-        }
     </style>
     {% block extra_css %}{% endblock %}
 </head>
 <body>
-    <nav class="navbar navbar-expand-lg navbar-dark mb-0">
+    <nav class="navbar navbar-expand-lg navbar-dark mb-4">
         <div class="container-fluid">
             <a class="navbar-brand" href="{{ url_for('main.index') }}">
                 <i class="fas fa-paper-plane me-2 text-primary"></i> PARIS SENDER
@@ -428,18 +257,14 @@
                         <ul class="dropdown-menu dropdown-menu-end">
                             <li>
                                 <a class="dropdown-item" href="{{ url_for('main.deliverability_tools') }}">
-                                    <i class="fas fa-shield-alt me-2 text-info"></i>Deliverability Check
+                                    <i class="fas fa-shield-alt me-2 text-info"></i> Deliverability Check
                                 </a>
                             </li>
-                            <li><hr class="dropdown-divider"></li>
-                            <!-- FIXED: Removed broken link to api_keys which caused 500 errors -->
-                            <!--
                             <li>
-                                <a class="dropdown-item" href="{{ url_for('main.general_settings') }}">
-                                    <i class="fas fa-key me-2 text-warning"></i>API Keys
+                                <a class="dropdown-item" href="{{ url_for('main.api_keys') }}">
+                                    <i class="fas fa-key me-2 text-warning"></i> API Keys
                                 </a>
                             </li>
-                            -->
                         </ul>
                     </li>
                     <li class="nav-item dropdown">
@@ -460,12 +285,6 @@
                             <li>
                                 <a class="dropdown-item" href="{{ url_for('main.suppression_list') }}">
                                     <i class="fas fa-ban me-2 text-danger"></i>Suppression List
-                                </a>
-                            </li>
-                            <li><hr class="dropdown-divider"></li>
-                            <li>
-                                <a class="dropdown-item" href="{{ url_for('main.deliverability_tools') }}">
-                                    <i class="fas fa-shield-alt me-2 text-info"></i>Deliverability Tools
                                 </a>
                             </li>
                         </ul>
@@ -495,22 +314,17 @@
         </div>
     </nav>
 
-    <div class="container-fluid content-area px-4">
+    <main class="container-fluid content-area px-4">
         {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
         <div class="row mt-3">
             <div class="col-12">
                 {% for category, message in messages %}
-                <div class="alert alert-{{ category if category != 'message' else 'info' }} alert-dismissible fade show" role="alert">
-                    {% if category == 'success' %}
-                    <i class="fas fa-check-circle me-2"></i>
-                    {% elif category == 'danger' or category == 'error' %}
-                    <i class="fas fa-exclamation-circle me-2"></i>
-                    {% elif category == 'warning' %}
-                    <i class="fas fa-exclamation-triangle me-2"></i>
-                    {% else %}
-                    <i class="fas fa-info-circle me-2"></i>
-                    {% endif %}
+                <div class="alert alert-{{ category if category in ['success', 'danger', 'warning', 'info'] else 'info' }} alert-dismissible fade show" role="alert">
+                    {% if category == 'success' %}<i class="fas fa-check-circle me-2"></i>
+                    {% elif category == 'danger' or category == 'error' %}<i class="fas fa-exclamation-circle me-2"></i>
+                    {% elif category == 'warning' %}<i class="fas fa-exclamation-triangle me-2"></i>
+                    {% else %}<i class="fas fa-info-circle me-2"></i>{% endif %}
                     {{ message }}
                     <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
                 </div>
@@ -521,14 +335,14 @@
         {% endwith %}
 
         {% block content %}{% endblock %}
-    </div>
+    </main>
 
     {% if current_user.is_authenticated %}
     <div id="activity-log-container">
         <div id="activity-log-header" onclick="toggleLog()">
             <span><i class="fas fa-terminal me-2"></i> SYSTEM ACTIVITY LOG</span>
             <div>
-                <span id="log-status" class="text-success me-3" style="font-size: 0.7rem;">● ONLINE</span>
+                <span id="log-status" class="text-success me-3" style="font-size: 0.7rem;">● CONNECTED</span>
                 <i class="fas fa-chevron-down" id="log-toggle-icon"></i>
             </div>
         </div>
@@ -538,7 +352,8 @@
     </div>
     {% endif %}
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
     
     {% block scripts %}{% endblock %}
     
@@ -546,92 +361,51 @@
         {% if current_user.is_authenticated %}
         const logContainer = document.getElementById('activity-log-container');
         const logContent = document.getElementById('activity-log-content');
-        let lastLogHash = "";
-        let isCollapsed = false;
+        let isLogCollapsed = false;
 
         function toggleLog() {
-            if (isCollapsed) {
-                logContainer.style.height = "180px";
-                document.getElementById('log-toggle-icon').className = "fas fa-chevron-down";
-            } else {
-                logContainer.style.height = "35px";
-                document.getElementById('log-toggle-icon').className = "fas fa-chevron-up";
+            isLogCollapsed = !isLogCollapsed;
+            logContainer.style.height = isLogCollapsed ? "35px" : "180px";
+            document.getElementById('log-toggle-icon').className = isLogCollapsed ? "fas fa-chevron-up" : "fas fa-chevron-down";
+        }
+        
+        // Connect to the logs namespace
+        const logSocket = io("/logs");
+
+        logSocket.on('connect', () => {
+            document.getElementById('log-status').textContent = '● CONNECTED';
+            document.getElementById('log-status').className = 'text-success me-3';
+        });
+
+        logSocket.on('disconnect', () => {
+            document.getElementById('log-status').textContent = '● OFFLINE';
+            document.getElementById('log-status').className = 'text-danger me-3';
+        });
+        
+        logSocket.on('log_entry', (data) => {
+            const div = document.createElement('div');
+            div.className = "log-entry";
+            
+            let colorClass = "log-info";
+            let icon = "ℹ️";
+            
+            if(data.level === "ERROR") { colorClass = "log-error"; icon = "❌"; }
+            else if(data.level === "SUCCESS") { colorClass = "log-success"; icon = "✅"; }
+            else if(data.level === "WARNING") { colorClass = "log-warning"; icon = "⚠️"; }
+            
+            div.innerHTML = `<span class="log-time">[${data.timestamp}]</span><span class="log-icon">${icon}</span><span class="${colorClass}">${data.message}</span>`;
+            
+            if (logContent.children.length > 0 && logContent.children[0].textContent.includes('Initializing')) {
+                logContent.innerHTML = '';
             }
-            isCollapsed = !isCollapsed;
-        }
-
-        // --- DISABLED TO PREVENT CRASH ---
-        // This function calls a route that doesn't exist yet ('main.api_get_logs')
-        // We comment it out to stop the 500 Internal Server Error.
-        /*
-        function fetchLogs() {
-            fetch("{{ url_for('main.api_get_logs') }}")
-                .then(response => {
-                    if (!response.ok) throw new Error('Network response was not ok');
-                    return response.json();
-                })
-                .then(data => {
-                    const newHash = JSON.stringify(data);
-                    if (newHash !== lastLogHash) {
-                        logContent.innerHTML = "";
-                        if (data.length === 0) {
-                            logContent.innerHTML = '<div class="log-entry text-muted">No activity yet...</div>';
-                        } else {
-                            data.forEach(entry => {
-                                const div = document.createElement('div');
-                                div.className = "log-entry";
-                                
-                                let colorClass = "log-info";
-                                let icon = "ℹ️";
-                                
-                                if(entry.level === "ERROR") { colorClass = "log-error"; icon = "❌"; }
-                                else if(entry.level === "SUCCESS") { colorClass = "log-success"; icon = "✅"; }
-                                else if(entry.level === "WARNING") { colorClass = "log-warning"; icon = "⚠️"; }
-                                
-                                div.innerHTML = `<span class="log-time">[${entry.timestamp}]</span><span class="log-icon">${icon}</span><span class="${colorClass}">${entry.message}</span>`;
-                                logContent.appendChild(div);
-                            });
-                        }
-                        logContent.scrollTop = logContent.scrollHeight;
-                        lastLogHash = newHash;
-                    }
-                    document.getElementById('log-status').className = "text-success me-3";
-                    document.getElementById('log-status').textContent = "● ONLINE";
-                })
-                .catch(err => {
-                    document.getElementById('log-status').className = "text-danger me-3";
-                    document.getElementById('log-status').textContent = "● OFFLINE";
-                });
-        }
-
-        setInterval(fetchLogs, 2500);
-        fetchLogs();
-        */
-        // --- END DISABLED ---
+            logContent.appendChild(div);
+            logContent.scrollTop = logContent.scrollHeight;
+        });
         {% endif %}
-        
-        // Global utility functions
-        function showLoading(element) {
-            const originalContent = element.innerHTML;
-            element.setAttribute('data-original-content', originalContent);
-            element.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Loading...';
-            element.disabled = true;
-        }
-        
-        function hideLoading(element) {
-            const originalContent = element.getAttribute('data-original-content');
-            if (originalContent) {
-                element.innerHTML = originalContent;
-            }
-            element.disabled = false;
-        }
         
         // Auto-dismiss alerts after 5 seconds
         document.querySelectorAll('.alert-dismissible').forEach(function(alert) {
-            setTimeout(function() {
-                const bsAlert = new bootstrap.Alert(alert);
-                bsAlert.close();
-            }, 5000);
+            setTimeout(() => new bootstrap.Alert(alert).close(), 5000);
         });
     </script>
 </body>
