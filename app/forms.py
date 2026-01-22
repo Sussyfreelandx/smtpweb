@@ -66,10 +66,13 @@ class NewCampaignForm(FlaskForm):
     campaign_name = StringField('Campaign Name', validators=[DataRequired()])
     subject = StringField('Subject Line', validators=[DataRequired()])
     body_html = TextAreaField('HTML Body', validators=[DataRequired()])
-    recipients_file = FileField('Recipients File (CSV or TXT)', validators=[
+    
+    # ENHANCEMENT: Added 'txt' to allowed extensions
+    recipients_file = FileField('Recipients File', validators=[
         DataRequired(),
         FileAllowed(['csv', 'txt'], 'CSV or TXT files only!')
     ])
+    
     smtp_profile_id = SelectField('SMTP Profile', coerce=int, validators=[DataRequired()])
     
     # A/B Testing

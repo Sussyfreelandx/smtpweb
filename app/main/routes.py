@@ -1,5 +1,5 @@
 from flask import (render_template, flash, redirect, url_for, request,
-                   jsonify, current_app, Response, send_file, abort, g)
+                   jsonify, current_app, Response, send_file, abort)
 from flask_login import login_user, logout_user, current_user, login_required
 from werkzeug.utils import secure_filename
 from app import db, cache, socketio
@@ -1039,8 +1039,6 @@ def test_smtp_connection():
         if not smtp_config.get('password'):
             return jsonify({'success': False, 'message': 'Password not set for this profile'}), 400
         
-        # --- FIXED LOGIC HERE FOR PROXY/RENDER COMPATIBILITY ---
-        # Explicitly initialize the robust SMTPHandler which supports the SOCKS5 proxy patch
         handler = SMTPHandler(smtp_config)
         success, msg = handler.test_connection()
         
@@ -1051,7 +1049,7 @@ def test_smtp_connection():
         
         if success:
             log_activity(f"SMTP Test successful for {profile.profile_name}", "SUCCESS")
-            return jsonify({'success': True, 'message': f'Connection successful! {msg}'})
+            return jsonify({'success': True, 'message': f'Connection successful!'})
         else:
             log_activity(f"SMTP Test failed for {profile.profile_name}: {msg}", "ERROR")
             return jsonify({'success': False, 'message': f'Failed: {msg}'})
@@ -1453,9 +1451,9 @@ def api_get_logs():
     log_list = []
     for log in recent_logs:
         log_list.append({
-            'timestamp': log.get('timestamp') if hasattr(log, 'get') else log.timestamp.strftime('%H:%M:%S'),
-            'level': log.get('level') if hasattr(log, 'get') else log.level,
-            'message': log.get('message') if hasattr(log, 'get') else log.message
+            'timestamp': log.timestamp.strftime('%H:%M:%S'),
+            'level': log.level,
+            'message': log.message
         })
         
     return jsonify(log_list)

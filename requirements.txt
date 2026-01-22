@@ -1,80 +1,22 @@
-# Flask and Web Server
-Flask>=2.0
-gunicorn>=21.2.0
-Flask-SQLAlchemy>=3.1.1
-Flask-Migrate
-Flask-Login
-python-dotenv
-Werkzeug
-
-# Core Logic & Email
-css-inline
-dnspython
-Jinja2
-pypdf
-requests
-itsdangerous
-# CRITICAL:  Required for SOCKS5 Proxy Tunneling
-PySocks>=1.7.1
-
-# Background Jobs
-Celery>=5.3.6
-redis>=5.0.1
-
-# Database Driver & Encryption
-psycopg2-binary
-cryptography
-
-# Forms & Validation
-Flask-WTF
-email-validator
-
-# Real-time WebSocket Support
-flask-socketio>=5.3.6
-python-socketio>=5.11.0
-simple-websocket>=1.0.0
-
-# Advanced Analytics & Charts
-pandas
-plotly
-
-# API Support
-flask-restful
-flask-cors
-marshmallow
-
-# Rate Limiting & Security
-flask-limiter
-flask-talisman
-pyotp
-qrcode
-
-# Caching
-flask-caching
-
-# File Handling
-Pillow
-python-magic
-
-# Scheduling
-APScheduler
-
-# Email Validation & Verification
-py3dns
-validate-email-address
-
-# AI/ML Features
-scikit-learn
-numpy
-
-# Export Formats
-openpyxl
-xlsxwriter
-
-# Monitoring & Logging
-sentry-sdk
-structlog
-
-# Testing
-pytest
-pytest-flask
+Flask==2.3.3
+Flask-Login==0.6.2
+Flask-SocketIO==5.3.6
+Flask-SQLAlchemy==3.1.1
+Flask-Migrate==4.0.5
+Flask-WTF==1.2.1
+WTForms==3.0.1
+Werkzeug==2.3.7
+SQLAlchemy==2.0.23
+Celery==5.3.4
+redis==5.0.1
+gevent==23.9.1
+eventlet==0.33.3
+gunicorn==21.2.0
+requests==2.31.0
+dnspython==2.4.2
+PySocks==1.7.1
+css-inline==0.10.5
+email-validator==2.1.0
+pyotp==2.9.0
+cryptography==41.0.5
+python-dotenv==1.0.0
