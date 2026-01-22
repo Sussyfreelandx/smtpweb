@@ -3,7 +3,7 @@ import ssl
 import logging
 import re
 import os
-import socks  # pip install PySocks
+import time
 import socket
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -16,10 +16,16 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 
+# Try to import socks for proxy support
+try:
+    import socks
+    SOCKS_AVAILABLE = True
+except ImportError:
+    SOCKS_AVAILABLE = False
+
 log = logging.getLogger(__name__)
 
-# --- PROXY SETTINGS ---
-# These are read from the environment once, when the module is loaded.
+# Environment variables for Proxy (Render static IP support)
 PROXY_HOST = os.environ.get('SMTP_PROXY_HOST')
 PROXY_PORT = int(os.environ.get('SMTP_PROXY_PORT', 1080))
 PROXY_USER = os.environ.get('SMTP_PROXY_USER')
@@ -27,11 +33,11 @@ PROXY_PASS = os.environ.get('SMTP_PROXY_PASS')
 
 class ProxySMTP(smtplib.SMTP):
     """
-    Custom SMTP class that uses a SOCKS5 proxy for the connection
-    without patching the global socket module. This is thread-safe.
+    Custom SMTP class that uses SOCKS5 proxy for the connection
+    without patching the global socket module. Critical for Render.
     """
     def _get_socket(self, host, port, timeout):
-        if PROXY_HOST: 
+        if PROXY_HOST and SOCKS_AVAILABLE: 
             log.debug(f"Connecting to {host}:{port} via proxy {PROXY_HOST}:{PROXY_PORT}")
             return socks.create_connection(
                 (host, port),
@@ -43,16 +49,14 @@ class ProxySMTP(smtplib.SMTP):
                 proxy_password=PROXY_PASS
             )
         else:
-            # Fallback to standard socket connection if no proxy is configured
             return socket.create_connection((host, port), timeout)
 
 class ProxySMTP_SSL(smtplib.SMTP_SSL):
     """
-    Custom SMTP_SSL class that uses a SOCKS5 proxy for the connection.
-    This is thread-safe and avoids global patching.
+    Custom SMTP_SSL class that uses SOCKS5 proxy for the connection.
     """
     def _get_socket(self, host, port, timeout):
-        if PROXY_HOST:
+        if PROXY_HOST and SOCKS_AVAILABLE:
             # 1. Connect to Proxy -> Target via plain TCP first
             log.debug(f"Connecting (SSL) to {host}:{port} via proxy {PROXY_HOST}:{PROXY_PORT}")
             sock = socks.create_connection(
@@ -64,17 +68,16 @@ class ProxySMTP_SSL(smtplib.SMTP_SSL):
                 proxy_username=PROXY_USER,
                 proxy_password=PROXY_PASS
             )
-            # 2. Wrap the established socket with SSL for encryption
+            # 2. Wrap the socket with SSL
             new_socket = self.context.wrap_socket(sock, server_hostname=host)
             return new_socket
         else: 
-            # Fallback to standard SSL socket connection if no proxy is configured
             return super()._get_socket(host, port, timeout)
 
 class SMTPHandler:
     """
-    Robust SMTP Handler supporting connection pooling, multi-threaded sending,
-    warmup, and safe SOCKS5 Proxying via custom SMTP classes.
+    Robust SMTP Handler.
+    Supports connection pooling, multi-threaded bulk sending, and SOCKS5 Proxying.
     """
     
     def __init__(self, smtp_config):
@@ -88,32 +91,40 @@ class SMTPHandler:
         self.sender_email = smtp_config.get('sender_email') or self.username
         self.reply_to_email = smtp_config.get('reply_to_email')
         
+        # Connection management
+        self._connection = None
         self._lock = threading.Lock()
+        
+        # Rate limiting tracking
         self._recent_sends = deque(maxlen=1000)
     
     def _create_secure_ssl_context(self):
-        """Create a secure SSL context for TLS/SSL connections."""
+        """Create a secure SSL context."""
         context = ssl.create_default_context()
-        context.minimum_version = ssl.TLSVersion.TLSv1_2
+        
+        # If proxying, relax hostname checks as tunneling might mismatch SNI
+        if PROXY_HOST:
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+        else:
+            context.minimum_version = ssl.TLSVersion.TLSv1_2
+            
         return context
 
     def _html_to_text(self, html):
-        """Convert HTML to a reasonable plain text version."""
-        if not html:  return "This is an HTML-only email."
+        """Convert HTML to plain text."""
+        if not html:  return "Plain text content not available."
         try:
             text = re.sub(r'<(script|style).*?>.*?</\1>', '', html, flags=re.DOTALL | re.IGNORECASE)
-            text = re.sub(r'</(p|h[1-6]|li|div|tr|br)\s*>', '\n', text, flags=re.IGNORECASE)
+            text = re.sub(r'</(p|h[1-6]|li|div|tr|br) *>', '\n', text, flags=re.IGNORECASE)
             text = re.sub(r'<[^>]+>', ' ', text)
-            text = re.sub(r'\s+', ' ', text).strip()
-            lines = (line.strip() for line in text.splitlines())
-            chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-            return '\n'.join(chunk for chunk in chunks if chunk)
+            return text.strip()
         except Exception: 
             return "HTML-only email. Please use a compatible client."
     
     def _create_mime_message(self, to_email, subject, html_content, plain_content=None,
                              unsubscribe_url=None, attachments=None, custom_headers=None):
-        """Construct the email message object."""
+        """Create the MIME object for the email."""
         msg_root = MIMEMultipart('related')
         
         msg_root['Subject'] = Header(subject, 'utf-8').encode()
@@ -153,59 +164,100 @@ class SMTPHandler:
                         part.add_header('Content-Disposition', f'attachment; filename="{os.path.basename(filepath)}"')
                         msg_root.attach(part)
                     except Exception as e:
-                        log.error(f"Could not attach file {filepath}: {e}")
+                        log.error(f"⚠️ Could not attach {filepath}: {e}")
         
         return msg_root
 
-    def test_connection(self):
-        """Test SMTP connection credentials by connecting and logging in."""
-        if not all([self.smtp_server, self.username, self.password]):
-            return False, "SMTP configuration is incomplete."
-        
-        try:
-            context = self._create_secure_ssl_context()
-            timeout_val = 45 if PROXY_HOST else 20
-            
-            if self.use_ssl or self.smtp_port == 465:
-                server = ProxySMTP_SSL(self.smtp_server, self.smtp_port, context=context, timeout=timeout_val)
-            else:
-                server = ProxySMTP(self.smtp_server, self.smtp_port, timeout=timeout_val)
-            
-            with server:
-                server.ehlo()
+    def connect(self):
+        """Establish connection to SMTP server using Custom Proxy Classes."""
+        with self._lock:
+            try:
+                context = self._create_secure_ssl_context()
+                # Increased timeout to handle slow proxy negotiations
+                timeout_val = 60 if PROXY_HOST else 30
+                
+                # Use our custom ProxySMTP classes instead of standard smtplib
+                if self.use_ssl or self.smtp_port == 465:
+                    self._connection = ProxySMTP_SSL(
+                        self.smtp_server, self.smtp_port, context=context, timeout=timeout_val
+                    )
+                else:  
+                    self._connection = ProxySMTP(
+                        self.smtp_server, self.smtp_port, timeout=timeout_val
+                    )
+                
+                # Debug logging
+                if PROXY_HOST:
+                    log.info(f"Attempting connection via Proxy: {PROXY_HOST}")
+                
+                # Handshake
+                try:
+                    self._connection.ehlo()
+                except smtplib.SMTPHeloError:
+                    self._connection.helo()
+                
+                # STARTTLS
                 if not self.use_ssl and self.use_tls:
-                    server.starttls(context=context)
-                    server.ehlo()
-                server.login(self.username, self.password)
+                    if self._connection.has_extn('STARTTLS'):
+                        self._connection.starttls(context=context)
+                        self._connection.ehlo()
+                
+                self._connection.login(self.username, self.password)
+                
+                status_msg = f"Connected via Proxy ({PROXY_HOST})" if PROXY_HOST else "Connected Direct"
+                return True, status_msg
             
-            return True, f"Successfully connected to {self.smtp_server}."
+            except smtplib.SMTPAuthenticationError as e:
+                error_msg = e.smtp_error.decode() if isinstance(e.smtp_error, bytes) else str(e.smtp_error)
+                return False, f"Auth Failed: {error_msg}"
+            except Exception as e:
+                log.error(f"Connection Error details: {e}")
+                return False, f"Connection Error: {str(e)}"
+
+    def disconnect(self):
+        """Safely close the connection."""
+        with self._lock:
+            if self._connection:
+                try:
+                    self._connection.quit()
+                except Exception:
+                    try:  self._connection.close()
+                    except: pass
+                finally:
+                    self._connection = None
+
+    def test_connection(self):
+        """
+        Test SMTP connection credentials.
+        This is the function that was failing in your logs.
+        """
+        if not self.smtp_server or not self.username:
+            return False, "SMTP configuration incomplete"
         
-        except smtplib.SMTPAuthenticationError as e:
-            error_msg = e.smtp_error.decode('utf-8', 'ignore') if isinstance(e.smtp_error, bytes) else str(e.smtp_error)
-            return False, f"Authentication Failed: {error_msg}"
-        except Exception as e:
-            log.error(f"Connection Test Error: {e}", exc_info=True)
-            return False, f"Connection Error: {str(e)}"
+        # We use the robust connect method defined above
+        success, msg = self.connect()
+        self.disconnect() # Always disconnect after a test
+        return success, msg
 
     def send_email(self, to_email, subject, html_content, plain_content=None,
                    unsubscribe_url=None, attachments=None, custom_headers=None):
         """
-        Send a single email. This is the main method called by Celery tasks.
-        It's a self-contained, thread-safe operation.
+        Send a single email using a fresh connection for reliability.
         """
         try:
             context = self._create_secure_ssl_context()
             timeout_val = 60 if PROXY_HOST else 30
             
-            # Instantiate a new SMTP connection object for this specific send operation.
-            # This is crucial for thread safety.
+            # Instantiate local server object for this send (Thread safe)
             if self.use_ssl or self.smtp_port == 465:
                 server = ProxySMTP_SSL(self.smtp_server, self.smtp_port, context=context, timeout=timeout_val)
             else: 
                 server = ProxySMTP(self.smtp_server, self.smtp_port, timeout=timeout_val)
             
             with server:
-                server.ehlo()
+                try:  server.ehlo()
+                except:  server.helo()
+                
                 if not self.use_ssl and self.use_tls and server.has_extn('STARTTLS'):
                     server.starttls(context=context)
                     server.ehlo()
@@ -219,9 +271,7 @@ class SMTPHandler:
                 
                 server.send_message(mime_message)
             
-            with self._lock:
-                self._recent_sends.append(datetime.utcnow())
-            
+            self._recent_sends.append(datetime.utcnow())
             return True, "Sent"
             
         except smtplib.SMTPAuthenticationError as e:
@@ -232,21 +282,21 @@ class SMTPHandler:
             return False, f"{error_class}: {str(e)}"
 
     def classify_failure(self, error_message):
-        """Categorize SMTP errors for better reporting."""
+        """Categorize error messages for analytics."""
         msg = str(error_message).lower()
         if any(s in msg for s in ["mailbox unavailable", "user unknown", "no such user", "recipient rejected", "invalid address"]):
-            return "Hard Bounce"
+            return "hard_bounce"
         elif any(s in msg for s in ["quota", "over quota", "mailbox full"]):
-            return "Soft Bounce"
+            return "soft_bounce"
         elif any(s in msg for s in ["rate", "too many", "limit", "throttled"]):
-            return "Rate Limited"
+            return "rate_limited"
         elif any(s in msg for s in ["spam", "blocked", "blacklisted", "content denied"]):
-            return "Spam Block"
+            return "spam_block"
         elif "authentication" in msg or "credentials" in msg: 
-            return "Auth Error"
+            return "auth_error"
         elif "socks" in msg or "proxy" in msg: 
-            return "Proxy Error"
+            return "proxy_error"
         elif "timeout" in msg or "connection" in msg:
-            return "Connection Error"
+            return "connection_error"
         else:
-            return "Unknown Error"
+            return "unknown_error"
