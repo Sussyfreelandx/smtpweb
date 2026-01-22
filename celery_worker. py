@@ -1,0 +1,56 @@
+import os
+import ssl
+
+# Ensure environment variables are read before anything else
+from celery import Celery
+
+# Get Redis URL from environment
+redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+
+# Clean up trailing slashes
+if redis_url.endswith('/'):
+    redis_url = redis_url.rstrip('/')
+
+# Force SSL for Render Redis
+if os.environ.get('RENDER') and redis_url.startswith('redis://'):
+    redis_url = redis_url.replace('redis://', 'rediss://', 1)
+
+# Create Celery app with Redis broker
+celery = Celery(
+    'paris_sender',
+    broker=redis_url,
+    backend=redis_url,
+    include=['app.tasks']
+)
+
+# Configure Celery
+celery.conf.update(
+    task_serializer='json',
+    accept_content=['json'],
+    result_serializer='json',
+    timezone='UTC',
+    enable_utc=True,
+    broker_connection_retry_on_startup=True,
+)
+
+# Add SSL settings for Render Redis
+if os.environ.get('RENDER'):
+    celery.conf.update(
+        broker_use_ssl={'ssl_cert_reqs': ssl.CERT_NONE},
+        redis_backend_use_ssl={'ssl_cert_reqs': ssl.CERT_NONE}
+    )
+
+# Import Flask app context for tasks
+from app import create_app
+
+flask_app = create_app()
+
+class ContextTask(celery.Task):
+    def __call__(self, *args, **kwargs):
+        with flask_app.app_context():
+            return self.run(*args, **kwargs)
+
+celery.Task = ContextTask
+
+# Log configuration
+print(f"🔗 Celery broker: {redis_url[:20]}...")
