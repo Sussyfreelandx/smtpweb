@@ -15,14 +15,9 @@ from app.core_logic.smtp_handler import SMTPHandler
 from app.core_logic.personalization import PersonalizationEngine
 from app.utils import (
     log_activity, get_logs, is_valid_email, html_to_plain_text,
-    allowed_file, generate_csrf_token, parse_csv_file, parse_txt_file,
-    sanitize_filename, export_to_csv
+    allowed_file, generate_csrf_token, parse_csv_file
 )
 from app.main import bp
-from app.forms import (
-    LoginForm, RegistrationForm, NewCampaignForm, SMTPServerForm,
-    SuppressionForm, GlobalSettingsForm
-)
 from flask_wtf import FlaskForm
 from wtforms import StringField, SubmitField, TextAreaField, SelectField, BooleanField
 from wtforms.validators import DataRequired, Email, Optional
@@ -35,7 +30,7 @@ import threading
 import time
 import base64
 import secrets
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta
 from collections import Counter
 from sqlalchemy import func
 
@@ -46,6 +41,12 @@ class DeliverabilityForm(FlaskForm):
     domain_ip = StringField('Domain or IP', validators=[DataRequired()])
     check_auth = SubmitField('Check Authentication')
     check_blacklist = SubmitField('Check Blacklist')
+
+
+class SuppressionForm(FlaskForm):
+    email = StringField('Email Address', validators=[DataRequired(), Email()])
+    reason = StringField('Reason', default="Manual")
+    submit = SubmitField('Add to Suppression List')
 
 
 class SMTPProfileForm(FlaskForm):
@@ -342,11 +343,7 @@ def index():
                           campaigns=all_campaigns,  # For the counters (e.g. campaigns.count())
                           recent_campaigns=recent_campaigns, # For the table loop
                           stats=stats,
-                          notifications=notifications,
-                          smtp_count=SMTPServer.query.filter_by(user_id=current_user.id).count(),
-                          today_sent=DailyStats.query.filter_by(user_id=current_user.id, date=today).with_entities(func.sum(DailyStats.emails_sent)).scalar() or 0,
-                          today_opened=DailyStats.query.filter_by(user_id=current_user.id, date=today).with_entities(func.sum(DailyStats.emails_opened)).scalar() or 0
-                          )
+                          notifications=notifications)
 
 
 # ==================== CAMPAIGN ROUTES ====================
@@ -494,20 +491,10 @@ def new_campaign():
             db.session.add(campaign)
             db.session.flush()
             
-            # Handle file upload (CSV or TXT)
+            # Handle file upload
             file = request.files.get('recipients_file')
             if file and file.filename:
-                filename = file.filename.lower()
-                recipients_added = 0
-                errors = []
-                
-                if filename.endswith('.csv'):
-                    recipients_added, errors = parse_csv_file(file, campaign.id)
-                elif filename.endswith('.txt'):
-                    recipients_added, errors = parse_txt_file(file, campaign.id)
-                else:
-                    errors.append("Unsupported file type. Only .csv and .txt are allowed.")
-                
+                recipients_added, errors = parse_csv_file(file, campaign.id)
                 if errors:
                     for error in errors[:5]: 
                         flash(error, 'warning')
@@ -1464,9 +1451,9 @@ def api_get_logs():
     log_list = []
     for log in recent_logs:
         log_list.append({
-            'timestamp': log['timestamp'], # Access as dict key
-            'level': log['level'],
-            'message': log['message']
+            'timestamp': log.timestamp.strftime('%H:%M:%S') if hasattr(log, 'timestamp') else log.get('timestamp'),
+            'level': log.level if hasattr(log, 'level') else log.get('level'),
+            'message': log.message if hasattr(log, 'message') else log.get('message')
         })
         
     return jsonify(log_list)
@@ -1646,3 +1633,79 @@ def bulk_delete_suppression():
         flash(f'Error deleting emails: {str(e)}', 'danger')
     
     return redirect(url_for('main.suppression_list'))
+
+
+# ==================== API KEY MANAGEMENT ====================
+
+@bp.route('/settings/api-keys')
+@login_required
+def api_keys():
+    """Manage API keys."""
+    keys = APIKey.query.filter_by(user_id=current_user.id).order_by(APIKey.created_at.desc()).all()
+    return render_template('api_keys.html', title='API Keys', api_keys=keys)
+
+
+@bp.route('/settings/api-keys/create', methods=['POST'])
+@login_required
+def create_api_key():
+    """Create a new API key."""
+    name = request.form.get('name', 'API Key')
+    scopes = request.form.getlist('scopes')
+    
+    if not scopes:
+        scopes = ['read']
+        
+    try:
+        # Generate new key
+        raw_key = APIKey.generate_key()
+        
+        new_key = APIKey(
+            name=name,
+            user_id=current_user.id,
+            is_active=True
+        )
+        new_key.set_key(raw_key)
+        new_key.set_scopes(scopes)
+        
+        # Handle expiry
+        expires_in = int(request.form.get('expires_in', 0))
+        if expires_in > 0:
+            new_key.expires_at = datetime.utcnow() + timedelta(days=expires_in)
+            
+        db.session.add(new_key)
+        db.session.commit()
+        
+        log_user_activity('api_key_created', f'Created API key: {name}')
+        flash('API Key created successfully. Copy it now as you won\'t see it again.', 'success')
+        
+        # We need to re-fetch keys to show the list, but pass the new key to template for display
+        keys = APIKey.query.filter_by(user_id=current_user.id).order_by(APIKey.created_at.desc()).all()
+        return render_template('api_keys.html', title='API Keys', api_keys=keys, new_api_key=raw_key)
+        
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error creating API key: {str(e)}', 'danger')
+        return redirect(url_for('main.api_keys'))
+
+
+@bp.route('/settings/api-keys/revoke/<int:key_id>', methods=['POST'])
+@login_required
+def revoke_api_key(key_id):
+    """Revoke an API key."""
+    key = APIKey.query.get_or_404(key_id)
+    
+    if key.user_id != current_user.id:
+        flash('Unauthorized.', 'danger')
+        return redirect(url_for('main.api_keys'))
+        
+    try:
+        db.session.delete(key)
+        db.session.commit()
+        
+        log_user_activity('api_key_revoked', f'Revoked API key: {key.name}')
+        flash('API Key revoked successfully.', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error revoking API key: {str(e)}', 'danger')
+        
+    return redirect(url_for('main.api_keys'))
