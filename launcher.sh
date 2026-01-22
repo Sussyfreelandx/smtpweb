@@ -2,7 +2,8 @@
 # exit on error
 set -o errexit
 
-# Apply eventlet monkey-patching via a startup hook.
-# This is the most robust way to ensure Gunicorn's arbiter and workers
-# are all patched correctly, preventing the "do not call blocking functions" crash.
-exec gunicorn wsgi:app --worker-class eventlet --preload
+# Execute Gunicorn using the configuration file.
+# This ensures that the same settings are used for both local and production environments.
+# The worker class is now consistently set to 'gthread' via gunicorn.conf.py,
+# resolving the previous conflict with 'eventlet'.
+exec gunicorn -c gunicorn.conf.py wsgi:app
