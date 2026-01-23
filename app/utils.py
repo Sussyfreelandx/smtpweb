@@ -1,11 +1,9 @@
 from collections import deque
 from datetime import datetime
-from flask import current_app
 import re
 import csv
 import io
 import json
-import os
 
 
 # ==================== LOGGING ====================
@@ -38,44 +36,42 @@ def clear_logs():
 # ==================== VALIDATION ====================
 
 def is_valid_email(email):
-    """Validate email format."""
+    """Validate email format and exclude common disposable domains."""
     if not email:
         return False
-    
-    pattern = r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$'
+
+    email = email.strip()
+    pattern = r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[A-Za-z]{2,}$'
     if not re.match(pattern, email):
         return False
-    
-    # Check for disposable email domains
+
     disposable_domains = {
         '10minutemail.com', 'temp-mail.org', 'guerrillamail.com', 'mailinator.com',
         'throwawaymail.com', 'getnada.com', 'mohmal.com', 'yopmail.com', 'maildrop.cc',
         'tempail.com', 'fakeinbox.com', 'trashmail.com'
     }
-    
     try:
-        domain = email.split('@')[1].lower()
+        domain = email.split('@', 1)[1].lower()
     except Exception:
         return False
-
     if domain in disposable_domains:
         return False
-    
+
     return True
 
 
 def validate_email_list(emails):
-    """Validate a list of emails and return valid/invalid counts."""
+    """Validate a list of emails and return valid/invalid lists."""
     valid = []
     invalid = []
-    
+
     for email in emails:
         email = email.strip().lower()
         if is_valid_email(email):
             valid.append(email)
         else:
             invalid.append(email)
-    
+
     return valid, invalid
 
 
@@ -85,141 +81,165 @@ def allowed_file(filename, allowed_extensions=None):
     """Check if a file extension is allowed."""
     if allowed_extensions is None:
         allowed_extensions = {'png', 'jpg', 'jpeg', 'gif', 'pdf', 'csv', 'xlsx', 'txt'}
-    
+
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in allowed_extensions
 
 
 def parse_csv_file(file, campaign_id):
     """
-    Parse a CSV or TXT file and create recipients.
-    Supports:
-    - CSV files with an 'email' column (and optional other fields)
-    - TXT files with one email per line (or comma-separated values where first row contains header)
+    Parse an uploaded recipients file. Supports:
+      - CSV with header containing 'email' column (case-insensitive)
+      - TXT: one email per line or CSV-like first-line header then values
+
     Returns (added_count, errors_list)
     """
     from app import db
     from app.models import Recipient, Suppression
 
     try:
-        filename = getattr(file, 'filename', '') or ''
-        name_lower = filename.lower()
-        content_bytes = file.stream.read()
-        text = content_bytes.decode("UTF-8-sig", errors="replace")
-        
-        # Safe access to first line to prevent IndexError on empty files
-        lines = text.splitlines()
-        first_line = lines[0].lower() if lines else ""
-
-        # Decide CSV vs TXT style
-        # If file is .csv or header contains 'email' treat as CSV
-        is_csv = name_lower.endswith('.csv') or (',' in first_line and 'email' in first_line)
-        
-        # Helper functions defined locally to avoid lambda assignment linting errors
-        def get_email_from_row_func(row):
-            return (row.get('email') or '').strip()
-
-        def row_to_data_func(row):
-            return {k: v for k, v in row.items()}
-            
-        def get_email_plain(row):
-            return row.get('email', '').strip()
-
-        if is_csv:
-            stream = io.StringIO(text, newline=None)
-            csv_reader = csv.DictReader(stream)
-            
-            # Normalize headers
-            if csv_reader.fieldnames:
-                csv_reader.fieldnames = [h.strip().lower() for h in csv_reader.fieldnames]
-            
-            if not csv_reader.fieldnames or 'email' not in csv_reader.fieldnames:
-                return 0, ["CSV must have an 'email' column header"]
-            
-            rows_iter = csv_reader
-            get_email_fn = get_email_from_row_func
-            data_fn = row_to_data_func
+        # Read entire stream as text
+        raw = file.stream.read()
+        if isinstance(raw, bytes):
+            raw_text = raw.decode("utf-8-sig", errors='replace')
         else:
-            # TXT style: each line an email or "email,firstname,company"
-            cleaned_lines = [l.strip() for l in lines if l.strip()]
-            
-            # Re-check first line of cleaned content for CSV-like header in TXT
-            if cleaned_lines and (',' in cleaned_lines[0] and 'email' in cleaned_lines[0].lower()):
-                stream = io.StringIO(text, newline=None)
-                csv_reader = csv.DictReader(stream)
-                if csv_reader.fieldnames:
-                    csv_reader.fieldnames = [h.strip().lower() for h in csv_reader.fieldnames]
-                if 'email' not in csv_reader.fieldnames:
-                    return 0, ["CSV/TXT header must include 'email' column"]
-                rows_iter = csv_reader
-                get_email_fn = get_email_from_row_func
-                data_fn = row_to_data_func
-            else:
-                # Plain list of emails
-                rows_iter = [{'email': l} for l in cleaned_lines]
-                get_email_fn = get_email_plain
-                data_fn = get_email_plain # Maps back to dict via {'email': val} logic below
+            raw_text = str(raw)
 
-        added = 0
-        skipped = 0
-        errors = []
-        batch_commit_size = 500
-        to_commit = 0
+        # Determine filename extension if available
+        filename = getattr(file, 'filename', '') or ''
+        ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
 
-        for row_num, row in enumerate(rows_iter, start=2):
-            email = get_email_fn(row)
-            if not email:
-                continue
-            email = email.strip().lower()
-            
-            if not is_valid_email(email):
-                skipped += 1
-                if len(errors) < 10:
-                    errors.append(f"Row {row_num}: Invalid email '{email}'")
-                continue
-            
-            # Check if already exists in campaign
-            existing = Recipient.query.filter_by(campaign_id=campaign_id, email=email).first()
-            if existing:
-                skipped += 1
-                continue
-            
-            # Check suppression
-            is_suppressed = Suppression.query.filter_by(email=email).first()
-            
-            try:
-                # Use data_fn logic but ensure it returns a dict structure
-                if data_fn == get_email_plain:
-                    data = {'email': email}
-                else:
-                    data = data_fn(row)
-            except Exception:
-                data = {'email': email}
-            
-            recipient = Recipient(
-                email=email,
-                campaign_id=campaign_id,
-                data=json.dumps(data),
-                status='Suppressed' if is_suppressed else 'Queued',
-                status_message='Suppressed by global list' if is_suppressed else None
-            )
-            
-            db.session.add(recipient)
-            added += 1
-            to_commit += 1
-            
-            # Commit in batches to keep transaction size small
-            if to_commit >= batch_commit_size:
-                db.session.commit()
-                to_commit = 0
-        
-        if to_commit > 0:
+        # First try CSV DictReader
+        stream = io.StringIO(raw_text, newline=None)
+        csv_reader = csv.DictReader(stream)
+
+        # Normalize headers if present
+        if csv_reader.fieldnames:
+            csv_reader.fieldnames = [h.strip().lower() if h else h for h in csv_reader.fieldnames]
+
+        # If CSV has an 'email' column, process as CSV
+        if csv_reader.fieldnames and 'email' in csv_reader.fieldnames:
+            added = 0
+            skipped = 0
+            errors = []
+
+            for row_num, row in enumerate(csv_reader, start=2):
+                email = (row.get('email') or '').strip().lower()
+                if not email:
+                    skipped += 1
+                    continue
+
+                if not is_valid_email(email):
+                    skipped += 1
+                    if len(errors) < 10:
+                        errors.append(f"Row {row_num}: Invalid email '{email}'")
+                    continue
+
+                # Check duplication in campaign
+                existing = Recipient.query.filter_by(campaign_id=campaign_id, email=email).first()
+                if existing:
+                    skipped += 1
+                    continue
+
+                is_suppressed = Suppression.query.filter_by(email=email).first()
+
+                recipient = Recipient(
+                    email=email,
+                    campaign_id=campaign_id,
+                    data=json.dumps(row),
+                    status='Suppressed' if is_suppressed else 'Queued',
+                    status_message='Suppressed by global list' if is_suppressed else None
+                )
+                db.session.add(recipient)
+                added += 1
+
+                if added % 500 == 0:
+                    db.session.commit()
+
             db.session.commit()
-        
-        if skipped > 0:
-            errors.insert(0, f"Skipped {skipped} invalid or duplicate emails")
-        
-        return added, errors
-    
+            if skipped > 0:
+                errors.insert(0, f"Skipped {skipped} invalid or duplicate emails")
+            return added, errors
+
+        # If no CSV header or file is .txt, fall back to line-based parsing
+        lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
+        # If first line looks like CSV header that contained 'email' but earlier DictReader failed, try header detection:
+        if lines and (ext == 'txt' or 'email' not in (csv_reader.fieldnames or [])):
+            added = 0
+            skipped = 0
+            errors = []
+            for idx, line in enumerate(lines, start=1):
+                # If line contains commas, try splitting and find email-like token
+                if ',' in line and idx == 1 and re.search(r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[A-Za-z]{2,}', line):
+                    # This is a header or row with commas; attempt parse as CSV row values
+                    # Re-run DictReader with inferred header from first line if first line contains non-email tokens
+                    header_candidates = [h.strip().lower() for h in line.split(',')]
+                    if 'email' in header_candidates:
+                        # Rewind and use DictReader with these headers
+                        stream2 = io.StringIO(raw_text, newline=None)
+                        dict_reader2 = csv.DictReader(stream2, fieldnames=header_candidates)
+                        # Skip header row
+                        next(dict_reader2, None)
+                        for row_num, row in enumerate(dict_reader2, start=2):
+                            email = (row.get('email') or '').strip().lower()
+                            if not email:
+                                skipped += 1
+                                continue
+                            if not is_valid_email(email):
+                                skipped += 1
+                                if len(errors) < 10:
+                                    errors.append(f"Row {row_num}: Invalid email '{email}'")
+                                continue
+                            existing = Recipient.query.filter_by(campaign_id=campaign_id, email=email).first()
+                            if existing:
+                                skipped += 1
+                                continue
+                            is_suppressed = Suppression.query.filter_by(email=email).first()
+                            recipient = Recipient(
+                                email=email,
+                                campaign_id=campaign_id,
+                                data=json.dumps(row),
+                                status='Suppressed' if is_suppressed else 'Queued',
+                                status_message='Suppressed by global list' if is_suppressed else None
+                            )
+                            db.session.add(recipient)
+                            added += 1
+                            if added % 500 == 0:
+                                db.session.commit()
+                        db.session.commit()
+                        if skipped > 0:
+                            errors.insert(0, f"Skipped {skipped} invalid or duplicate emails")
+                        return added, errors
+                # Otherwise treat line as a plain email
+                email = line.strip().lower()
+                if not is_valid_email(email):
+                    skipped += 1
+                    if len(errors) < 10:
+                        errors.append(f"Line {idx}: Invalid email '{email}'")
+                    continue
+                existing = Recipient.query.filter_by(campaign_id=campaign_id, email=email).first()
+                if existing:
+                    skipped += 1
+                    continue
+                is_suppressed = Suppression.query.filter_by(email=email).first()
+                recipient = Recipient(
+                    email=email,
+                    campaign_id=campaign_id,
+                    data=json.dumps({'email': email}),
+                    status='Suppressed' if is_suppressed else 'Queued',
+                    status_message='Suppressed by global list' if is_suppressed else None
+                )
+                db.session.add(recipient)
+                added += 1
+                if added % 500 == 0:
+                    db.session.commit()
+
+            db.session.commit()
+            if skipped > 0:
+                errors.insert(0, f"Skipped {skipped} invalid or duplicate emails")
+            return added, errors
+
+        # If reached here and nothing matched
+        return 0, ["CSV must have an 'email' column header or TXT must include one email per line"]
     except Exception as e:
         return 0, [f"Error parsing file: {str(e)}"]
 
@@ -229,10 +249,10 @@ def export_to_csv(data, headers):
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(headers)
-    
+
     for row in data:
         writer.writerow(row)
-    
+
     return output.getvalue()
 
 
@@ -242,29 +262,24 @@ def html_to_plain_text(html):
     """Convert HTML to plain text."""
     if not html:
         return ""
-    
+
     # Remove script and style elements
     text = re.sub(r'<(script|style).*?>.*?</\1>', '', html, flags=re.DOTALL | re.IGNORECASE)
-    
+
     # Add newlines for block elements
     text = re.sub(r'</(p|h[1-6]|li|div|tr)\s*>', '\n', text, flags=re.IGNORECASE)
     text = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
-    
+
     # Remove remaining tags
     text = re.sub(r'<[^>]+>', ' ', text)
-    
-    # Decode HTML entities
-    text = re.sub(r'&nbsp;', ' ', text)
-    text = re.sub(r'&amp;', '&', text)
-    text = re.sub(r'&lt;', '<', text)
-    text = re.sub(r'&gt;', '>', text)
-    text = re.sub(r'&quot;', '"', text)
-    text = re.sub(r'&#39;', "'", text)
-    
+
+    # Decode HTML entities (basic)
+    text = text.replace('&nbsp;', ' ').replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>').replace('&quot;', '"').replace('&#39;', "'")
+
     # Clean up whitespace
     text = re.sub(r'[ \t]+', ' ', text)
     lines = [line.strip() for line in text.split('\n')]
-    
+
     return '\n'.join(line for line in lines if line)
 
 
@@ -272,13 +287,12 @@ def truncate_text(text, max_length, suffix='...'):
     """Truncate text to a maximum length."""
     if not text or len(text) <= max_length:
         return text
-    
+
     return text[:max_length - len(suffix)] + suffix
 
 
 def sanitize_filename(filename):
     """Sanitize a filename for safe storage."""
-    # Remove or replace unsafe characters
     filename = re.sub(r'[^\w\s\-\.]', '', filename)
     filename = re.sub(r'\s+', '_', filename)
     return filename[:255]
@@ -311,20 +325,17 @@ def extract_company_from_domain(domain):
     """Extract company name from domain."""
     if not domain:
         return None
-    
+
     domain = domain.lower()
-    
     if domain in COMMON_ISP_DOMAINS:
         return None
-    
-    # Remove common TLDs
+
     parts = domain.split('.')
     if len(parts) > 2 and parts[-2] in ('co', 'com', 'org', 'net', 'ac', 'gov', 'edu'):
         company_part = parts[-3]
     else:
         company_part = parts[0]
-    
-    # Capitalize properly
+
     return '-'.join(p.capitalize() for p in company_part.split('-'))
 
 
@@ -332,16 +343,11 @@ def extract_firstname_from_email(email):
     """Extract probable first name from email address."""
     if not email or '@' not in email:
         return None
-    
+
     local_part = email.split('@')[0].lower()
-    
-    # Split by common separators
     potential_parts = re.split(r'[._\-+]+', local_part)
-    
-    # Filter valid name parts
     valid_parts = [p for p in potential_parts if len(p) > 1 and p.isalpha()]
-    
-    # Generic words to exclude
+
     generic_words = {
         'info', 'contact', 'admin', 'support', 'sales', 'mail', 'email',
         'hello', 'test', 'demo', 'user', 'customer', 'press', 'jobs',
@@ -350,11 +356,11 @@ def extract_firstname_from_email(email):
         'newsletter', 'updates', 'general', 'enquiry', 'staff', 'manager',
         'hr', 'recruitment', 'inquiries', 'help', 'feedback', 'postmaster'
     }
-    
+
     for part in valid_parts:
         if part not in generic_words:
             return part.capitalize()
-    
+
     return None
 
 
@@ -364,7 +370,7 @@ def get_greeting_by_time(hour=None):
     """Get appropriate greeting based on time of day."""
     if hour is None:
         hour = datetime.now().hour
-    
+
     if 5 <= hour < 12:
         return "Good morning"
     elif 12 <= hour < 18:
@@ -377,18 +383,18 @@ def format_datetime(dt, format_str=None):
     """Format datetime object."""
     if not dt:
         return ""
-    
+
     if format_str is None:
         format_str = "%Y-%m-%d %H:%M:%S"
-    
+
     return dt.strftime(format_str)
 
 
 def parse_datetime(dt_str, format_str=None):
     """Parse datetime string."""
-    if not dt_str: 
+    if not dt_str:
         return None
-    
+
     formats = [
         "%Y-%m-%d %H:%M:%S",
         "%Y-%m-%dT%H:%M:%S",
@@ -397,16 +403,16 @@ def parse_datetime(dt_str, format_str=None):
         "%d/%m/%Y %H:%M:%S",
         "%d/%m/%Y"
     ]
-    
-    if format_str: 
+
+    if format_str:
         formats.insert(0, format_str)
-    
-    for fmt in formats: 
+
+    for fmt in formats:
         try:
             return datetime.strptime(dt_str, fmt)
-        except ValueError: 
+        except ValueError:
             continue
-    
+
     return None
 
 
@@ -422,14 +428,14 @@ def mask_email(email):
     """Mask an email address for display."""
     if not email or '@' not in email:
         return email
-    
+
     local, domain = email.split('@')
-    
+
     if len(local) <= 2:
         masked_local = local[0] + '*'
     else:
         masked_local = local[0] + '*' * (len(local) - 2) + local[-1]
-    
+
     return f"{masked_local}@{domain}"
 
 
@@ -437,7 +443,7 @@ def mask_api_key(key):
     """Mask an API key for display."""
     if not key or len(key) < 12:
         return '***'
-    
+
     return key[:8] + '*' * 16 + key[-4:]
 
 
@@ -446,21 +452,21 @@ def mask_api_key(key):
 def process_spintax(text):
     """Process spintax {option1|option2|option3} in text."""
     import random
-    
+
     if not text:
         return text
-    
+
     pattern = re.compile(r'\{([^{}]*)\}')
-    
+
     while True:
         match = pattern.search(text)
         if not match:
             break
-        
+
         options = match.group(1).split('|')
         replacement = random.choice(options)
         text = text[:match.start()] + replacement + text[match.end():]
-    
+
     return text
 
 
@@ -469,15 +475,15 @@ def process_spintax(text):
 def add_tracking_params(url, params):
     """Add tracking parameters to a URL."""
     from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
-    
+
     parsed = urlparse(url)
     query_params = parse_qs(parsed.query)
-    
+
     for key, value in params.items():
         query_params[key] = [value]
-    
+
     new_query = urlencode(query_params, doseq=True)
-    
+
     return urlunparse((
         parsed.scheme,
         parsed.netloc,
@@ -492,7 +498,7 @@ def extract_links_from_html(html):
     """Extract all href links from HTML content."""
     if not html:
         return []
-    
+
     links = re.findall(r'href=["\']([^"\']+)["\']', html, re.IGNORECASE)
     return [l for l in links if l.startswith(('http://', 'https://'))]
 
@@ -501,44 +507,33 @@ def extract_links_from_html(html):
 
 class RateLimiter:
     """Simple in-memory rate limiter."""
-    
     def __init__(self, max_requests, window_seconds):
         self.max_requests = max_requests
         self.window_seconds = window_seconds
         self.requests = {}
-    
+
     def is_allowed(self, key):
-        """Check if a request is allowed."""
         now = datetime.utcnow().timestamp()
-        
+
         if key not in self.requests:
             self.requests[key] = []
-        
-        # Remove old requests
-        self.requests[key] = [
-            t for t in self.requests[key]
-            if now - t < self.window_seconds
-        ]
-        
+
+        self.requests[key] = [t for t in self.requests[key] if now - t < self.window_seconds]
+
         if len(self.requests[key]) >= self.max_requests:
             return False
-        
+
         self.requests[key].append(now)
         return True
-    
+
     def get_remaining(self, key):
-        """Get remaining requests for a key."""
         now = datetime.utcnow().timestamp()
-        
+
         if key not in self.requests:
             return self.max_requests
-        
-        # Remove old requests
-        self.requests[key] = [
-            t for t in self.requests[key]
-            if now - t < self.window_seconds
-        ]
-        
+
+        self.requests[key] = [t for t in self.requests[key] if now - t < self.window_seconds]
+
         return max(0, self.max_requests - len(self.requests[key]))
 
 
@@ -547,33 +542,33 @@ class RateLimiter:
 def calculate_engagement_score(recipient):
     """Calculate engagement score for a recipient."""
     score = 0.0
-    
+
     if recipient.status == 'Sent':
         score += 10
-    
+
     if recipient.opened_at:
         score += 20
         score += min(recipient.open_count or 0, 5) * 5
-    
+
     if recipient.clicked_at:
         score += 30
         score += min(recipient.click_count or 0, 10) * 3
-    
+
     if recipient.replied_at:
         score += 50
-    
+
     if recipient.status == 'Bounced':
         score -= 50
-    
+
     if recipient.status == 'Unsubscribed':
         score -= 100
-    
+
     # Recency bonus
-    if recipient.opened_at: 
+    if recipient.opened_at:
         days_since_open = (datetime.utcnow() - recipient.opened_at).days
         if days_since_open < 7:
             score += 10
         elif days_since_open < 30:
             score += 5
-    
+
     return max(0, min(100, score))
