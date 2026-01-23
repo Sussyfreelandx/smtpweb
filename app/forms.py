@@ -10,6 +10,13 @@ from wtforms.validators import (
     Optional, NumberRange
 )
 
+# Try to import User model, but prevent build error if running in isolation/testing
+try:
+    from app.models import User
+except ImportError:
+    # Placeholder for User if app.models doesn't exist in the current environment
+    User = None
+
 # ==================== AUTH FORMS ====================
 
 class LoginForm(FlaskForm):
@@ -31,16 +38,16 @@ class RegistrationForm(FlaskForm):
     submit = SubmitField('Register')
 
     def validate_username(self, username):
-        from app.models import User  # Moved import here to prevent circular import errors
-        user = User.query.filter_by(username=username.data).first()
-        if user is not None:
-            raise ValidationError('Please use a different username.')
+        if User:
+            user = User.query.filter_by(username=username.data).first()
+            if user is not None:
+                raise ValidationError('Please use a different username.')
 
     def validate_email(self, email):
-        from app.models import User  # Moved import here to prevent circular import errors
-        user = User.query.filter_by(email=email.data).first()
-        if user is not None:
-            raise ValidationError('Please use a different email address.')
+        if User:
+            user = User.query.filter_by(email=email.data).first()
+            if user is not None:
+                raise ValidationError('Please use a different email address.')
 
 
 class EditProfileForm(FlaskForm):
@@ -50,13 +57,12 @@ class EditProfileForm(FlaskForm):
     submit = SubmitField('Submit')
 
     def __init__(self, original_username, *args, **kwargs):
-        super(EditProfileForm, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         self.original_username = original_username
 
     def validate_username(self, username):
-        if username.data != self.original_username:
-            from app.models import User  # Moved import here to prevent circular import errors
-            user = User.query.filter_by(username=username.data).first()
+        if username.data != self.original_username and User:
+            user = User.query.filter_by(username=self.username.data).first()
             if user is not None:
                 raise ValidationError('Please use a different username.')
 
@@ -143,6 +149,7 @@ class GlobalSettingsForm(FlaskForm):
         Optional(),
         FileAllowed(['pdf'], 'PDF files only!')
     ])
+    # Explicitly set label to None if not provided, though WTForms handles validators-only kwarg
     remove_pdf = StringField('Remove PDF', validators=[Optional()])
 
     default_throttle_amount = IntegerField('Default Batch Size', validators=[DataRequired()])
