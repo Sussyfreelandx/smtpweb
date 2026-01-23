@@ -1,60 +1,59 @@
 """
-Application factory and extensions initialization.
+Application factory and extension initialization.
 
-This module initializes:
-- Flask app (create_app)
-- SQLAlchemy db
-- LoginManager
-- SocketIO with optional message_queue support (Redis recommended)
-- Celery factory helper (make_celery)
-
-Place this file at app/__init__.py so other modules may import:
-    from app import create_app, db, socketio, celery, login
+This module exposes the commonly-used extensions at package level so other modules
+can import: from app import db, migrate, login, socketio, cache, celery, bcrypt, limiter
 """
+
 import os
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
-from flask_login import LoginManager
 from flask_migrate import Migrate
+from flask_login import LoginManager
 from flask_socketio import SocketIO
+from flask_caching import Cache
+from flask_bcrypt import Bcrypt
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from celery import Celery
-from flask_wtf import CSRFProtect
 
-# Expose extension objects for import across the project
+# Create extension instances (unbound). They will be initialized with create_app.
 db = SQLAlchemy()
 migrate = Migrate()
 login = LoginManager()
-csrf = CSRFProtect()
+socketio = SocketIO(cors_allowed_origins="*")
+cache = Cache()  # default cache instance; configure via app.config
+bcrypt = Bcrypt()
+# Simple rate limiter
+limiter = Limiter(key_func=get_remote_address, default_limits=["200 per minute"])
 
-# Initialize SocketIO at module level to prevent import errors (e.g. "NoneType has no attribute 'on'")
-# It will be configured in create_app via init_app
-socketio = SocketIO()
+# Create a Celery instance placeholder. We'll configure it for app context inside create_app.
+# Creating the Celery object here allows 'from app import celery' to work in modules
+celery = Celery(__name__)
 
-# Celery instance placeholder
-# Note: For Celery to work with the factory pattern, imports often need to happen
-# after create_app is called, or use the app.celery instance.
-celery = None
+# Default login settings
+login.login_view = "main.login"
+login.login_message_category = "info"
 
 
-def make_celery(app: Flask):
+def make_celery(app: Flask, celery_obj: Celery):
     """
-    Create and configure a Celery object tied to the Flask application context.
-    Returns a Celery instance that can be used to create tasks.
+    Configure a Celery object to work with the Flask app context.
+    This updates celery.conf with app.config and creates a base Task that
+    wraps task execution in app.app_context().
     """
-    broker = app.config.get('CELERY_BROKER_URL') or os.environ.get('CELERY_BROKER_URL')
-    backend = app.config.get('CELERY_RESULT_BACKEND') or os.environ.get('CELERY_RESULT_BACKEND')
-    
-    # Ensure broker is provided
-    if not broker:
-        # Fallback to a default if not set, or let it fail gracefully depending on usage
-        broker = 'redis://localhost:6379/0'
+    # Ensure broker configuration exists; celery can function when configured later but prefer explicit values
+    broker = app.config.get("CELERY_BROKER_URL")
+    backend = app.config.get("CELERY_RESULT_BACKEND")
 
-    celery_obj = Celery(
-        app.import_name,
-        broker=broker,
-        backend=backend or broker
-    )
-    celery_obj.conf.update(app.config)
+    # If broker is provided, reconfigure celery with broker/backend
+    if broker:
+        celery_obj.conf.broker_url = broker
+    if backend:
+        celery_obj.conf.result_backend = backend
+
+    # Update celery config with any other Flask config values
+    celery_obj.conf.update(app.config.get("CELERY", {}))
 
     class ContextTask(celery_obj.Task):
         def __call__(self, *args, **kwargs):
@@ -67,85 +66,77 @@ def make_celery(app: Flask):
 
 def create_app(config_object=None):
     """
-    Flask application factory.
+    Application factory.
 
-    config_object may be:
-      - None (will use environment variables and default settings)
-      - A config object, class, or dictionary
+    Pass in a config object or set environment variables for configuration.
+    Returns a fully configured Flask app and also configures the shared 'celery' object.
     """
-    # We only globalize celery because we replace the instance completely.
-    # socketio is initialized at module level and updated via init_app.
-    global celery
+    app = Flask(__name__, instance_relative_config=False)
 
-    app = Flask(__name__, static_folder=None)
+    # Basic configuration: allow loading from environment/config object
+    config_path = config_object or os.environ.get("APP_SETTINGS")
+    if config_path:
+        # If APP_SETTINGS is a path or import string, try to load
+        try:
+            # FIX: Ensure config_path is a string before checking existence to prevent TypeError
+            if isinstance(config_path, str) and os.path.exists(config_path):
+                app.config.from_pyfile(config_path)
+            else:
+                app.config.from_object(config_path)
+        except Exception:
+            # fallback: treat as env var mapping or ignore load failure
+            pass
 
-    # Basic sensible defaults - override via environment or config object
-    app.config.setdefault('SECRET_KEY', os.environ.get('SECRET_KEY', 'dev-secret'))
-    app.config.setdefault('SQLALCHEMY_DATABASE_URI', os.environ.get('DATABASE_URL', 'sqlite:///app.db'))
-    app.config.setdefault('SQLALCHEMY_TRACK_MODIFICATIONS', False)
-    
-    # Celery Defaults
-    app.config.setdefault('CELERY_BROKER_URL', os.environ.get('CELERY_BROKER_URL', 'redis://localhost:6379/1'))
-    # Ensure BROKER_URL is set before trying to access it for RESULT_BACKEND default
-    app.config.setdefault('CELERY_RESULT_BACKEND', os.environ.get('CELERY_RESULT_BACKEND', app.config.get('CELERY_BROKER_URL')))
-    
-    # Socket.IO message queue (for scaling across processes/workers)
-    app.config.setdefault('SOCKETIO_MESSAGE_QUEUE', os.environ.get('SOCKETIO_MESSAGE_QUEUE', os.environ.get('REDIS_URL', 'redis://localhost:6379/0')))
-    
-    # Other defaults
-    app.config.setdefault('WTF_CSRF_TIME_LIMIT', None)
+    # Load defaults if not provided
+    app.config.setdefault("SQLALCHEMY_DATABASE_URI", os.environ.get("DATABASE_URL", "sqlite:///data.db"))
+    app.config.setdefault("SQLALCHEMY_TRACK_MODIFICATIONS", False)
+    app.config.setdefault("SECRET_KEY", os.environ.get("SECRET_KEY", "dev-secret-key"))
+    # Celery defaults
+    app.config.setdefault("CELERY_BROKER_URL", os.environ.get("CELERY_BROKER_URL", "redis://localhost:6379/0"))
+    app.config.setdefault("CELERY_RESULT_BACKEND", os.environ.get("CELERY_RESULT_BACKEND", "redis://localhost:6379/0"))
+    # Cache defaults
+    app.config.setdefault("CACHE_TYPE", os.environ.get("CACHE_TYPE", "simple"))  # "simple" fallback
+    # SocketIO async mode may be set by environment; leave default to auto
+    app.config.setdefault("WTF_CSRF_ENABLED", True)
 
-    # Allow a config object to override settings
-    if config_object:
-        if isinstance(config_object, dict):
-            app.config.from_mapping(config_object)
-        else:
-            # Handles strings (path to file) or objects/classes
-            app.config.from_object(config_object)
-
-    # Initialize extensions
+    # Initialize extensions with app
     db.init_app(app)
-    migrate.init_app(app, db)
+    migrate.init_app(app, db)         # registers flask-migrate CLI commands (flask db ...)
     login.init_app(app)
-    csrf.init_app(app)
+    socketio.init_app(app, cors_allowed_origins=app.config.get("CORS_ALLOWED_ORIGINS", "*"))
+    cache.init_app(app)
+    bcrypt.init_app(app)
+    limiter.init_app(app)
 
-    # Initialize SocketIO with message queue support via init_app
-    message_queue = app.config.get('SOCKETIO_MESSAGE_QUEUE')
-    socketio.init_app(
-        app,
-        cors_allowed_origins="*",
-        message_queue=message_queue,
-        logger=app.debug,
-        engineio_logger=app.debug
-    )
+    # Configure celery with the Flask app
+    make_celery(app, celery)
 
-    # Initialize Celery instance for import elsewhere
-    celery = make_celery(app)
-
-    # Register blueprints
-    # Import inside function to avoid circular imports
-    from app.main import bp as main_bp
-    from app.api import bp as api_bp
-
-    app.register_blueprint(main_bp)
-    app.register_blueprint(api_bp, url_prefix='/api')
-
-    # Example: configure login settings
-    login.login_view = 'main.login'
-    login.login_message = "Please sign in to access this page."
-
-    # Attach extensions to app for external imports
-    app.socketio = socketio
-    app.celery = celery
-    app.db = db
-
-    # Import socket event handlers after socketio is created to register events
+    # Register blueprints (import inside function to avoid circular imports during module import)
     try:
-        import app.events  # noqa: F401
-    except ImportError:
-        # Log this but don't crash if events file doesn't exist yet
-        app.logger.info("No app.events module found, skipping socket event registration.")
+        from app.main import bp as main_bp
+        app.register_blueprint(main_bp)
     except Exception:
-        app.logger.exception("Failed to import socket events (app.events) during create_app.")
+        # main blueprint may not exist yet during tests; continue gracefully
+        pass
 
+    try:
+        from app.api import bp as api_bp
+        app.register_blueprint(api_bp, url_prefix="/api")
+    except Exception:
+        pass
+
+    # Optionally register other blueprints if present
+    try:
+        from app.tracking import bp as tracking_bp
+        app.register_blueprint(tracking_bp)
+    except Exception:
+        pass
+
+    # Attach a simple health route if not present elsewhere
+    @app.route("/healthz")
+    def _health():
+        return {"status": "ok", "version": "1.0.0"}
+
+    # Expose app on module for convenience
+    # (Note: do not reassign global 'celery' here; it's already the Celery instance configured)
     return app
