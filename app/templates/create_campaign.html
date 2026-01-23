@@ -31,7 +31,7 @@
                         <div class="mb-3">
                             <label for="subject" class="form-label">Subject Line <span class="text-danger">*</span></label>
                             <input type="text" class="form-control" id="subject" name="subject" required 
-                                   placeholder="Hello {{firstname}}, important update for {{company}}">
+                                   placeholder="Hello {{ '{{' }}firstname{{ '}}' }}, important update for {{ '{{' }}company{{ '}}' }}">
                             <div class="invalid-feedback">Please provide a subject line.</div>
                         </div>
                         <div class="mb-3">
@@ -57,18 +57,18 @@
                                 <div class="row">
                                     <div class="col-md-6">
                                         <ul class="mb-1 ps-3 small">
-                                            <li><code>{{firstname}}</code> - Auto-detected from email or CSV</li>
-                                            <li><code>{{company}}</code> - Auto-detected from domain or CSV</li>
-                                            <li><code>{{greetings}}</code> - Time-based greeting</li>
-                                            <li><code>{{sender_name}}</code> - Name from SMTP Profile</li>
+                                            <li><code>{{ '{{' }}firstname{{ '}}' }}</code> - Auto-detected from email or CSV/TXT</li>
+                                            <li><code>{{ '{{' }}company{{ '}}' }}</code> - Auto-detected from domain or CSV/TXT</li>
+                                            <li><code>{{ '{{' }}greetings{{ '}}' }}</code> - Time-based greeting</li>
+                                            <li><code>{{ '{{' }}sender_name{{ '}}' }}</code> - Name from SMTP Profile</li>
                                         </ul>
                                     </div>
                                     <div class="col-md-6">
                                         <ul class="mb-1 ps-3 small">
-                                            <li><code>{{currentdate}}</code> - Current Date</li>
-                                            <li><code>{{time}}</code> - Current Time</li>
-                                            <li><code>{{secure_link}}</code> - Unique secure link</li>
-                                            <li><code>{{unsubscribe_link}}</code> - Unsubscribe link</li>
+                                            <li><code>{{ '{{' }}currentdate{{ '}}' }}</code> - Current Date</li>
+                                            <li><code>{{ '{{' }}time{{ '}}' }}</code> - Current Time</li>
+                                            <li><code>{{ '{{' }}secure_link{{ '}}' }}</code> - Unique secure link</li>
+                                            <li><code>{{ '{{' }}unsubscribe_link{{ '}}' }}</code> - Unsubscribe link</li>
                                         </ul>
                                     </div>
                                 </div>
@@ -114,7 +114,7 @@
                 </div>
                 <div class="card-body">
                     <p class="small text-muted mb-3">
-                        Used for <code>{{secure_link}}</code> placeholder. Overrides global settings for this campaign.
+                        Used for <code>{{ '{{' }}secure_link{{ '}}' }}</code> placeholder. Overrides global settings for this campaign.
                     </p>
                     <div class="row">
                         <div class="col-md-6 mb-3">
@@ -151,12 +151,12 @@
                     <i class="fas fa-users me-2"></i> 4. Recipients
                 </div>
                 <div class="card-body">
-                    <label for="recipients_file" class="form-label">Upload CSV <span class="text-danger">*</span></label>
-                    <input class="form-control" type="file" id="recipients_file" name="recipients_file" accept=".csv" required>
+                    <label for="recipients_file" class="form-label">Upload CSV / TXT <span class="text-danger">*</span></label>
+                    <input class="form-control" type="file" id="recipients_file" name="recipients_file" accept=".csv,.txt" required>
                     <div class="form-text mt-2">
-                        <strong>CSV Format:</strong> Must have <code>email</code> column. Optional columns: <code>firstname</code>, <code>company</code>, etc.
+                        <strong>File Format:</strong> CSV must have <code>email</code> column. TXT supports one email per line or CSV-like header row.
                     </div>
-                    <div class="invalid-feedback">Please upload a recipient CSV file.</div>
+                    <div class="invalid-feedback">Please upload a recipient CSV or TXT file.</div>
                     
                     <!-- Sample CSV Download -->
                     <div class="mt-3 p-2 bg-light rounded">
@@ -260,7 +260,7 @@ jane@company.org,Jane,Tech Corp</pre>
                 </div>
                 <div class="card-body small">
                     <ul class="mb-0 ps-3">
-                        <li class="mb-2">Use <code>{{firstname}}</code> for personalization</li>
+                        <li class="mb-2">Use <code>{{ '{{' }}firstname{{ '}}' }}</code> for personalization</li>
                         <li class="mb-2">Test with a small list first</li>
                         <li class="mb-2">Include an unsubscribe link</li>
                         <li class="mb-2">A/B test your subject lines</li>
@@ -282,7 +282,7 @@ jane@company.org,Jane,Tech Corp</pre>
 
     // Load Template
     function loadTemplate() {
-        const template = `<!DOCTYPE html>
+        const template = `{% raw %}<!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
@@ -328,7 +328,7 @@ jane@company.org,Jane,Tech Corp</pre>
     </div>
 </div>
 </body>
-</html>`;
+</html>{% endraw %}`;
         document.getElementById('body_html').value = template;
         
         // Show success message
