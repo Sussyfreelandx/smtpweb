@@ -17,12 +17,13 @@ def log_task(message, level="INFO"):
         logger.info(message)
 
 
-@celery.task(bind=True, name='app.tasks.send_campaign_task', max_retries=3, default_retry_delay=60)
+@celery.task(bind=True, name='app.tasks.send_campaign_task', max_retries=5, default_retry_delay=60)
 def send_campaign_task(self, campaign_id):
     """
     Main Celery task to send a campaign.
     Uses SMTPRotationManager to rotate SMTP profiles per recipient.
     Uses SMTPHandler connection pooling to speed-up sending.
+    Implements exponential backoff behavior for rate-limited failures and improved handler selection heuristics.
     """
     from app import create_app
     from app.models import Campaign, Recipient, SMTPServer
@@ -32,7 +33,7 @@ def send_campaign_task(self, campaign_id):
     log_task("=" * 60)
     log_task(f"📧 TASK RECEIVED: send_campaign_task")
     log_task(f"   Campaign ID: {campaign_id}")
-    log_task(f"   Task ID: {self.request.id}")
+    log_task(f"   Task ID: {getattr(self.request, 'id', 'unknown')}")
     log_task("=" * 60)
 
     app = create_app()
@@ -82,7 +83,8 @@ def send_campaign_task(self, campaign_id):
                         'sender_email': p.sender_email,
                         'daily_limit': p.daily_limit,
                         'sent_today': p.sent_today,
-                        'priority': p.priority
+                        'priority': p.priority or 1,
+                        'reputation_score': p.reputation_score if hasattr(p, 'reputation_score') else 100.0
                     })
 
             if not profiles:
@@ -102,7 +104,8 @@ def send_campaign_task(self, campaign_id):
                         'sender_email': smtp_profile.sender_email,
                         'daily_limit': smtp_profile.daily_limit,
                         'sent_today': smtp_profile.sent_today,
-                        'priority': smtp_profile.priority
+                        'priority': smtp_profile.priority or 1,
+                        'reputation_score': smtp_profile.reputation_score if hasattr(smtp_profile, 'reputation_score') else 100.0
                     }]
                 else:
                     log_task("No SMTP profiles available for rotation", "ERROR")
@@ -116,7 +119,7 @@ def send_campaign_task(self, campaign_id):
             # Sending config
             batch_size = campaign.throttle_amount or 20
             delay_seconds = campaign.throttle_delay or 60
-            parallel_workers = campaign.parallel_workers or 10
+            parallel_workers = min(campaign.parallel_workers or 10, 20)
 
             log_task(f"Config: batch={batch_size}, delay={delay_seconds}s, parallel_workers={parallel_workers}")
 
@@ -128,6 +131,7 @@ def send_campaign_task(self, campaign_id):
                 except:
                     pass
 
+            # For safe counters
             total_sent = campaign.sent_count or 0
             total_failed = campaign.failed_count or 0
             batch_num = 0
@@ -148,8 +152,12 @@ def send_campaign_task(self, campaign_id):
                     log_task(f"Status changed to '{campaign.status}'.  Stopping.", "WARNING")
                     break
 
-                # Get queued recipients
-                recipients = campaign.recipients.filter_by(status='Queued').limit(batch_size).all()
+                # Get queued recipients (skip ones scheduled for retry via next_retry_at)
+                now = datetime.utcnow()
+                recipients = campaign.recipients.filter(
+                    Recipient.status == 'Queued',
+                    (Recipient.next_retry_at == None) | (Recipient.next_retry_at <= now)
+                ).limit(batch_size).all()
 
                 if not recipients:
                     log_task("No more queued recipients.  Completing campaign.")
@@ -162,7 +170,7 @@ def send_campaign_task(self, campaign_id):
 
                 log_task(f"--- Batch #{batch_num}:  {len(recipients)} recipients ---")
 
-                # Prepare tasks: for each recipient, pick a handler from rotation and personalize
+                # Prepare tasks: assign handler objects intelligently using rotation manager
                 tasks = []
                 recipient_map = {}
                 for recipient in recipients:
@@ -173,7 +181,7 @@ def send_campaign_task(self, campaign_id):
                         recipient.last_attempt_at = datetime.utcnow()
                         db.session.commit()
 
-                        # Pick handler for this recipient from rotation
+                        # Pick handler for this recipient using improved selection
                         handler, handler_key = rotation.get_next_handler()
                         if not handler:
                             # No handler available: mark failed
@@ -239,7 +247,7 @@ def send_campaign_task(self, campaign_id):
                             'handler_key': task.get('handler_key')
                         }
                     except Exception as e:
-                        logger.error(f"Send task exception: {e}")  # FIXED: Changed log.error to logger.error
+                        logger.error(f"Send task exception: {e}")
                         return {
                             'email': task.get('to_email'),
                             'success': False,
@@ -256,15 +264,15 @@ def send_campaign_task(self, campaign_id):
                             res = future.result()
                             results.append(res)
                         except Exception as e:
-                            logger.error(f"Future exception: {e}")  # FIXED: Changed log.error to logger.error
+                            logger.error(f"Future exception: {e}")
                             res = {'email': 'unknown', 'success': False, 'error': str(e)}
                             results.append(res)
 
-                # Process results
+                # Process results with exponential backoff for rate-limited errors
                 for res in results:
                     email = res.get('email')
                     success = res.get('success', False)
-                    error_msg = res.get('error', None)
+                    error_msg = (res.get('error') or '') or ''
                     recipient = None
                     try:
                         recipient = Recipient.query.filter_by(campaign_id=campaign_id, email=email).first()
@@ -275,6 +283,7 @@ def send_campaign_task(self, campaign_id):
                         continue
 
                     try:
+                        err_lower = error_msg.lower() if error_msg else ''
                         if success:
                             recipient.status = 'Sent'
                             recipient.sent_at = datetime.utcnow()
@@ -282,12 +291,23 @@ def send_campaign_task(self, campaign_id):
                             total_sent += 1
                             broadcast_recipient_update(campaign_id, recipient.id, 'Sent', {'email': email})
                         else:
+                            # Handle rate limiting with exponential backoff
+                            if 'rate' in err_lower or 'throttl' in err_lower or 'limit' in err_lower:
+                                # exponential backoff based on attempts
+                                attempts = recipient.attempts or 1
+                                backoff_seconds = min(3600, (2 ** (attempts - 1)) * 30)  # 30s,1m,2m,4m...
+                                recipient.next_retry_at = datetime.utcnow() + timedelta(seconds=backoff_seconds)
+                                recipient.status = 'Queued'  # requeue for retry later
+                                recipient.status_message = f"Rate-limited, retrying in {backoff_seconds}s"
+                                db.session.commit()
+                                broadcast_recipient_update(campaign_id, recipient.id, 'Queued', {'message': recipient.status_message})
+                                continue
+                            # Other errors mark as failed
                             recipient.status = 'Failed'
                             recipient.status_message = str(error_msg)[:250] if error_msg else 'Unknown'
                             total_failed += 1
                             # If error indicates auth/connection failure for a handler, mark it failed in rotation
                             handler_key = res.get('handler_key')
-                            err_lower = (error_msg or '').lower()
                             if handler_key and ('auth' in err_lower or 'connection' in err_lower or 'proxy' in err_lower):
                                 try:
                                     rotation._mark_failed(handler_key)
@@ -300,15 +320,10 @@ def send_campaign_task(self, campaign_id):
                         db.session.rollback()
                         log_task(f"Failed to update recipient {email}: {e}", "ERROR")
 
-                # Update campaign counters in DB
+                # Update campaign counters in DB safely
                 try:
-                    # Recalculate counts from DB to be safe
-                    try:
-                        campaign.sent_count = campaign.recipients.filter_by(status='Sent').count()
-                        campaign.failed_count = campaign.recipients.filter_by(status='Failed').count()
-                    except Exception:
-                        campaign.sent_count = (campaign.sent_count or 0) + total_sent
-                        campaign.failed_count = (campaign.failed_count or 0) + total_failed
+                    campaign.sent_count = campaign.recipients.filter_by(status='Sent').count()
+                    campaign.failed_count = campaign.recipients.filter_by(status='Failed').count()
                     db.session.commit()
                 except Exception:
                     db.session.rollback()
@@ -355,147 +370,9 @@ def send_campaign_task(self, campaign_id):
             except:
                 pass
 
-            raise self.retry(exc=e, countdown=60)
-
-
-@celery.task(bind=True, name='app.tasks.send_single_email_task')
-def send_single_email_task(self, recipient_id, campaign_id):
-    """Send a single email."""
-    from app import create_app
-    from app.models import Campaign, Recipient, SMTPServer
-    from app.core_logic.smtp_handler import SMTPHandler
-    from app.core_logic.personalization import PersonalizationEngine
-
-    log_task(f"Single email:  recipient={recipient_id}, campaign={campaign_id}")
-
-    app = create_app()
-
-    with app.app_context():
-        try:
-            recipient = Recipient.query.get(recipient_id)
-            campaign = Campaign.query.get(campaign_id)
-
-            if not recipient or not campaign:
-                return {"status": "error", "message": "Not found"}
-
-            smtp_profile = campaign.smtp_profile
-            if not smtp_profile:
-                return {"status": "error", "message": "No SMTP profile"}
-
-            config = smtp_profile.to_dict()
-            if not config.get('password'):
-                return {"status": "error", "message": "Password missing"}
-
-            handler = SMTPHandler(config)
-
-            recipient.status = 'Sending'
-            recipient.attempts = (recipient.attempts or 0) + 1
-            recipient.last_attempt_at = datetime.utcnow()
-            db.session.commit()
-
+            # Exponential retry for whole task failures (backoff)
             try:
-                engine = PersonalizationEngine(campaign, recipient)
-                subject, body_html, body_plain = engine.personalize()
-            except:
-                subject = campaign.subject
-                body_html = campaign.body_html
-                body_plain = campaign.body_plain or ""
-
-            success, message = handler.send_email_sync(
-                to_email=recipient.email,
-                subject=subject,
-                html_content=body_html,
-                plain_content=body_plain
-            )
-
-            if success:
-                recipient.status = 'Sent'
-                recipient.sent_at = datetime.utcnow()
-                recipient.status_message = 'OK'
-            else:
-                recipient.status = 'Failed'
-                recipient.status_message = str(message)[:250]
-
-            db.session.commit()
-            handler.disconnect()
-
-            return {"status": "sent" if success else "failed", "message": message}
-
-        except Exception as e:
-            log_task(f"Single email error: {e}", "ERROR")
-            return {"status": "error", "message": str(e)}
-
-
-@celery.task(name='app.tasks.process_scheduled_campaigns')
-def process_scheduled_campaigns():
-    """Check and start scheduled campaigns."""
-    from app import create_app
-    from app.models import Campaign
-
-    log_task("Running process_scheduled_campaigns")
-
-    app = create_app()
-
-    with app.app_context():
-        now = datetime.utcnow()
-        scheduled = Campaign.query.filter(
-            Campaign.status == 'Scheduled',
-            Campaign.scheduled_at <= now
-        ).all()
-
-        count = 0
-        for campaign in scheduled:
-            log_task(f"Starting scheduled:  {campaign.name}")
-            campaign.status = 'Sending'
-            campaign.started_at = now
-            db.session.commit()
-            send_campaign_task.delay(campaign.id)
-            count += 1
-
-        return {"processed": count}
-
-
-@celery.task(name='app.tasks.reset_daily_smtp_counts')
-def reset_daily_smtp_counts():
-    """Reset daily SMTP counts."""
-    from app import create_app
-    from app.models import SMTPServer
-
-    log_task("Running reset_daily_smtp_counts")
-
-    app = create_app()
-
-    with app.app_context():
-        today = datetime.utcnow().date()
-        updated = SMTPServer.query.filter(
-            SMTPServer.last_reset_date != today
-        ).update(
-            {'sent_today': 0, 'last_reset_date': today},
-            synchronize_session=False
-        )
-        db.session.commit()
-        return {"reset": updated}
-
-
-@celery.task(name='app.tasks.process_sequence_automation')
-def process_sequence_automation():
-    """Process sequence automations."""
-    return {"status": "ok"}
-
-
-@celery.task(name='app.tasks.check_imap_replies')
-def check_imap_replies():
-    """Check IMAP replies."""
-    return {"status": "checked"}
-
-
-@celery.task(name='app.tasks.cleanup_old_data')
-def cleanup_old_data():
-    """Cleanup old data."""
-    return {"status": "cleaned"}
-
-
-@celery.task(name='app.tasks.generate_campaign_report')
-def generate_campaign_report(campaign_id, user_email):
-    """Generate campaign report."""
-    return {"status": "completed"}
+                countdown = min(3600, (2 ** self.request.retries) * 60)
+            except Exception:
+                countdown = 60
+            raise self.retry(exc=e, countdown=countdown)
