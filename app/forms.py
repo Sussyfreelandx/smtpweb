@@ -54,7 +54,8 @@ class EditProfileForm(FlaskForm):
 
     def validate_username(self, username):
         if username.data != self.original_username:
-            user = User.query.filter_by(username=self.username.data).first()
+            # Use username.data instead of self.username.data for better reliability
+            user = User.query.filter_by(username=username.data).first()
             if user is not None:
                 raise ValidationError('Please use a different username.')
 
@@ -66,9 +67,10 @@ class NewCampaignForm(FlaskForm):
     campaign_name = StringField('Campaign Name', validators=[DataRequired()])
     subject = StringField('Subject Line', validators=[DataRequired()])
     body_html = TextAreaField('HTML Body', validators=[DataRequired()])
-    recipients_file = FileField('Recipients CSV', validators=[
+    # Accept CSV and TXT
+    recipients_file = FileField('Recipients File', validators=[
         DataRequired(),
-        FileAllowed(['csv'], 'CSV files only!')
+        FileAllowed(['csv', 'txt'], 'CSV or TXT files only!')
     ])
     smtp_profile_id = SelectField('SMTP Profile', coerce=int, validators=[DataRequired()])
     
@@ -141,7 +143,8 @@ class GlobalSettingsForm(FlaskForm):
         Optional(),
         FileAllowed(['pdf'], 'PDF files only!')
     ])
-    remove_pdf = StringField(validators=[Optional()])
+    # Added label to avoid potential field initialization errors
+    remove_pdf = StringField('Remove PDF', validators=[Optional()])
     
     default_throttle_amount = IntegerField('Default Batch Size', validators=[DataRequired()])
     default_throttle_delay = IntegerField('Default Delay (seconds)', validators=[DataRequired()])
