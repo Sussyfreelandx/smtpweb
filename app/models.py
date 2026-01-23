@@ -14,7 +14,8 @@ import enum
 
 @login.user_loader
 def load_user(id):
-    return User.query.get(int(id))
+    # Use db.session.get() for compatibility with newer SQLAlchemy versions
+    return db.session.get(User, int(id))
 
 
 # ==================== ENUMS ====================
@@ -109,8 +110,7 @@ class User(UserMixin, db.Model):
     preferences = db.Column(db.Text)  # JSON
     
     # Relationships
-    # --- FIXED RELATIONSHIP AMBIGUITY HERE ---
-    campaigns = db.relationship('Campaign', backref='author', lazy='dynamic', foreign_keys='Campaign.user_id')
+    # NOTE: 'campaigns' relationship is defined in the Campaign model to avoid forward reference ambiguity
     
     api_keys = db.relationship('APIKey', backref='user', lazy='dynamic')
     notifications = db.relationship('Notification', backref='user', lazy='dynamic')
@@ -247,7 +247,8 @@ class SMTPServer(db.Model):
     hourly_limit = db.Column(db.Integer, default=100)
     sent_today = db.Column(db.Integer, default=0)
     sent_this_hour = db.Column(db.Integer, default=0)
-    last_reset_date = db.Column(db.Date, default=datetime.utcnow().date)
+    # Fixed: Use lambda or standard datetime to prevent static initialization
+    last_reset_date = db.Column(db.Date, default=datetime.utcnow) 
     last_hour_reset = db.Column(db.DateTime, default=datetime.utcnow)
     priority = db.Column(db.Integer, default=1)
     
@@ -498,7 +499,10 @@ class Campaign(db.Model):
     recipients = db.relationship('Recipient', backref='campaign', lazy='dynamic', cascade="all, delete-orphan")
     tags = db.relationship('Tag', secondary=campaign_tags, backref='campaigns')
     template = db.relationship('EmailTemplate', backref='campaigns')
+    
+    # Defined here to resolve Foreign Key Ambiguity
     approved_by = db.relationship('User', foreign_keys=[approved_by_id])
+    author = db.relationship('User', foreign_keys=[user_id], backref=db.backref('campaigns', lazy='dynamic'))
     
     def get_attachments(self):
         if self.attachments:
@@ -771,7 +775,7 @@ class Sequence(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Relationships
-    recipients = db.relationship('SequenceRecipient', backref='sequence', lazy='dynamic')
+    recipients = db.relationship('SequenceRecipient', backref='sequence', lazy='dynamic', cascade="all, delete-orphan")
     
     def get_steps(self):
         if self.steps:
@@ -800,7 +804,7 @@ class SequenceRecipient(db.Model):
     email = db.Column(db.String(120), index=True, nullable=False)
     data = db.Column(db.Text)  # JSON
     
-    sequence_id = db.Column(db.Integer, db.ForeignKey('sequence.id'))
+    sequence_id = db.Column(db.Integer, db.ForeignKey('sequence.id', ondelete='CASCADE'))
     
     # Progress
     current_step = db.Column(db.Integer, default=0)
