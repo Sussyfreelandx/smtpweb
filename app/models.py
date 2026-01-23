@@ -14,8 +14,7 @@ import enum
 
 @login.user_loader
 def load_user(id):
-    # Use db.session.get() for compatibility with newer SQLAlchemy versions
-    return db.session.get(User, int(id))
+    return User.query.get(int(id))
 
 
 # ==================== ENUMS ====================
@@ -65,20 +64,20 @@ class WebhookEvent(enum.Enum):
 # ==================== ASSOCIATION TABLES ====================
 
 team_members = db.Table('team_members',
-    db.Column('user_id', db.Integer, db.ForeignKey('user.id'), primary_key=True),
-    db.Column('team_id', db.Integer, db.ForeignKey('team.id'), primary_key=True),
+    db.Column('user_id', db.Integer, db.ForeignKey('user.id', ondelete='CASCADE'), primary_key=True),
+    db.Column('team_id', db.Integer, db.ForeignKey('team.id', ondelete='CASCADE'), primary_key=True),
     db.Column('role', db.String(20), default='editor'),
     db.Column('joined_at', db.DateTime, default=datetime.utcnow)
 )
 
 campaign_tags = db.Table('campaign_tags',
-    db.Column('campaign_id', db.Integer, db.ForeignKey('campaign.id'), primary_key=True),
-    db.Column('tag_id', db.Integer, db.ForeignKey('tag.id'), primary_key=True)
+    db.Column('campaign_id', db.Integer, db.ForeignKey('campaign.id', ondelete='CASCADE'), primary_key=True),
+    db.Column('tag_id', db.Integer, db.ForeignKey('tag.id', ondelete='CASCADE'), primary_key=True)
 )
 
 recipient_segments = db.Table('recipient_segments',
-    db.Column('recipient_id', db.Integer, db.ForeignKey('recipient.id'), primary_key=True),
-    db.Column('segment_id', db.Integer, db.ForeignKey('segment.id'), primary_key=True)
+    db.Column('recipient_id', db.Integer, db.ForeignKey('recipient.id', ondelete='CASCADE'), primary_key=True),
+    db.Column('segment_id', db.Integer, db.ForeignKey('segment.id', ondelete='CASCADE'), primary_key=True)
 )
 
 
@@ -110,7 +109,7 @@ class User(UserMixin, db.Model):
     preferences = db.Column(db.Text)  # JSON
     
     # Relationships
-    # NOTE: 'campaigns' relationship is defined in the Campaign model to avoid forward reference ambiguity
+    campaigns = db.relationship('Campaign', backref='author', lazy='dynamic', foreign_keys='Campaign.user_id')
     
     api_keys = db.relationship('APIKey', backref='user', lazy='dynamic')
     notifications = db.relationship('Notification', backref='user', lazy='dynamic')
@@ -177,7 +176,7 @@ class Team(db.Model):
     name = db.Column(db.String(100), nullable=False)
     slug = db.Column(db.String(100), unique=True, nullable=False)
     description = db.Column(db.Text)
-    owner_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    owner_id = db.Column(db.Integer, db.ForeignKey('user.id', ondelete='SET NULL'))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
     # White Label Settings
@@ -238,8 +237,8 @@ class SMTPServer(db.Model):
     imap_password_encrypted = db.Column(db.String(512))
     
     # Ownership
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
-    team_id = db.Column(db.Integer, db.ForeignKey('team.id'))
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id', ondelete='CASCADE'))
+    team_id = db.Column(db.Integer, db.ForeignKey('team.id', ondelete='CASCADE'))
     
     # Status & Limits
     is_active = db.Column(db.Boolean, default=True)
@@ -247,8 +246,7 @@ class SMTPServer(db.Model):
     hourly_limit = db.Column(db.Integer, default=100)
     sent_today = db.Column(db.Integer, default=0)
     sent_this_hour = db.Column(db.Integer, default=0)
-    # Fixed: Use lambda or standard datetime to prevent static initialization
-    last_reset_date = db.Column(db.Date, default=datetime.utcnow) 
+    last_reset_date = db.Column(db.Date, default=datetime.utcnow().date)
     last_hour_reset = db.Column(db.DateTime, default=datetime.utcnow)
     priority = db.Column(db.Integer, default=1)
     
@@ -388,8 +386,8 @@ class EmailTemplate(db.Model):
     json_content = db.Column(db.Text)  # For drag-drop builder
     
     # Ownership
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
-    team_id = db.Column(db.Integer, db.ForeignKey('team.id'))
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id', ondelete='SET NULL'))
+    team_id = db.Column(db.Integer, db.ForeignKey('team.id', ondelete='SET NULL'))
     is_public = db.Column(db.Boolean, default=False)
     
     # Usage stats
@@ -444,7 +442,7 @@ class Campaign(db.Model):
     
     # SMTP Configuration
     smtp_rotation_enabled = db.Column(db.Boolean, default=False)
-    smtp_profile_id = db.Column(db.Integer, db.ForeignKey('smtp_server.id'))
+    smtp_profile_id = db.Column(db.Integer, db.ForeignKey('smtp_server.id', ondelete='SET NULL'))
     
     # Warmup & Safety
     warmup_mode = db.Column(db.Boolean, default=False)
@@ -483,26 +481,29 @@ class Campaign(db.Model):
     completed_at = db.Column(db.DateTime)
     
     # Ownership
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
-    team_id = db.Column(db.Integer, db.ForeignKey('team.id'))
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id', ondelete='CASCADE'))
+    team_id = db.Column(db.Integer, db.ForeignKey('team.id', ondelete='SET NULL'))
     
     # Template
-    template_id = db.Column(db.Integer, db.ForeignKey('email_template.id'))
+    template_id = db.Column(db.Integer, db.ForeignKey('email_template.id', ondelete='SET NULL'))
     
     # Approval Workflow
     requires_approval = db.Column(db.Boolean, default=False)
-    approved_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    approved_by_id = db.Column(db.Integer, db.ForeignKey('user.id', ondelete='SET NULL'))
     approved_at = db.Column(db.DateTime)
     
     # Relationships
     smtp_profile = db.relationship('SMTPServer', backref='campaigns')
-    recipients = db.relationship('Recipient', backref='campaign', lazy='dynamic', cascade="all, delete-orphan")
+    recipients = db.relationship(
+        'Recipient',
+        backref='campaign',
+        lazy='dynamic',
+        cascade="all, delete-orphan",
+        passive_deletes=True
+    )
     tags = db.relationship('Tag', secondary=campaign_tags, backref='campaigns')
     template = db.relationship('EmailTemplate', backref='campaigns')
-    
-    # Defined here to resolve Foreign Key Ambiguity
     approved_by = db.relationship('User', foreign_keys=[approved_by_id])
-    author = db.relationship('User', foreign_keys=[user_id], backref=db.backref('campaigns', lazy='dynamic'))
     
     def get_attachments(self):
         if self.attachments:
@@ -574,14 +575,14 @@ class Recipient(db.Model):
     status_message = db.Column(db.String(255))
     
     # Campaign Reference
-    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'), index=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id', ondelete='CASCADE'), index=True)
     
     # A/B Testing
     ab_version = db.Column(db.String(1))
     
     # Sending Details
     sent_at = db.Column(db.DateTime)
-    smtp_profile_used_id = db.Column(db.Integer, db.ForeignKey('smtp_server.id'))
+    smtp_profile_used_id = db.Column(db.Integer, db.ForeignKey('smtp_server.id', ondelete='SET NULL'))
     message_id = db.Column(db.String(255))
     
     # Engagement Tracking
@@ -706,8 +707,8 @@ class Tag(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(50), nullable=False)
     color = db.Column(db.String(7), default='#007bff')
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
-    team_id = db.Column(db.Integer, db.ForeignKey('team.id'))
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id', ondelete='SET NULL'))
+    team_id = db.Column(db.Integer, db.ForeignKey('team.id', ondelete='SET NULL'))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
@@ -726,8 +727,8 @@ class Segment(db.Model):
     rules = db.Column(db.Text)
     
     # Ownership
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
-    team_id = db.Column(db.Integer, db.ForeignKey('team.id'))
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id', ondelete='SET NULL'))
+    team_id = db.Column(db.Integer, db.ForeignKey('team.id', ondelete='SET NULL'))
     
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -764,8 +765,8 @@ class Sequence(db.Model):
     trigger_config = db.Column(db.Text)  # JSON
     
     # Ownership
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
-    team_id = db.Column(db.Integer, db.ForeignKey('team.id'))
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id', ondelete='SET NULL'))
+    team_id = db.Column(db.Integer, db.ForeignKey('team.id', ondelete='SET NULL'))
     
     # Stats
     total_enrolled = db.Column(db.Integer, default=0)
@@ -775,7 +776,7 @@ class Sequence(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Relationships
-    recipients = db.relationship('SequenceRecipient', backref='sequence', lazy='dynamic', cascade="all, delete-orphan")
+    recipients = db.relationship('SequenceRecipient', backref='sequence', lazy='dynamic', cascade="all, delete-orphan", passive_deletes=True)
     
     def get_steps(self):
         if self.steps:
@@ -844,8 +845,8 @@ class Suppression(db.Model):
     reason = db.Column(db.String(100))
     source = db.Column(db.String(50))  # manual, unsubscribe, bounce, complaint
     
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
-    team_id = db.Column(db.Integer, db.ForeignKey('team.id'))
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id', ondelete='SET NULL'))
+    team_id = db.Column(db.Integer, db.ForeignKey('team.id', ondelete='SET NULL'))
     
     created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
     
@@ -880,8 +881,8 @@ class APIKey(db.Model):
     key_hash = db.Column(db.String(256), unique=True, nullable=False)
     key_prefix = db.Column(db.String(10))  # First 8 chars for identification
     
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
-    team_id = db.Column(db.Integer, db.ForeignKey('team.id'))
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id', ondelete='SET NULL'))
+    team_id = db.Column(db.Integer, db.ForeignKey('team.id', ondelete='SET NULL'))
     
     # Permissions
     scopes = db.Column(db.Text)  # JSON array of allowed scopes
@@ -943,8 +944,8 @@ class Webhook(db.Model):
     url = db.Column(db.String(500), nullable=False)
     secret = db.Column(db.String(100))
     
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
-    team_id = db.Column(db.Integer, db.ForeignKey('team.id'))
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id', ondelete='SET NULL'))
+    team_id = db.Column(db.Integer, db.ForeignKey('team.id', ondelete='SET NULL'))
     
     # Events to trigger
     events = db.Column(db.Text)  # JSON array of WebhookEvent values
@@ -981,7 +982,7 @@ class WebhookDelivery(db.Model):
     __tablename__ = 'webhook_delivery'
     
     id = db.Column(db.Integer, primary_key=True)
-    webhook_id = db.Column(db.Integer, db.ForeignKey('webhook.id'))
+    webhook_id = db.Column(db.Integer, db.ForeignKey('webhook.id', ondelete='CASCADE'))
     
     event = db.Column(db.String(50))
     payload = db.Column(db.Text)  # JSON
@@ -1009,7 +1010,7 @@ class Notification(db.Model):
     __tablename__ = 'notification'
     
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id', ondelete='CASCADE'))
     
     title = db.Column(db.String(200), nullable=False)
     message = db.Column(db.Text)
@@ -1038,8 +1039,8 @@ class ActivityLog(db.Model):
     __tablename__ = 'activity_log'
     
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
-    team_id = db.Column(db.Integer, db.ForeignKey('team.id'))
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id', ondelete='SET NULL'))
+    team_id = db.Column(db.Integer, db.ForeignKey('team.id', ondelete='SET NULL'))
     
     action = db.Column(db.String(100), nullable=False)
     description = db.Column(db.Text)
@@ -1097,7 +1098,7 @@ class UserSettings(db.Model):
     __tablename__ = 'user_settings'
     
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), unique=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id', ondelete='CASCADE'), unique=True)
     
     # Notification Preferences
     email_notifications = db.Column(db.Boolean, default=True)
@@ -1127,10 +1128,10 @@ class DailyStats(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     date = db.Column(db.Date, index=True, nullable=False)
     
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
-    team_id = db.Column(db.Integer, db.ForeignKey('team.id'))
-    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id'))
-    smtp_profile_id = db.Column(db.Integer, db.ForeignKey('smtp_server.id'))
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id', ondelete='SET NULL'))
+    team_id = db.Column(db.Integer, db.ForeignKey('team.id', ondelete='SET NULL'))
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id', ondelete='CASCADE'))
+    smtp_profile_id = db.Column(db.Integer, db.ForeignKey('smtp_server.id', ondelete='SET NULL'))
     
     # Counts
     emails_sent = db.Column(db.Integer, default=0)
@@ -1153,7 +1154,7 @@ class HourlyStats(db.Model):
     __tablename__ = 'hourly_stats'
     
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id', ondelete='SET NULL'))
     
     day_of_week = db.Column(db.Integer)  # 0=Mon, 6=Sun
     hour_of_day = db.Column(db.Integer)  # 0-23
