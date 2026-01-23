@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{% block title %}{{ title or 'Paris Sender' }}{% endblock %} - Paris Sender Web</title>
+    <title>{% block title %}{{ title|default('Paris Sender') }}{% endblock %} - Paris Sender Web</title>
     <link rel="icon" type="image/png" href="https://upload.wikimedia.org/wikipedia/commons/0/0f/Afterlogic_Webmail_Lite_logo.png">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -432,14 +432,6 @@
                                 </a>
                             </li>
                             <li><hr class="dropdown-divider"></li>
-                            <!-- FIXED: Removed broken link to api_keys which caused 500 errors -->
-                            <!--
-                            <li>
-                                <a class="dropdown-item" href="{{ url_for('main.general_settings') }}">
-                                    <i class="fas fa-key me-2 text-warning"></i>API Keys
-                                </a>
-                            </li>
-                            -->
                         </ul>
                     </li>
                     <li class="nav-item dropdown">
@@ -539,6 +531,8 @@
     {% endif %}
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Socket.IO client -->
+    <script src="https://cdn.jsdelivr.net/npm/socket.io-client@4/dist/socket.io.min.js"></script>
     
     {% block scripts %}{% endblock %}
     
@@ -560,56 +554,63 @@
             isCollapsed = !isCollapsed;
         }
 
-        // --- DISABLED TO PREVENT CRASH ---
-        // This function calls a route that doesn't exist yet ('main.api_get_logs')
-        // We comment it out to stop the 500 Internal Server Error.
-        /*
-        function fetchLogs() {
-            fetch("{{ url_for('main.api_get_logs') }}")
-                .then(response => {
-                    if (!response.ok) throw new Error('Network response was not ok');
-                    return response.json();
-                })
-                .then(data => {
-                    const newHash = JSON.stringify(data);
-                    if (newHash !== lastLogHash) {
-                        logContent.innerHTML = "";
-                        if (data.length === 0) {
-                            logContent.innerHTML = '<div class="log-entry text-muted">No activity yet...</div>';
-                        } else {
-                            data.forEach(entry => {
-                                const div = document.createElement('div');
-                                div.className = "log-entry";
-                                
-                                let colorClass = "log-info";
-                                let icon = "ℹ️";
-                                
-                                if(entry.level === "ERROR") { colorClass = "log-error"; icon = "❌"; }
-                                else if(entry.level === "SUCCESS") { colorClass = "log-success"; icon = "✅"; }
-                                else if(entry.level === "WARNING") { colorClass = "log-warning"; icon = "⚠️"; }
-                                
-                                div.innerHTML = `<span class="log-time">[${entry.timestamp}]</span><span class="log-icon">${icon}</span><span class="${colorClass}">${entry.message}</span>`;
-                                logContent.appendChild(div);
-                            });
-                        }
-                        logContent.scrollTop = logContent.scrollHeight;
-                        lastLogHash = newHash;
-                    }
-                    document.getElementById('log-status').className = "text-success me-3";
-                    document.getElementById('log-status').textContent = "● ONLINE";
-                })
-                .catch(err => {
-                    document.getElementById('log-status').className = "text-danger me-3";
-                    document.getElementById('log-status').textContent = "● OFFLINE";
-                });
-        }
+        // Setup Socket.IO connection for logs & notifications
+        (function setupSocketIO() {
+            try {
+                // Connect to default namespace (will authenticate via session cookie)
+                const socketOpts = {
+                    transports: ['polling', 'websocket'],
+                    upgrade: true,
+                    reconnectionAttempts: 5
+                };
+                
+                // Use Object.assign for broader compatibility instead of spread operator
+                const socketConfig = Object.assign({ path: '/socket.io' }, socketOpts);
+                const socket = io(socketConfig);
 
-        setInterval(fetchLogs, 2500);
-        fetchLogs();
-        */
-        // --- END DISABLED ---
+                socket.on('connect', () => {
+                    // Subscribe to logs namespace if server recognizes separate namespace
+                    // We use an event to join server-side rooms when needed
+                    // Emit a generic 'hello' if desired
+                    // console.info('Socket connected', socket.id);
+                });
+
+                // Listen for log entries on '/logs' namespace — server broadcasts to namespace
+                // Since the client connected to root, also try connecting to namespaces explicitly
+                const logsSocket = io('/logs', socketOpts);
+                logsSocket.on('connect', () => {
+                    // Join user-specific logs room - server code will determine room membership
+                });
+                logsSocket.on('log_entry', (data) => {
+                    try {
+                        const div = document.createElement('div');
+                        div.className = "log-entry";
+                        let colorClass = "log-info";
+                        let icon = "ℹ️";
+                        if (data.level === "ERROR") { colorClass = "log-error"; icon = "❌"; }
+                        else if (data.level === "SUCCESS") { colorClass = "log-success"; icon = "✅"; }
+                        else if (data.level === "WARNING") { colorClass = "log-warning"; icon = "⚠️"; }
+
+                        div.innerHTML = `<span class="log-time">[${data.timestamp}]</span><span class="log-icon">${icon}</span><span class="${colorClass}">${data.message}</span>`;
+                        logContent.appendChild(div);
+                        logContent.scrollTop = logContent.scrollHeight;
+                    } catch (e) { console.error('log_entry render error', e); }
+                });
+
+                // Notifications namespace
+                const notifSocket = io('/notifications', socketOpts);
+                notifSocket.on('new_notification', (n) => {
+                    // Optionally show toast / flash
+                    console.info('New notification', n);
+                });
+
+            } catch (e) {
+                console.warn("Socket.IO initialization failed, falling back to polling:", e);
+            }
+        })();
+
         {% endif %}
-        
+
         // Global utility functions
         function showLoading(element) {
             const originalContent = element.innerHTML;
