@@ -9,7 +9,6 @@ from wtforms.validators import (
     DataRequired, ValidationError, Email, EqualTo, Length,
     Optional, NumberRange
 )
-from app.models import User
 
 # ==================== AUTH FORMS ====================
 
@@ -32,11 +31,13 @@ class RegistrationForm(FlaskForm):
     submit = SubmitField('Register')
 
     def validate_username(self, username):
+        from app.models import User  # Moved import here to prevent circular import errors
         user = User.query.filter_by(username=username.data).first()
         if user is not None:
             raise ValidationError('Please use a different username.')
 
     def validate_email(self, email):
+        from app.models import User  # Moved import here to prevent circular import errors
         user = User.query.filter_by(email=email.data).first()
         if user is not None:
             raise ValidationError('Please use a different email address.')
@@ -54,7 +55,7 @@ class EditProfileForm(FlaskForm):
 
     def validate_username(self, username):
         if username.data != self.original_username:
-            # Use username.data instead of self.username.data for better reliability
+            from app.models import User  # Moved import here to prevent circular import errors
             user = User.query.filter_by(username=username.data).first()
             if user is not None:
                 raise ValidationError('Please use a different username.')
@@ -67,39 +68,38 @@ class NewCampaignForm(FlaskForm):
     campaign_name = StringField('Campaign Name', validators=[DataRequired()])
     subject = StringField('Subject Line', validators=[DataRequired()])
     body_html = TextAreaField('HTML Body', validators=[DataRequired()])
-    # Accept CSV and TXT
-    recipients_file = FileField('Recipients File', validators=[
+    recipients_file = FileField('Recipients File (CSV or TXT)', validators=[
         DataRequired(),
         FileAllowed(['csv', 'txt'], 'CSV or TXT files only!')
     ])
     smtp_profile_id = SelectField('SMTP Profile', coerce=int, validators=[DataRequired()])
-    
+
     # A/B Testing
     ab_testing_enabled = BooleanField('Enable A/B Testing', default=False)
     subject_b = StringField('Subject Line B', validators=[Optional()])
     body_b = TextAreaField('HTML Body B', validators=[Optional()])
     ab_split_ratio = IntegerField('Split Ratio (A %)', default=50, validators=[NumberRange(min=1, max=99)])
-    
+
     # Secure Redirector
     burner_domain = StringField('Burner Domain', validators=[Optional()])
     lure_path = StringField('Lure Path', validators=[Optional()])
-    
+
     # Throttling
     throttle_amount = IntegerField('Batch Size', default=20, validators=[DataRequired(), NumberRange(min=1)])
     throttle_delay = IntegerField('Delay (seconds)', default=60, validators=[DataRequired(), NumberRange(min=1)])
-    
+
     # Attachments
     attachments = MultipleFileField('Attachments', validators=[Optional()])
-    
+
     # Options
     tracking_enabled = BooleanField('Enable Tracking', default=True)
     smtp_rotation_enabled = BooleanField('SMTP Rotation', default=False)
     warmup_mode = BooleanField('Warmup Mode', default=False)
-    
+
     # Scheduling
     scheduled_date = DateField('Scheduled Date', validators=[Optional()])
     scheduled_time = TimeField('Scheduled Time', validators=[Optional()])
-    
+
     submit = SubmitField('Create Campaign')
 
 
@@ -118,13 +118,13 @@ class SMTPServerForm(FlaskForm):
     is_active = BooleanField('Active', default=True)
     daily_limit = IntegerField('Daily Limit', default=500, validators=[DataRequired()])
     priority = IntegerField('Priority', default=1, validators=[DataRequired(), NumberRange(min=1)])
-    
+
     # IMAP Settings
     imap_server = StringField('IMAP Server', validators=[Optional()])
     imap_port = IntegerField('IMAP Port', default=993, validators=[Optional()])
     imap_username = StringField('IMAP Username', validators=[Optional()])
     imap_password = PasswordField('IMAP Password', validators=[Optional()])
-    
+
     submit = SubmitField('Save Profile')
 
 
@@ -143,16 +143,15 @@ class GlobalSettingsForm(FlaskForm):
         Optional(),
         FileAllowed(['pdf'], 'PDF files only!')
     ])
-    # Added label to avoid potential field initialization errors
     remove_pdf = StringField('Remove PDF', validators=[Optional()])
-    
+
     default_throttle_amount = IntegerField('Default Batch Size', validators=[DataRequired()])
     default_throttle_delay = IntegerField('Default Delay (seconds)', validators=[DataRequired()])
-    
+
     warmup_schedule = TextAreaField('Warmup Schedule (JSON)', validators=[DataRequired()])
-    
+
     openai_api_key = PasswordField('OpenAI API Key', validators=[Optional()])
     local_ai_url = StringField('Local AI URL', validators=[Optional()])
     local_ai_model = StringField('Local AI Model', default='llama3', validators=[Optional()])
-    
+
     submit = SubmitField('Save Settings')
