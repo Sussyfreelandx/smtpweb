@@ -31,7 +31,7 @@
                         <div class="mb-3">
                             <label for="subject" class="form-label">Subject Line <span class="text-danger">*</span></label>
                             <input type="text" class="form-control" id="subject" name="subject" required 
-                                   placeholder="Hello {{ '{{' }}firstname{{ '}}' }}, important update for {{ '{{' }}company{{ '}}' }}">
+                                   placeholder="Hello {{ '{{firstname}}' }}, important update for {{ '{{company}}' }}">
                             <div class="invalid-feedback">Please provide a subject line.</div>
                         </div>
                         <div class="mb-3">
@@ -57,18 +57,18 @@
                                 <div class="row">
                                     <div class="col-md-6">
                                         <ul class="mb-1 ps-3 small">
-                                            <li><code>{{ '{{' }}firstname{{ '}}' }}</code> - Auto-detected from email or CSV/TXT</li>
-                                            <li><code>{{ '{{' }}company{{ '}}' }}</code> - Auto-detected from domain or CSV/TXT</li>
-                                            <li><code>{{ '{{' }}greetings{{ '}}' }}</code> - Time-based greeting</li>
-                                            <li><code>{{ '{{' }}sender_name{{ '}}' }}</code> - Name from SMTP Profile</li>
+                                            <li><code>{{ '{{firstname}}' }}</code> - Auto-detected from email or CSV/TXT</li>
+                                            <li><code>{{ '{{company}}' }}</code> - Auto-detected from domain or CSV/TXT</li>
+                                            <li><code>{{ '{{greetings}}' }}</code> - Time-based greeting</li>
+                                            <li><code>{{ '{{sender_name}}' }}</code> - Name from SMTP Profile</li>
                                         </ul>
                                     </div>
                                     <div class="col-md-6">
                                         <ul class="mb-1 ps-3 small">
-                                            <li><code>{{ '{{' }}currentdate{{ '}}' }}</code> - Current Date</li>
-                                            <li><code>{{ '{{' }}time{{ '}}' }}</code> - Current Time</li>
-                                            <li><code>{{ '{{' }}secure_link{{ '}}' }}</code> - Unique secure link</li>
-                                            <li><code>{{ '{{' }}unsubscribe_link{{ '}}' }}</code> - Unsubscribe link</li>
+                                            <li><code>{{ '{{currentdate}}' }}</code> - Current Date</li>
+                                            <li><code>{{ '{{time}}' }}</code> - Current Time</li>
+                                            <li><code>{{ '{{secure_link}}' }}</code> - Unique secure link</li>
+                                            <li><code>{{ '{{unsubscribe_link}}' }}</code> - Unsubscribe link</li>
                                         </ul>
                                     </div>
                                 </div>
@@ -114,7 +114,7 @@
                 </div>
                 <div class="card-body">
                     <p class="small text-muted mb-3">
-                        Used for <code>{{ '{{' }}secure_link{{ '}}' }}</code> placeholder. Overrides global settings for this campaign.
+                        Used for <code>{{ '{{secure_link}}' }}</code> placeholder. Overrides global settings for this campaign.
                     </p>
                     <div class="row">
                         <div class="col-md-6 mb-3">
@@ -260,7 +260,7 @@ jane@company.org,Jane,Tech Corp</pre>
                 </div>
                 <div class="card-body small">
                     <ul class="mb-0 ps-3">
-                        <li class="mb-2">Use <code>{{ '{{' }}firstname{{ '}}' }}</code> for personalization</li>
+                        <li class="mb-2">Use <code>{{ '{{firstname}}' }}</code> for personalization</li>
                         <li class="mb-2">Test with a small list first</li>
                         <li class="mb-2">Include an unsubscribe link</li>
                         <li class="mb-2">A/B test your subject lines</li>
@@ -282,7 +282,7 @@ jane@company.org,Jane,Tech Corp</pre>
 
     // Load Template
     function loadTemplate() {
-        const template = `{% raw %}<!DOCTYPE html>
+        const template = `<!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
@@ -304,31 +304,31 @@ jane@company.org,Jane,Tech Corp</pre>
     </div>
     
     <div class="content">
-        <p>{{greetings}},</p>
+        <p>{{ '{{greetings}}' }},</p>
         
-        <p>This is a sample email template for <strong>{{company}}</strong>.</p>
+        <p>This is a sample email template for <strong>{{ '{{company}}' }}</strong>.</p>
         
         <p>You can customize this content and use placeholders like:</p>
         <ul>
-            <li>Recipient's first name: <strong>{{firstname}}</strong></li>
-            <li>Company name: <strong>{{company}}</strong></li>
-            <li>Current date: <strong>{{currentdate}}</strong></li>
+            <li>Recipient's first name: <strong>{{ '{{firstname}}' }}</strong></li>
+            <li>Company name: <strong>{{ '{{company}}' }}</strong></li>
+            <li>Current date: <strong>{{ '{{currentdate}}' }}</strong></li>
         </ul>
         
         <p style="text-align: center; margin: 30px 0;">
-            <a href="{{secure_link}}" class="button">Click Here to Learn More</a>
+            <a href="{{ '{{secure_link}}' }}" class="button">Click Here to Learn More</a>
         </p>
         
-        <p>Best regards,<br><strong>{{sender_name}}</strong></p>
+        <p>Best regards,<br><strong>{{ '{{sender_name}}' }}</strong></p>
     </div>
     
     <div class="footer">
         <p>You received this email because you signed up for our newsletter.</p>
-        <p>To unsubscribe from these emails, <a href="{{unsubscribe_link}}">click here</a>.</p>
+        <p>To unsubscribe from these emails, <a href="{{ '{{unsubscribe_link}}' }}">click here</a>.</p>
     </div>
 </div>
 </body>
-</html>{% endraw %}`;
+</html>`;
         document.getElementById('body_html').value = template;
         
         // Show success message
