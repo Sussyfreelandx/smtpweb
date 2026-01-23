@@ -42,7 +42,7 @@ def is_valid_email(email):
     if not email:
         return False
     
-    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    pattern = r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$'
     if not re.match(pattern, email):
         return False
     
@@ -53,7 +53,11 @@ def is_valid_email(email):
         'tempail.com', 'fakeinbox.com', 'trashmail.com'
     }
     
-    domain = email.split('@')[1].lower()
+    try:
+        domain = email.split('@')[1].lower()
+    except Exception:
+        return False
+
     if domain in disposable_domains:
         return False
     
@@ -80,36 +84,80 @@ def validate_email_list(emails):
 def allowed_file(filename, allowed_extensions=None):
     """Check if a file extension is allowed."""
     if allowed_extensions is None:
-        allowed_extensions = {'png', 'jpg', 'jpeg', 'gif', 'pdf', 'csv', 'xlsx'}
+        allowed_extensions = {'png', 'jpg', 'jpeg', 'gif', 'pdf', 'csv', 'xlsx', 'txt'}
     
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in allowed_extensions
 
 
 def parse_csv_file(file, campaign_id):
-    """Parse a CSV file and create recipients."""
+    """
+    Parse a CSV or TXT file and create recipients.
+    Supports:
+    - CSV files with an 'email' column (and optional other fields)
+    - TXT files with one email per line (or comma-separated values where first row contains header)
+    Returns (added_count, errors_list)
+    """
     from app import db
     from app.models import Recipient, Suppression
-    
+
     try:
-        stream = io.StringIO(file.stream.read().decode("UTF-8-sig"), newline=None)
-        csv_reader = csv.DictReader(stream)
+        filename = getattr(file, 'filename', '') or ''
+        name_lower = filename.lower()
+        content_bytes = file.stream.read()
+        text = content_bytes.decode("UTF-8-sig", errors="replace")
         
-        # Normalize headers
-        if csv_reader.fieldnames:
-            csv_reader.fieldnames = [h.strip().lower() for h in csv_reader.fieldnames]
+        # Decide CSV vs TXT style
+        # If file is .csv or header contains 'email' treat as CSV
+        split_lines = text.splitlines()
+        first_line = split_lines[0].lower() if split_lines else ""
         
-        if not csv_reader.fieldnames or 'email' not in csv_reader.fieldnames:
-            return 0, ["CSV must have an 'email' column header"]
+        is_csv = name_lower.endswith('.csv') or (',' in first_line and 'email' in first_line)
         
+        if is_csv:
+            stream = io.StringIO(text, newline=None)
+            csv_reader = csv.DictReader(stream)
+            
+            # Normalize headers
+            if csv_reader.fieldnames:
+                csv_reader.fieldnames = [h.strip().lower() for h in csv_reader.fieldnames]
+            
+            if not csv_reader.fieldnames or 'email' not in csv_reader.fieldnames:
+                return 0, ["CSV must have an 'email' column header"]
+            
+            rows_iter = csv_reader
+            get_email_from_row = lambda row: (row.get('email') or '').strip()
+            row_to_data = lambda row: {k: v for k, v in row.items()}
+        else:
+            # TXT style: each line an email or "email,firstname,company"
+            lines = [l.strip() for l in text.splitlines() if l.strip()]
+            # If first line appears to be header with email, treat as CSV
+            if lines and (',' in lines[0] and 'email' in lines[0].lower()):
+                stream = io.StringIO(text, newline=None)
+                csv_reader = csv.DictReader(stream)
+                if csv_reader.fieldnames:
+                    csv_reader.fieldnames = [h.strip().lower() for h in csv_reader.fieldnames]
+                if 'email' not in csv_reader.fieldnames:
+                    return 0, ["CSV/TXT header must include 'email' column"]
+                rows_iter = csv_reader
+                get_email_from_row = lambda row: (row.get('email') or '').strip()
+                row_to_data = lambda row: {k: v for k, v in row.items()}
+            else:
+                # Plain list of emails
+                rows_iter = [{'email': l} for l in lines]
+                get_email_from_row = lambda row: (row.get('email') or '').strip()
+                row_to_data = lambda row: {'email': row.get('email', '').strip()}
+
         added = 0
         skipped = 0
         errors = []
-        
-        for row_num, row in enumerate(csv_reader, start=2):
-            email = row.get('email', '').strip().lower()
-            
+        batch_commit_size = 500
+        to_commit = 0
+
+        for row_num, row in enumerate(rows_iter, start=2):
+            email = get_email_from_row(row)
             if not email:
                 continue
+            email = email.strip().lower()
             
             if not is_valid_email(email):
                 skipped += 1
@@ -126,30 +174,38 @@ def parse_csv_file(file, campaign_id):
             # Check suppression
             is_suppressed = Suppression.query.filter_by(email=email).first()
             
+            try:
+                data = row_to_data(row)
+            except Exception:
+                data = {'email': email}
+            
             recipient = Recipient(
                 email=email,
                 campaign_id=campaign_id,
-                data=json.dumps(row),
+                data=json.dumps(data),
                 status='Suppressed' if is_suppressed else 'Queued',
                 status_message='Suppressed by global list' if is_suppressed else None
             )
             
             db.session.add(recipient)
             added += 1
+            to_commit += 1
             
-            # Commit in batches
-            if added % 500 == 0:
+            # Commit in batches to keep transaction size small
+            if to_commit >= batch_commit_size:
                 db.session.commit()
+                to_commit = 0
         
-        db.session.commit()
+        if to_commit > 0:
+            db.session.commit()
         
         if skipped > 0:
             errors.insert(0, f"Skipped {skipped} invalid or duplicate emails")
         
         return added, errors
     
-    except Exception as e: 
-        return 0, [f"Error parsing CSV: {str(e)}"]
+    except Exception as e:
+        return 0, [f"Error parsing file: {str(e)}"]
 
 
 def export_to_csv(data, headers):
@@ -284,224 +340,3 @@ def extract_firstname_from_email(email):
             return part.capitalize()
     
     return None
-
-
-# ==================== TIME UTILITIES ====================
-
-def get_greeting_by_time(hour=None):
-    """Get appropriate greeting based on time of day."""
-    if hour is None:
-        hour = datetime.now().hour
-    
-    if 5 <= hour < 12:
-        return "Good morning"
-    elif 12 <= hour < 18:
-        return "Good afternoon"
-    else:
-        return "Good evening"
-
-
-def format_datetime(dt, format_str=None):
-    """Format datetime object."""
-    if not dt:
-        return ""
-    
-    if format_str is None:
-        format_str = "%Y-%m-%d %H:%M:%S"
-    
-    return dt.strftime(format_str)
-
-
-def parse_datetime(dt_str, format_str=None):
-    """Parse datetime string."""
-    if not dt_str: 
-        return None
-    
-    formats = [
-        "%Y-%m-%d %H:%M:%S",
-        "%Y-%m-%dT%H:%M:%S",
-        "%Y-%m-%d %H:%M",
-        "%Y-%m-%d",
-        "%d/%m/%Y %H:%M:%S",
-        "%d/%m/%Y"
-    ]
-    
-    if format_str: 
-        formats.insert(0, format_str)
-    
-    for fmt in formats: 
-        try:
-            return datetime.strptime(dt_str, fmt)
-        except ValueError: 
-            continue
-    
-    return None
-
-
-# ==================== SECURITY UTILITIES ====================
-
-def generate_csrf_token():
-    """Generate a CSRF token."""
-    import secrets
-    return secrets.token_hex(32)
-
-
-def mask_email(email):
-    """Mask an email address for display."""
-    if not email or '@' not in email:
-        return email
-    
-    local, domain = email.split('@')
-    
-    if len(local) <= 2:
-        masked_local = local[0] + '*'
-    else:
-        masked_local = local[0] + '*' * (len(local) - 2) + local[-1]
-    
-    return f"{masked_local}@{domain}"
-
-
-def mask_api_key(key):
-    """Mask an API key for display."""
-    if not key or len(key) < 12:
-        return '***'
-    
-    return key[:8] + '*' * 16 + key[-4:]
-
-
-# ==================== SPINTAX PROCESSING ====================
-
-def process_spintax(text):
-    """Process spintax {option1|option2|option3} in text."""
-    import random
-    
-    if not text:
-        return text
-    
-    pattern = re.compile(r'\{([^{}]*)\}')
-    
-    while True:
-        match = pattern.search(text)
-        if not match:
-            break
-        
-        options = match.group(1).split('|')
-        replacement = random.choice(options)
-        text = text[:match.start()] + replacement + text[match.end():]
-    
-    return text
-
-
-# ==================== URL UTILITIES ====================
-
-def add_tracking_params(url, params):
-    """Add tracking parameters to a URL."""
-    from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
-    
-    parsed = urlparse(url)
-    query_params = parse_qs(parsed.query)
-    
-    for key, value in params.items():
-        query_params[key] = [value]
-    
-    new_query = urlencode(query_params, doseq=True)
-    
-    return urlunparse((
-        parsed.scheme,
-        parsed.netloc,
-        parsed.path,
-        parsed.params,
-        new_query,
-        parsed.fragment
-    ))
-
-
-def extract_links_from_html(html):
-    """Extract all href links from HTML content."""
-    if not html:
-        return []
-    
-    links = re.findall(r'href=["\']([^"\']+)["\']', html, re.IGNORECASE)
-    return [l for l in links if l.startswith(('http://', 'https://'))]
-
-
-# ==================== RATE LIMITING ====================
-
-class RateLimiter:
-    """Simple in-memory rate limiter."""
-    
-    def __init__(self, max_requests, window_seconds):
-        self.max_requests = max_requests
-        self.window_seconds = window_seconds
-        self.requests = {}
-    
-    def is_allowed(self, key):
-        """Check if a request is allowed."""
-        now = datetime.utcnow().timestamp()
-        
-        if key not in self.requests:
-            self.requests[key] = []
-        
-        # Remove old requests
-        self.requests[key] = [
-            t for t in self.requests[key]
-            if now - t < self.window_seconds
-        ]
-        
-        if len(self.requests[key]) >= self.max_requests:
-            return False
-        
-        self.requests[key].append(now)
-        return True
-    
-    def get_remaining(self, key):
-        """Get remaining requests for a key."""
-        now = datetime.utcnow().timestamp()
-        
-        if key not in self.requests:
-            return self.max_requests
-        
-        # Remove old requests
-        self.requests[key] = [
-            t for t in self.requests[key]
-            if now - t < self.window_seconds
-        ]
-        
-        return max(0, self.max_requests - len(self.requests[key]))
-
-
-# ==================== ENGAGEMENT SCORING ====================
-
-def calculate_engagement_score(recipient):
-    """Calculate engagement score for a recipient."""
-    score = 0.0
-    
-    if recipient.status == 'Sent':
-        score += 10
-    
-    if recipient.opened_at:
-        score += 20
-        score += min(recipient.open_count or 0, 5) * 5
-    
-    if recipient.clicked_at:
-        score += 30
-        score += min(recipient.click_count or 0, 10) * 3
-    
-    if recipient.replied_at:
-        score += 50
-    
-    if recipient.status == 'Bounced':
-        score -= 50
-    
-    if recipient.status == 'Unsubscribed':
-        score -= 100
-    
-    # Recency bonus
-    if recipient.opened_at: 
-        days_since_open = (datetime.utcnow() - recipient.opened_at).days
-        if days_since_open < 7:
-            score += 10
-        elif days_since_open < 30:
-            score += 5
-    
-    return max(0, min(100, score))
