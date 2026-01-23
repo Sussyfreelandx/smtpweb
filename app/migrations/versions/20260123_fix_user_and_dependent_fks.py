@@ -1,6 +1,6 @@
-"""Make user and campaign/webhook dependent foreign keys use safer ON DELETE policies
+"""Fix FK constraints that block DROP operations by adding safe ON DELETE policies
 
-Revision ID: 20260123_fix_user_and_dependent_fks
+Revision ID: 20260123_fix_fk_dependencies
 Revises: <replace-with-previous-revision>
 Create Date: 2026-01-23 00:00:00.000000
 """
@@ -9,93 +9,146 @@ import sqlalchemy as sa
 from sqlalchemy.engine.reflection import Inspector
 
 # revision identifiers, used by Alembic.
-revision = '20260123_fix_user_and_dependent_fks'
+revision = '20260123_fix_fk_dependencies'
 down_revision = '<replace-with-previous-revision>'
 branch_labels = None
 depends_on = None
 
 
-def _get_fk_name(conn, table_name, column_name):
+def _get_existing_fk_name(conn, table_name, column_name):
+    """Return the FK constraint name for table.column if found, else None."""
     insp = Inspector.from_engine(conn)
-    for fk in insp.get_foreign_keys(table_name):
+    # Handle case where table might not exist in some environments
+    if not insp.has_table(table_name):
+        return None
+        
+    fks = insp.get_foreign_keys(table_name)
+    for fk in fks:
         cols = fk.get('constrained_columns') or []
         if column_name in cols:
             return fk['name']
     return None
 
 
+def _replace_fk(conn, table, column, referent_table, ondelete='SET NULL'):
+    """Drop existing FK on table.column (if present) and create a new one with ondelete."""
+    existing = _get_existing_fk_name(conn, table, column)
+    if existing:
+        try:
+            op.drop_constraint(existing, table, type_='foreignkey')
+        except Exception:
+            # best-effort: ignore if can't drop
+            pass
+
+    fk_name = f'fk_{table}_{column}'
+    try:
+        op.create_foreign_key(
+            fk_name,
+            source_table=table,
+            referent_table=referent_table,
+            local_cols=[column],
+            remote_cols=['id'],
+            ondelete=ondelete
+        )
+    except Exception:
+        # Ignore errors if tables don't exist in specific envs
+        pass
+
+
 def upgrade():
     conn = op.get_bind()
 
-    # Helper to drop and create FK using batch operations (SQLite safe)
-    def replace_fk(table, column, referent, ondelete):
-        existing = _get_fk_name(conn, table, column)
-        
-        with op.batch_alter_table(table) as batch_op:
-            if existing:
-                batch_op.drop_constraint(existing, type_='foreignkey')
-            
-            # Note: referent table is passed as the first arg in batch mode, 
-            # source table is implied by the context
-            batch_op.create_foreign_key(
-                f'fk_{table}_{column}', 
-                referent, 
-                [column], 
-                ['id'], 
-                ondelete=ondelete
-            )
+    # The list below includes the common parent->child relationships that caused failures.
+    # Use ON DELETE CASCADE for true children (e.g. deliveries) and SET NULL for optional references.
+    fks_to_fix = [
+        # child_table, column, parent_table, ondelete
+        ('recipient', 'campaign_id', 'campaign', 'CASCADE'),
+        ('daily_stats', 'campaign_id', 'campaign', 'CASCADE'),
+        ('campaign_tags', 'campaign_id', 'campaign', 'CASCADE'),
+        ('campaign_tags', 'tag_id', 'tag', 'CASCADE'),
+        ('webhook_delivery', 'webhook_id', 'webhook', 'CASCADE'),
 
-    # user-related FKs -> SET NULL (safer)
-    replace_fk('suppression', 'user_id', 'user', 'SET NULL')
-    replace_fk('campaign', 'approved_by_id', 'user', 'SET NULL')
-    replace_fk('campaign', 'user_id', 'user', 'SET NULL')
-    replace_fk('webhook', 'user_id', 'user', 'SET NULL')
-    replace_fk('tag', 'user_id', 'user', 'SET NULL')
-    replace_fk('segment', 'user_id', 'user', 'SET NULL')
-    replace_fk('email_template', 'user_id', 'user', 'SET NULL')
-    replace_fk('api_key', 'user_id', 'user', 'SET NULL')
-    replace_fk('team', 'owner_id', 'user', 'SET NULL')
-    replace_fk('sequence', 'user_id', 'user', 'SET NULL')
-    replace_fk('smtp_server', 'user_id', 'user', 'SET NULL')
+        ('recipient', 'smtp_profile_used_id', 'smtp_server', 'SET NULL'),
+        ('campaign', 'smtp_profile_id', 'smtp_server', 'SET NULL'),
 
-    # notification.user_id -> CASCADE (notifications tied to user lifecycle)
-    replace_fk('notification', 'user_id', 'user', 'CASCADE')
+        ('campaign', 'template_id', 'email_template', 'SET NULL'),
 
-    # webhook_delivery.webhook_id -> CASCADE (child of webhook)
-    replace_fk('webhook_delivery', 'webhook_id', 'webhook', 'CASCADE')
+        ('suppression', 'user_id', 'user', 'SET NULL'),
+        ('campaign', 'user_id', 'user', 'SET NULL'),
+        ('campaign', 'approved_by_id', 'user', 'SET NULL'),
+        ('webhook', 'user_id', 'user', 'SET NULL'),
+        ('team_members', 'user_id', 'user', 'CASCADE'),
+        ('tag', 'user_id', 'user', 'SET NULL'),
+        ('segment', 'user_id', 'user', 'SET NULL'),
+        ('email_template', 'user_id', 'user', 'SET NULL'),
+        ('api_key', 'user_id', 'user', 'SET NULL'),
+        ('team', 'owner_id', 'user', 'SET NULL'),
+        ('notification', 'user_id', 'user', 'CASCADE'),
+        ('sequence', 'user_id', 'user', 'SET NULL'),
+        ('smtp_server', 'user_id', 'user', 'SET NULL'),
 
-    # recipient and daily_stats -> CASCADE for campaign
-    replace_fk('recipient', 'campaign_id', 'campaign', 'CASCADE')
-    replace_fk('daily_stats', 'campaign_id', 'campaign', 'CASCADE')
+        # recipient -> smtp_server (already above)
+        # Additional: sequence_recipient -> sequence
+        ('sequence_recipient', 'sequence_id', 'sequence', 'CASCADE'),
+    ]
+
+    for table, column, parent, ondelete in fks_to_fix:
+        try:
+            _replace_fk(conn, table, column, parent, ondelete=ondelete)
+        except Exception:
+            # ignore missing tables/columns in some environments
+            pass
 
 
 def downgrade():
+    # Best-effort: drop created FKs and recreate plain FKs without ON DELETE (may be destructive)
     conn = op.get_bind()
 
-    # drop the created FKs
-    targets = [
-        ('suppression','user_id'),
-        ('campaign','approved_by_id'),
-        ('campaign','user_id'),
-        ('webhook','user_id'),
-        ('tag','user_id'),
-        ('segment','user_id'),
-        ('email_template','user_id'),
-        ('api_key','user_id'),
-        ('team','owner_id'),
-        ('sequence','user_id'),
-        ('smtp_server','user_id'),
-        ('notification','user_id'),
-        ('webhook_delivery','webhook_id'),
-        ('recipient','campaign_id'),
-        ('daily_stats','campaign_id'),
+    def _drop_fk_if_exists(table, column):
+        existing = _get_existing_fk_name(conn, table, column)
+        if existing:
+            try:
+                op.drop_constraint(existing, table, type_='foreignkey')
+            except Exception:
+                pass
+
+    # We need the parent table to recreate the FK correctly.
+    tables_cols = [
+        ('recipient', 'campaign_id', 'campaign'),
+        ('daily_stats', 'campaign_id', 'campaign'),
+        ('campaign_tags', 'campaign_id', 'campaign'),
+        ('campaign_tags', 'tag_id', 'tag'),
+        ('webhook_delivery', 'webhook_id', 'webhook'),
+        ('recipient', 'smtp_profile_used_id', 'smtp_server'),
+        ('campaign', 'smtp_profile_id', 'smtp_server'),
+        ('campaign', 'template_id', 'email_template'),
+        ('suppression', 'user_id', 'user'),
+        ('campaign', 'user_id', 'user'),
+        ('campaign', 'approved_by_id', 'user'),
+        ('webhook', 'user_id', 'user'),
+        ('team_members', 'user_id', 'user'),
+        ('tag', 'user_id', 'user'),
+        ('segment', 'user_id', 'user'),
+        ('email_template', 'user_id', 'user'),
+        ('api_key', 'user_id', 'user'),
+        ('team', 'owner_id', 'user'),
+        ('notification', 'user_id', 'user'),
+        ('sequence', 'user_id', 'user'),
+        ('smtp_server', 'user_id', 'user'),
+        ('sequence_recipient', 'sequence_id', 'sequence'),
     ]
 
-    for table, col in targets:
+    for table, col, parent in tables_cols:
         try:
-            existing = _get_fk_name(conn, table, col)
-            if existing:
-                with op.batch_alter_table(table) as batch_op:
-                    batch_op.drop_constraint(existing, type_='foreignkey')
+            _drop_fk_if_exists(table, col)
+            # Recreate a conservative FK without explicit ON DELETE (default behavior)
+            op.create_foreign_key(
+                f'fk_{table}_{col}', 
+                table, 
+                parent, 
+                [col], 
+                ['id']
+            )
         except Exception:
+            # Don't attempt to reconstruct unknown parent names here - it's a best-effort downgrade
             pass
