@@ -244,7 +244,7 @@
         </div>
 
         <div class="table-responsive">
-            <table class="table table-hover align-middle mb-0">
+            <table class="table table-hover align-middle mb-0" id="recipientsTable">
                 <thead class="bg-light">
                     <tr>
                         <th class="ps-3">Email</th>
@@ -259,10 +259,10 @@
                         <th>Message</th>
                     </tr>
                 </thead>
-                <tbody>
+                <tbody id="recipientsTbody">
                     {% for r in recipients.items %}
-                    <tr>
-                        <td class="ps-3 fw-bold">{{ r.email }}</td>
+                    <tr id="recipient-row-{{ r.id }}">
+                        <td class="ps-3 fw-bold recipient-email">{{ r.email }}</td>
                         <td>
                             <span class="status-badge status-{{ r.status|lower|replace(' ', '-') }}">
                                 {{ r.status }}
@@ -284,7 +284,7 @@
                                 -
                             {% endif %}
                         </td>
-                        <td class="text-center">
+                        <td class="text-center opened-cell">
                             {% if r.opened_at %}
                             <span class="text-success" title="{{ r.opened_at.strftime('%Y-%m-%d %H:%M:%S') }}">
                                 <i class="fas fa-check-circle"></i> {{ r.open_count or 1 }}
@@ -293,7 +293,7 @@
                             <span class="text-muted">-</span>
                             {% endif %}
                         </td>
-                        <td class="text-center">
+                        <td class="text-center clicked-cell">
                             {% if r.clicked_at %}
                             <span class="text-success" title="{{ r.clicked_at.strftime('%Y-%m-%d %H:%M:%S') }}">
                                 <i class="fas fa-check-circle"></i> {{ r.click_count or 1 }}
@@ -302,8 +302,8 @@
                             <span class="text-muted">-</span>
                             {% endif %}
                         </td>
-                        <td class="text-center">{{ r.attempts }}</td>
-                        <td class="small text-muted text-truncate" style="max-width:  200px;" title="{{ r.status_message or '' }}">
+                        <td class="text-center attempts-cell">{{ r.attempts }}</td>
+                        <td class="small text-muted text-truncate message-cell" style="max-width:  200px;" title="{{ r.status_message or '' }}">
                             {{ r.status_message or '' }}
                         </td>
                     </tr>
@@ -311,7 +311,7 @@
                     <tr>
                         <td colspan="{% if campaign.ab_testing_enabled %}8{% else %}7{% endif %}" class="text-center py-5 text-muted">
                             <i class="fas fa-users fa-3x mb-3 d-block"></i>
-                            No recipients yet. Add recipients using the form above or upload a CSV file. 
+                            No recipients yet. Add recipients using the form above or upload a CSV/TXT file. 
                         </td>
                     </tr>
                     {% endfor %}
@@ -324,8 +324,9 @@
         <div class="card-footer bg-white">
             <nav>
                 <ul class="pagination justify-content-center mb-0">
+                    <!-- FIX: Handle None for prev_num to avoid build errors -->
                     <li class="page-item {% if not recipients.has_prev %}disabled{% endif %}">
-                        <a class="page-link" href="{{ url_for('main.view_campaign', campaign_id=campaign.id, page=recipients.prev_num) }}">
+                        <a class="page-link" href="{{ url_for('main.view_campaign', campaign_id=campaign.id, page=recipients.prev_num or 1) }}">
                             <i class="fas fa-chevron-left"></i>
                         </a>
                     </li>
@@ -338,8 +339,9 @@
                         <li class="page-item disabled"><span class="page-link">...</span></li>
                         {% endif %}
                     {% endfor %}
+                    <!-- FIX: Handle None for next_num to avoid build errors -->
                     <li class="page-item {% if not recipients.has_next %}disabled{% endif %}">
-                        <a class="page-link" href="{{ url_for('main.view_campaign', campaign_id=campaign.id, page=recipients.next_num) }}">
+                        <a class="page-link" href="{{ url_for('main.view_campaign', campaign_id=campaign.id, page=recipients.next_num or 1) }}">
                             <i class="fas fa-chevron-right"></i>
                         </a>
                     </li>
@@ -389,7 +391,129 @@ document.getElementById('addRecipientForm').addEventListener('submit', function(
     });
 });
 
-// Auto-refresh status if campaign is sending
+// Socket.IO real-time updates
+(function initSockets() {
+    if (typeof io === 'undefined') {
+        console.warn('Socket.IO not available - real-time updates disabled');
+        return;
+    }
+
+    try {
+        const socketOpts = {
+            transports: ['polling', 'websocket'],
+            upgrade: true,
+            reconnectionAttempts: 10
+        };
+
+        // Connect to campaigns namespace and join campaign room
+        const campaignsSocket = io('/campaigns', socketOpts);
+
+        campaignsSocket.on('connect', () => {
+            // Join specific campaign room
+            // FIX: Quote campaign ID to ensure safe JS syntax (prevents errors if ID is UUID string)
+            campaignsSocket.emit('join_campaign', { campaign_id: '{{ campaign.id }}' });
+        });
+
+        campaignsSocket.on('campaign_progress', (payload) => {
+            try {
+                // FIX: Quote campaign ID and use loose equality for safe comparison
+                if (!payload || payload.campaign_id != '{{ campaign.id }}') return;
+                const total = payload.total || 0;
+                const sent = payload.sent || 0;
+                const failed = payload.failed || 0;
+                const progressSentEl = document.getElementById('progress-sent');
+                const progressFailedEl = document.getElementById('progress-failed');
+                const progressText = document.getElementById('progress-text');
+
+                if (total > 0) {
+                    const sentPercent = (sent / total) * 100;
+                    const failedPercent = (failed / total) * 100;
+                    if (progressSentEl) progressSentEl.style.width = sentPercent + '%';
+                    if (progressFailedEl) progressFailedEl.style.width = failedPercent + '%';
+                    if (progressText) {
+                        progressText.textContent = `${sent + failed} / ${total} (${((sent + failed) / total * 100).toFixed(1)}%)`;
+                    }
+                }
+            } catch (e) { console.error('campaign_progress handler error', e); }
+        });
+
+        campaignsSocket.on('recipient_update', (payload) => {
+            try {
+                // FIX: Quote campaign ID for safety
+                if (!payload || payload.campaign_id != '{{ campaign.id }}') return;
+                const rid = payload.recipient_id;
+                const status = payload.status;
+                const data = payload.data || {};
+                const row = document.getElementById('recipient-row-' + rid);
+                if (row) {
+                    // Update status badge
+                    const statusBadge = row.querySelector('.status-badge');
+                    if (statusBadge) {
+                        statusBadge.textContent = status;
+                        statusBadge.className = 'status-badge status-' + (status || '').toLowerCase().replace(/\s+/g, '-');
+                    }
+                    // Update attempts/message/open/click if present
+                    if (data.email) {
+                        const msgCell = row.querySelector('.message-cell');
+                        if (msgCell && data.error) {
+                            msgCell.textContent = data.error;
+                            msgCell.title = data.error;
+                        }
+                    }
+                    if (status === 'Sent') {
+                        const sentCell = row.querySelector('.attempts-cell');
+                        if (sentCell) {
+                            // increment attempts display if present
+                            sentCell.textContent = (parseInt(sentCell.textContent || '0') || 0);
+                        }
+                    }
+                } else {
+                    // If not on page (pagination), ignore
+                }
+            } catch (e) { console.error('recipient_update handler error', e); }
+        });
+
+        campaignsSocket.on('campaign_update', (payload) => {
+            try {
+                // FIX: Quote campaign ID for safety
+                if (!payload || payload.campaign_id != '{{ campaign.id }}') return;
+                // Generic campaign updates (status changes etc.)
+                if (payload.type === 'status_change' && payload.data && payload.data.status) {
+                    if (payload.data.status !== 'Sending') {
+                        // If sending stopped/finished, refresh page to show final state (or you could update DOM)
+                        location.reload();
+                    } else {
+                        // Update campaign-status badge
+                        const statusEl = document.querySelector('.campaign-status');
+                        if (statusEl) {
+                            statusEl.textContent = payload.data.status;
+                        }
+                    }
+                }
+            } catch (e) { console.error('campaign_update handler error', e); }
+        });
+
+        campaignsSocket.on('connect_error', (err) => {
+            console.warn('campaigns socket connect_error', err);
+        });
+
+        // Also subscribe to notifications namespace to show in-app notifications
+        const notifSocket = io('/notifications', socketOpts);
+        notifSocket.on('new_notification', (n) => {
+            try {
+                // Simple toast
+                if (n && n.title) {
+                    alert(n.title + '\n' + (n.message || ''));
+                }
+            } catch (e) { console.error('new_notification handler error', e); }
+        });
+
+    } catch (err) {
+        console.error('Socket init error', err);
+    }
+})();
+
+// Auto-refresh status if campaign is sending (fallback)
 {% if campaign.status == 'Sending' %}
 let refreshInterval = setInterval(function() {
     fetch("{{ url_for('main.api_campaign_status', campaign_id=campaign.id) }}")
