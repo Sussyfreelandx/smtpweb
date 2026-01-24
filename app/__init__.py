@@ -1,3 +1,10 @@
+"""
+Application factory and extension initialization.
+
+This module exposes commonly-used extensions at package level so other modules
+can import: from app import db, migrate, login, socketio, cache, celery, bcrypt, limiter
+"""
+
 import os
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
@@ -9,29 +16,39 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from celery import Celery
 
-# Create extension instances (unbound)
+# Create extension instances (unbound). They will be initialized with create_app.
 db = SQLAlchemy()
 migrate = Migrate()
 login = LoginManager()
 socketio = SocketIO(cors_allowed_origins="*")
-cache = Cache()
-limiter = Limiter(key_func=get_remote_address, default_limits=["200 per minute"])
-celery = Celery(__name__)
+cache = Cache()  # default cache instance; configure via app.config
 
-# Bcrypt check
+# Bcrypt: optional import. If flask-bcrypt is not installed we provide a safe fallback
 try:
-    from flask_bcrypt import Bcrypt
+    from flask_bcrypt import Bcrypt  # type: ignore
     bcrypt = Bcrypt()
     _BCRYPT_AVAILABLE = True
-except Exception:
+except ImportError:
     bcrypt = None
     _BCRYPT_AVAILABLE = False
 
+# Simple rate limiter
+limiter = Limiter(key_func=get_remote_address, default_limits=["200 per minute"])
+
+# Create a Celery instance placeholder. We'll configure it for app context inside create_app.
+celery = Celery(__name__)
+
+# Default login settings
 login.login_view = "main.login"
 login.login_message_category = "info"
 
+
 def make_celery(app: Flask, celery_obj: Celery):
-    """Configure Celery to use Flask app context."""
+    """
+    Configure a Celery object to work with the Flask app context.
+    This updates celery.conf with app.config and creates a base Task that
+    wraps task execution in app.app_context().
+    """
     broker = app.config.get("CELERY_BROKER_URL")
     backend = app.config.get("CELERY_RESULT_BACKEND")
 
@@ -50,11 +67,17 @@ def make_celery(app: Flask, celery_obj: Celery):
     celery_obj.Task = ContextTask
     return celery_obj
 
+
 def create_app(config_object=None):
-    """Factory to create and configure the Flask app."""
+    """
+    Application factory.
+
+    Pass in a config object or set environment variables for configuration.
+    Returns a fully configured Flask app and also configures the shared 'celery' object.
+    """
     app = Flask(__name__, instance_relative_config=False)
 
-    # Load configuration
+    # Load configuration from provided object or environment variable
     config_path = config_object or os.environ.get("APP_SETTINGS")
     if config_path:
         try:
@@ -62,45 +85,57 @@ def create_app(config_object=None):
                 app.config.from_pyfile(config_path)
             else:
                 app.config.from_object(config_path)
-        except Exception as e:
-            print(f"Warning: Could not load config from {config_path}: {e}")
+        except Exception:
+            pass
 
-    # Set Defaults
+    # Defaults
     app.config.setdefault("SQLALCHEMY_DATABASE_URI", os.environ.get("DATABASE_URL", "sqlite:///data.db"))
     app.config.setdefault("SQLALCHEMY_TRACK_MODIFICATIONS", False)
-    app.config.setdefault("SECRET_KEY", os.environ.get("SECRET_KEY", "dev-secret-key-change-in-prod"))
+    app.config.setdefault("SECRET_KEY", os.environ.get("SECRET_KEY", "dev-secret-key"))
     app.config.setdefault("CELERY_BROKER_URL", os.environ.get("CELERY_BROKER_URL", "redis://localhost:6379/0"))
     app.config.setdefault("CELERY_RESULT_BACKEND", os.environ.get("CELERY_RESULT_BACKEND", "redis://localhost:6379/0"))
-    app.config.setdefault("CACHE_TYPE", "SimpleCache")
-    
-    # Initialize Extensions
+    app.config.setdefault("CACHE_TYPE", os.environ.get("CACHE_TYPE", "SimpleCache")) # Changed to SimpleCache for compatibility
+    app.config.setdefault("WTF_CSRF_ENABLED", True)
+
+    # Initialize extensions with app
     db.init_app(app)
     migrate.init_app(app, db)
     login.init_app(app)
-    socketio.init_app(app, cors_allowed_origins=app.config.get("CORS_ALLOWED_ORIGINS", "*"))
+    socketio.init_app(app, cors_allowed_origins=app.config.get("CORS_ALLOWED_ORIGINS", "*"), async_mode='threading') # Force threading for Gunicorn compatibility without eventlet if needed
     cache.init_app(app)
     limiter.init_app(app)
 
+    # Initialize bcrypt if available
     if _BCRYPT_AVAILABLE and bcrypt:
-        bcrypt.init_app(app)
+        try:
+            bcrypt.init_app(app)
+        except Exception:
+            pass
 
+    # Configure celery with the Flask app
     make_celery(app, celery)
 
-    # Register Blueprints
+    # Register blueprints inside factory to avoid circular import at module import time
     with app.app_context():
         try:
             from app.main import bp as main_bp
             app.register_blueprint(main_bp)
-            
+        except Exception as e:
+            app.logger.error(f"Error registering main blueprint: {e}")
+
+        try:
             from app.api import bp as api_bp
             app.register_blueprint(api_bp, url_prefix="/api")
-            
+        except Exception as e:
+            app.logger.error(f"Error registering api blueprint: {e}")
+
+        try:
             from app.tracking import bp as tracking_bp
             app.register_blueprint(tracking_bp)
         except Exception as e:
-            print(f"Error registering blueprints: {e}")
+            app.logger.error(f"Error registering tracking blueprint: {e}")
 
-    # Health check route
+    # health route
     @app.route("/healthz")
     def _health():
         return {"status": "ok", "version": "1.0.0"}
