@@ -17,6 +17,7 @@ from celery import Celery
 db = SQLAlchemy()
 migrate = Migrate()
 login = LoginManager()
+# async_mode='eventlet' is critical for Render
 socketio = SocketIO(cors_allowed_origins="*", async_mode='eventlet')
 cache = Cache()
 limiter = Limiter(key_func=get_remote_address, default_limits=["200 per minute"])
@@ -58,7 +59,15 @@ def create_app(config_object=None):
     """Application factory."""
     app = Flask(__name__, instance_relative_config=False)
 
-    # Configuration loading
+    # 1. CRITICAL: Load Secret Key FIRST before any extensions
+    # This prevents the 'NoneType' key error in Flask-Login
+    secret_key = os.environ.get("SECRET_KEY")
+    if not secret_key:
+        secret_key = "dev-secret-key-change-this-in-prod"
+    
+    app.config["SECRET_KEY"] = secret_key
+
+    # 2. Load other configuration
     config_path = config_object or os.environ.get("APP_SETTINGS")
     if config_path:
         try:
@@ -69,21 +78,22 @@ def create_app(config_object=None):
         except Exception:
             pass
 
-    # Default Configuration
+    # 3. Set Defaults (if not overridden by config file)
     app.config.setdefault("SQLALCHEMY_DATABASE_URI", os.environ.get("DATABASE_URL", "sqlite:///data.db"))
     app.config.setdefault("SQLALCHEMY_TRACK_MODIFICATIONS", False)
-    app.config.setdefault("SECRET_KEY", os.environ.get("SECRET_KEY", "dev-secret-key"))
     app.config.setdefault("CELERY_BROKER_URL", os.environ.get("CELERY_BROKER_URL", "redis://localhost:6379/0"))
     app.config.setdefault("CELERY_RESULT_BACKEND", os.environ.get("CELERY_RESULT_BACKEND", "redis://localhost:6379/0"))
     app.config.setdefault("CACHE_TYPE", os.environ.get("CACHE_TYPE", "SimpleCache")) 
     app.config.setdefault("WTF_CSRF_ENABLED", True)
 
-    # Initialize extensions
+    # 4. Initialize extensions with app
     db.init_app(app)
     migrate.init_app(app, db)
     login.init_app(app)
-    # SocketIO init requires app to be passed here for some configurations
+    
+    # SocketIO init needs message queue for Celery/Workers to communicate if needed
     socketio.init_app(app, cors_allowed_origins="*", async_mode='eventlet', message_queue=app.config.get('CELERY_BROKER_URL'))
+    
     cache.init_app(app)
     limiter.init_app(app)
 
@@ -93,9 +103,7 @@ def create_app(config_object=None):
     # Configure Celery
     make_celery(app, celery)
 
-    # Register Blueprints - REMOVED TRY/EXCEPT BLOCKS
-    # This ensures if there is an import error, the app fails to start immediately
-    # instead of starting successfully but serving 404s.
+    # 5. Register Blueprints
     from app.main import bp as main_bp
     app.register_blueprint(main_bp)
 
