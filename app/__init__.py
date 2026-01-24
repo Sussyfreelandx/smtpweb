@@ -11,12 +11,14 @@ from flask_socketio import SocketIO
 from flask_caching import Cache
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+from flask_wtf.csrf import CSRFProtect
 from celery import Celery
 
 # Create extension instances
 db = SQLAlchemy()
 migrate = Migrate()
 login = LoginManager()
+csrf = CSRFProtect()  # New CSRFProtect instance
 # async_mode='eventlet' is critical for Render
 socketio = SocketIO(cors_allowed_origins="*", async_mode='eventlet')
 cache = Cache()
@@ -90,6 +92,7 @@ def create_app(config_object=None):
     db.init_app(app)
     migrate.init_app(app, db)
     login.init_app(app)
+    csrf.init_app(app)  # Initialize CSRF protection
     
     # SocketIO init needs message queue for Celery/Workers to communicate if needed
     socketio.init_app(app, cors_allowed_origins="*", async_mode='eventlet', message_queue=app.config.get('CELERY_BROKER_URL'))
