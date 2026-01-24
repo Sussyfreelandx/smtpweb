@@ -6,100 +6,109 @@
     <title>{% block title %}{{ title|default('Paris Sender') }}{% endblock %} - Paris Sender Web</title>
     <link rel="icon" type="image/png" href="https://upload.wikimedia.org/wikipedia/commons/0/0f/Afterlogic_Webmail_Lite_logo.png">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Font Awesome -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
             --primary-color: #4f46e5;
-            --secondary-color: #6b7280;
+            --secondary-color: #64748b;
             --success-color: #10b981;
             --danger-color: #ef4444;
             --warning-color: #f59e0b;
             --info-color: #3b82f6;
+            --dark-color: #0f172a;
+            --light-bg: #f8fafc;
         }
         
         body { 
-            background-color: #f0f2f5; 
+            background-color: var(--light-bg); 
             padding-bottom: 200px; 
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            color: #334155;
         }
         
+        /* Navbar Styling */
         .navbar {
-            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%) !important;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            background: #ffffff !important;
+            box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
+            padding: 0.75rem 1rem;
         }
         
         .navbar-brand {
-            font-weight: 700;
+            font-weight: 800;
             letter-spacing: -0.5px;
+            color: var(--primary-color) !important;
+            font-size: 1.25rem;
         }
         
+        .nav-link {
+            font-weight: 500;
+            color: #64748b !important;
+            transition: color 0.2s;
+        }
+        
+        .nav-link:hover, .nav-link.active {
+            color: var(--primary-color) !important;
+        }
+        
+        /* Card Styling */
         .card {
-            border: none;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+            border: 1px solid #e2e8f0;
             border-radius: 12px;
+            box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
             transition: box-shadow 0.2s;
+            background: white;
         }
         
         .card:hover {
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
         }
         
         .card-header {
-            background-color: #fff;
-            border-bottom: 1px solid #e5e7eb;
+            background-color: white;
+            border-bottom: 1px solid #f1f5f9;
             font-weight: 600;
             padding: 1rem 1.25rem;
         }
         
+        /* Stats Cards */
         .stat-card { 
             text-align: center; 
             padding: 1.25rem; 
             border-radius: 12px;
             background: white;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+            border: 1px solid #e2e8f0;
             transition: transform 0.2s, box-shadow 0.2s;
         }
         
         .stat-card:hover {
             transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
         }
         
         .stat-card .value { 
-            font-size: 2rem; 
+            font-size: 1.8rem; 
             font-weight: 700;
             line-height: 1.2;
+            margin-bottom: 0.25rem;
         }
         
         .stat-card .label { 
-            color: #6b7280; 
-            font-size: 0.875rem;
-            font-weight: 500;
-            margin-top: 0.25rem;
-        }
-        
-        .stat-card .percentage {
+            color: #64748b; 
             font-size: 0.8rem;
-            color: #9ca3af;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
         
-        .btn-purple {
-            background-color: #8b5cf6;
-            border-color: #8b5cf6;
-            color: white;
-        }
-        
-        .btn-purple:hover {
-            background-color: #7c3aed;
-            border-color: #7c3aed;
-            color: white;
-        }
-        
+        /* Buttons */
         .btn {
             font-weight: 500;
             border-radius: 8px;
             padding: 0.5rem 1rem;
-            transition: all 0.15s;
+            transition: all 0.2s;
         }
         
         .btn-primary {
@@ -111,31 +120,41 @@
             background-color: #4338ca;
             border-color: #4338ca;
         }
+
+        .btn-outline-secondary {
+            border-color: #e2e8f0;
+            color: #64748b;
+        }
+
+        .btn-outline-secondary:hover {
+            background-color: #f8fafc;
+            color: #334155;
+            border-color: #cbd5e1;
+        }
         
-        /* Activity Log Styles */
+        /* Activity Log Console */
         #activity-log-container {
             position: fixed;
             bottom: 0;
             left: 0;
             width: 100%;
-            height: 180px;
+            height: 200px;
             background-color: #1e1e1e;
             color: #d4d4d4;
-            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-            font-size: 0.85rem;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 0.8rem;
             z-index: 1030;
-            border-top: 3px solid #4f46e5;
+            border-top: 3px solid var(--primary-color);
             display: flex;
             flex-direction: column;
-            box-shadow: 0 -4px 20px rgba(0,0,0,0.2);
+            box-shadow: 0 -4px 20px rgba(0,0,0,0.3);
             transition: height 0.3s ease;
         }
         
         #activity-log-header {
-            background-color: #252526;
+            background-color: #2d2d2d;
             padding: 8px 16px;
             font-weight: 600;
-            font-size: 0.8rem;
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -149,272 +168,81 @@
             padding: 10px 16px;
             flex-grow: 1;
             scrollbar-width: thin;
-            scrollbar-color: #444 #1e1e1e;
-        }
-        
-        #activity-log-content::-webkit-scrollbar {
-            width: 8px;
-        }
-        
-        #activity-log-content::-webkit-scrollbar-track {
-            background: #1e1e1e;
-        }
-        
-        #activity-log-content::-webkit-scrollbar-thumb {
-            background-color: #444;
-            border-radius: 4px;
+            scrollbar-color: #555 #1e1e1e;
         }
         
         .log-entry { 
-            margin-bottom: 4px; 
-            line-height: 1.5; 
-            border-bottom: 1px solid #2a2a2a; 
-            padding-bottom: 4px;
-            animation: fadeIn 0.3s ease;
+            margin-bottom: 3px; 
+            line-height: 1.4; 
+            border-bottom: 1px solid #333;
+            padding-bottom: 2px;
+            animation: fadeIn 0.2s ease;
         }
         
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(-5px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        
-        .log-time { 
-            color: #569cd6; 
-            margin-right: 10px;
-            font-weight: 500;
-        }
-        
-        .log-icon { 
-            display: inline-block; 
-            width: 22px; 
-            text-align: center; 
-            margin-right: 6px;
-        }
-        
+        .log-time { color: #569cd6; margin-right: 10px; font-weight: bold; }
         .log-success { color: #4ade80; }
         .log-error { color: #f87171; }
         .log-warning { color: #fbbf24; }
         .log-info { color: #60a5fa; }
         
-        /* Status Badge Styles */
+        /* Status Badges */
         .status-badge {
-            padding: 4px 10px;
+            padding: 4px 8px;
             border-radius: 6px;
-            font-size: 0.75rem;
-            font-weight: 600;
+            font-size: 0.7rem;
+            font-weight: 700;
             text-transform: uppercase;
             letter-spacing: 0.5px;
         }
         
-        .status-sent { background-color: #d1fae5; color: #065f46; }
-        .status-failed { background-color: #fee2e2; color: #991b1b; }
-        .status-queued { background-color: #dbeafe; color: #1e40af; }
-        .status-sending { background-color: #fef3c7; color: #92400e; }
-        .status-opened { background-color: #e0e7ff; color: #3730a3; }
-        .status-clicked { background-color: #d1fae5; color: #065f46; }
-        .status-suppressed { background-color: #f3f4f6; color: #374151; }
-        .status-unsubscribed { background-color: #f3f4f6; color: #374151; }
-        .status-invalid { background-color: #fee2e2; color: #991b1b; }
-        .status-replied { background-color: #ddd6fe; color: #5b21b6; }
+        .status-sent { background: #dcfce7; color: #15803d; }
+        .status-failed { background: #fee2e2; color: #b91c1c; }
+        .status-queued { background: #e0f2fe; color: #0369a1; }
+        .status-sending { background: #fef3c7; color: #b45309; }
         
-        /* Campaign Status Styles */
+        /* Campaign Status Pill */
         .campaign-status {
-            padding: 8px 16px;
-            border-radius: 8px;
-            font-weight: 600;
-            font-size: 0.875rem;
             display: inline-flex;
             align-items: center;
-            gap: 6px;
-        }
-        
-        .campaign-draft { background-color: #6b7280; color: white; }
-        .campaign-scheduled { background-color: #8b5cf6; color: white; }
-        .campaign-sending { background-color: #10b981; color: white; }
-        .campaign-paused { background-color: #f59e0b; color: #1f2937; }
-        .campaign-completed { background-color: #3b82f6; color: white; }
-        .campaign-stopped { background-color: #ef4444; color: white; }
-        .campaign-failed { background-color: #dc2626; color: white; }
-        
-        /* Table Styles */
-        .table {
-            margin-bottom: 0;
-        }
-        
-        .table thead th {
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
             font-weight: 600;
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             text-transform: uppercase;
-            letter-spacing: 0.5px;
-            color: #6b7280;
-            border-bottom: 2px solid #e5e7eb;
-            padding: 12px 16px;
         }
         
-        .table tbody td {
-            padding: 12px 16px;
-            vertical-align: middle;
-        }
+        .campaign-draft { background: #f1f5f9; color: #475569; }
+        .campaign-sending { background: #dcfce7; color: #166534; }
+        .campaign-completed { background: #e0e7ff; color: #3730a3; }
         
-        .table-hover tbody tr:hover {
-            background-color: #f9fafb;
-        }
-        
-        /* Form Styles */
-        .form-control, .form-select {
-            border-radius: 8px;
-            border: 1px solid #d1d5db;
-            padding: 0.625rem 0.875rem;
-            transition: border-color 0.15s, box-shadow 0.15s;
-        }
-        
-        .form-control:focus, .form-select:focus {
-            border-color: var(--primary-color);
-            box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
-        }
-        
-        .form-label {
-            font-weight: 500;
-            color: #374151;
-            margin-bottom: 0.375rem;
-        }
-        
-        /* Alert Styles */
-        .alert {
-            border: none;
-            border-radius: 10px;
-            padding: 1rem 1.25rem;
-        }
-        
-        /* Dropdown Styles */
-        .dropdown-menu {
-            border: none;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.15);
-            border-radius: 10px;
-            padding: 0.5rem;
-        }
-        
-        .dropdown-item {
-            border-radius: 6px;
-            padding: 0.5rem 1rem;
-            font-weight: 500;
-        }
-        
-        .dropdown-item:hover {
-            background-color: #f3f4f6;
-        }
-        
-        /* Modal Styles */
-        .modal-content {
-            border: none;
-            border-radius: 16px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.2);
-        }
-        
-        .modal-header {
-            border-bottom: 1px solid #e5e7eb;
-            padding: 1.25rem 1.5rem;
-        }
-        
-        .modal-footer {
-            border-top: 1px solid #e5e7eb;
-            padding: 1rem 1.5rem;
-        }
-        
-        /* Utility Classes */
-        .font-monospace {
-            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-        }
-        
-        .text-truncate-2 {
-            display: -webkit-box;
-            -webkit-line-clamp: 2;
-            -webkit-box-orient: vertical;
-            overflow: hidden;
-        }
-        
-        /* Notification Badge */
-        .notification-badge {
-            position: absolute;
-            top: -5px;
-            right: -5px;
-            background-color: #ef4444;
-            color: white;
-            font-size: 0.65rem;
-            padding: 2px 6px;
-            border-radius: 10px;
-            font-weight: 600;
-        }
-        
-        /* Loading Spinner */
-        .spinner-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(255,255,255,0.8);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 9999;
-        }
-        
-        /* Progress Bar */
-        .progress {
-            height: 8px;
-            border-radius: 4px;
-            background-color: #e5e7eb;
-        }
-        
-        .progress-bar {
-            border-radius: 4px;
-        }
-        
-        /* Code Block */
-        pre {
-            background-color: #1e293b;
-            border-radius: 8px;
-            padding: 1rem;
-            overflow-x: auto;
-        }
-        
-        code {
-            color: #e879f9;
-            font-size: 0.875rem;
-        }
-        
-        pre code {
-            color: #e2e8f0;
-        }
     </style>
     {% block extra_css %}{% endblock %}
 </head>
 <body>
-    <nav class="navbar navbar-expand-lg navbar-dark mb-0">
-        <div class="container-fluid">
+    <nav class="navbar navbar-expand-lg navbar-light fixed-top">
+        <div class="container-fluid px-4">
             <a class="navbar-brand" href="{{ url_for('main.index') }}">
-                <i class="fas fa-paper-plane me-2 text-primary"></i> PARIS SENDER
+                <i class="fas fa-paper-plane me-2"></i>PARIS SENDER
             </a>
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
                 <span class="navbar-toggler-icon"></span>
             </button>
             <div class="collapse navbar-collapse" id="navbarNav">
-                <ul class="navbar-nav me-auto">
+                <ul class="navbar-nav me-auto ms-4">
                     {% if current_user.is_authenticated %}
                     <li class="nav-item">
                         <a class="nav-link {% if request.endpoint == 'main.index' %}active{% endif %}" href="{{ url_for('main.index') }}">
-                            <i class="fas fa-home me-1"></i> Dashboard
+                            <i class="fas fa-grid-2 me-1"></i> Dashboard
                         </a>
                     </li>
                     <li class="nav-item">
                         <a class="nav-link {% if request.endpoint == 'main.new_campaign' %}active{% endif %}" href="{{ url_for('main.new_campaign') }}">
-                            <i class="fas fa-plus me-1"></i> New Campaign
+                            <i class="fas fa-plus me-1"></i> Create
                         </a>
                     </li>
                     <li class="nav-item">
                         <a class="nav-link {% if request.endpoint == 'main.analytics_dashboard' %}active{% endif %}" href="{{ url_for('main.analytics_dashboard') }}">
-                            <i class="fas fa-chart-line me-1"></i> Analytics
+                            <i class="fas fa-chart-bar me-1"></i> Analytics
                         </a>
                     </li>
                     {% endif %}
@@ -423,63 +251,29 @@
                     {% if current_user.is_authenticated %}
                     <li class="nav-item dropdown">
                         <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
-                            <i class="fas fa-tools me-1"></i> Tools
+                            <i class="fas fa-cog me-1"></i> Tools
                         </a>
-                        <ul class="dropdown-menu dropdown-menu-end">
-                            <li>
-                                <a class="dropdown-item" href="{{ url_for('main.deliverability_tools') }}">
-                                    <i class="fas fa-shield-alt me-2 text-info"></i>Deliverability Check
-                                </a>
-                            </li>
+                        <ul class="dropdown-menu dropdown-menu-end shadow-sm border-0">
+                            <li><a class="dropdown-item" href="{{ url_for('main.smtp_profiles') }}">SMTP Profiles</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('main.suppression_list') }}">Suppression List</a></li>
                             <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item" href="{{ url_for('main.general_settings') }}">Settings</a></li>
                         </ul>
                     </li>
                     <li class="nav-item dropdown">
                         <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
-                            <i class="fas fa-cog me-1"></i> Settings
+                            <div class="d-inline-flex align-items-center justify-content-center bg-primary text-white rounded-circle me-1" style="width: 24px; height: 24px; font-size: 12px;">
+                                {{ current_user.username[0]|upper }}
+                            </div>
+                            {{ current_user.username }}
                         </a>
-                        <ul class="dropdown-menu dropdown-menu-end">
-                            <li>
-                                <a class="dropdown-item" href="{{ url_for('main.general_settings') }}">
-                                    <i class="fas fa-sliders-h me-2 text-secondary"></i>General Settings
-                                </a>
-                            </li>
-                            <li>
-                                <a class="dropdown-item" href="{{ url_for('main.smtp_profiles') }}">
-                                    <i class="fas fa-server me-2 text-primary"></i>SMTP Profiles
-                                </a>
-                            </li>
-                            <li>
-                                <a class="dropdown-item" href="{{ url_for('main.suppression_list') }}">
-                                    <i class="fas fa-ban me-2 text-danger"></i>Suppression List
-                                </a>
-                            </li>
-                            <li><hr class="dropdown-divider"></li>
-                            <li>
-                                <a class="dropdown-item" href="{{ url_for('main.deliverability_tools') }}">
-                                    <i class="fas fa-shield-alt me-2 text-info"></i>Deliverability Tools
-                                </a>
-                            </li>
-                        </ul>
-                    </li>
-                    <li class="nav-item dropdown">
-                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
-                            <i class="fas fa-user-circle me-1"></i> {{ current_user.username }}
-                        </a>
-                        <ul class="dropdown-menu dropdown-menu-end">
-                            <li>
-                                <a class="dropdown-item" href="{{ url_for('main.logout') }}">
-                                    <i class="fas fa-sign-out-alt me-2"></i>Logout
-                                </a>
-                            </li>
+                        <ul class="dropdown-menu dropdown-menu-end shadow-sm border-0">
+                            <li><a class="dropdown-item text-danger" href="{{ url_for('main.logout') }}">Logout</a></li>
                         </ul>
                     </li>
                     {% else %}
                     <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('main.login') }}">Login</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('main.register') }}">Register</a>
+                        <a class="nav-link btn btn-sm btn-outline-primary ms-2 px-3" href="{{ url_for('main.login') }}">Login</a>
                     </li>
                     {% endif %}
                 </ul>
@@ -487,24 +281,17 @@
         </div>
     </nav>
 
-    <div class="container-fluid content-area px-4">
+    <div class="container-fluid content-area px-4" style="margin-top: 80px;">
         {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
         <div class="row mt-3">
             <div class="col-12">
                 {% for category, message in messages %}
-                <div class="alert alert-{{ category if category != 'message' else 'info' }} alert-dismissible fade show" role="alert">
-                    {% if category == 'success' %}
-                    <i class="fas fa-check-circle me-2"></i>
-                    {% elif category == 'danger' or category == 'error' %}
-                    <i class="fas fa-exclamation-circle me-2"></i>
-                    {% elif category == 'warning' %}
-                    <i class="fas fa-exclamation-triangle me-2"></i>
-                    {% else %}
-                    <i class="fas fa-info-circle me-2"></i>
-                    {% endif %}
+                <div class="alert alert-{{ category if category != 'message' else 'info' }} alert-dismissible fade show shadow-sm" role="alert">
+                    {% if category == 'success' %}<i class="fas fa-check-circle me-2"></i>{% endif %}
+                    {% if category == 'error' or category == 'danger' %}<i class="fas fa-exclamation-circle me-2"></i>{% endif %}
                     {{ message }}
-                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
                 </div>
                 {% endfor %}
             </div>
@@ -518,20 +305,19 @@
     {% if current_user.is_authenticated %}
     <div id="activity-log-container">
         <div id="activity-log-header" onclick="toggleLog()">
-            <span><i class="fas fa-terminal me-2"></i> SYSTEM ACTIVITY LOG</span>
+            <span><i class="fas fa-terminal me-2 text-primary"></i> LIVE SYSTEM LOGS</span>
             <div>
-                <span id="log-status" class="text-success me-3" style="font-size: 0.7rem;">● ONLINE</span>
+                <span class="text-success me-3" style="font-size: 0.7rem;">● ONLINE</span>
                 <i class="fas fa-chevron-down" id="log-toggle-icon"></i>
             </div>
         </div>
         <div id="activity-log-content">
-            <div class="log-entry text-muted">Initializing live connection...</div>
+            <div class="log-entry text-muted">System connected. Listening for events...</div>
         </div>
     </div>
     {% endif %}
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <!-- Socket.IO client -->
     <script src="https://cdn.jsdelivr.net/npm/socket.io-client@4/dist/socket.io.min.js"></script>
     
     {% block scripts %}{% endblock %}
@@ -540,12 +326,11 @@
         {% if current_user.is_authenticated %}
         const logContainer = document.getElementById('activity-log-container');
         const logContent = document.getElementById('activity-log-content');
-        let lastLogHash = "";
         let isCollapsed = false;
 
         function toggleLog() {
             if (isCollapsed) {
-                logContainer.style.height = "180px";
+                logContainer.style.height = "200px";
                 document.getElementById('log-toggle-icon').className = "fas fa-chevron-down";
             } else {
                 logContainer.style.height = "35px";
@@ -554,86 +339,31 @@
             isCollapsed = !isCollapsed;
         }
 
-        // Setup Socket.IO connection for logs & notifications
-        (function setupSocketIO() {
-            try {
-                // Connect to default namespace (will authenticate via session cookie)
-                const socketOpts = {
-                    transports: ['polling', 'websocket'],
-                    upgrade: true,
-                    reconnectionAttempts: 5
-                };
-                
-                // Use Object.assign for broader compatibility instead of spread operator
-                const socketConfig = Object.assign({ path: '/socket.io' }, socketOpts);
-                const socket = io(socketConfig);
-
-                socket.on('connect', () => {
-                    // Subscribe to logs namespace if server recognizes separate namespace
-                    // We use an event to join server-side rooms when needed
-                    // Emit a generic 'hello' if desired
-                    // console.info('Socket connected', socket.id);
-                });
-
-                // Listen for log entries on '/logs' namespace — server broadcasts to namespace
-                // Since the client connected to root, also try connecting to namespaces explicitly
-                const logsSocket = io('/logs', socketOpts);
-                logsSocket.on('connect', () => {
-                    // Join user-specific logs room - server code will determine room membership
-                });
-                logsSocket.on('log_entry', (data) => {
-                    try {
-                        const div = document.createElement('div');
-                        div.className = "log-entry";
-                        let colorClass = "log-info";
-                        let icon = "ℹ️";
-                        if (data.level === "ERROR") { colorClass = "log-error"; icon = "❌"; }
-                        else if (data.level === "SUCCESS") { colorClass = "log-success"; icon = "✅"; }
-                        else if (data.level === "WARNING") { colorClass = "log-warning"; icon = "⚠️"; }
-
-                        div.innerHTML = `<span class="log-time">[${data.timestamp}]</span><span class="log-icon">${icon}</span><span class="${colorClass}">${data.message}</span>`;
-                        logContent.appendChild(div);
-                        logContent.scrollTop = logContent.scrollHeight;
-                    } catch (e) { console.error('log_entry render error', e); }
-                });
-
-                // Notifications namespace
-                const notifSocket = io('/notifications', socketOpts);
-                notifSocket.on('new_notification', (n) => {
-                    // Optionally show toast / flash
-                    console.info('New notification', n);
-                });
-
-            } catch (e) {
-                console.warn("Socket.IO initialization failed, falling back to polling:", e);
-            }
-        })();
-
-        {% endif %}
-
-        // Global utility functions
-        function showLoading(element) {
-            const originalContent = element.innerHTML;
-            element.setAttribute('data-original-content', originalContent);
-            element.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Loading...';
-            element.disabled = true;
-        }
+        // Initialize Socket.IO
+        const socket = io({ path: '/socket.io' });
         
-        function hideLoading(element) {
-            const originalContent = element.getAttribute('data-original-content');
-            if (originalContent) {
-                element.innerHTML = originalContent;
+        // Listen for logs
+        const logsSocket = io('/logs');
+        logsSocket.on('log_entry', (data) => {
+            const div = document.createElement('div');
+            div.className = "log-entry";
+            let colorClass = "log-info";
+            let icon = "ℹ️";
+            
+            if (data.level === "ERROR") { colorClass = "log-error"; icon = "❌"; }
+            else if (data.level === "SUCCESS") { colorClass = "log-success"; icon = "✅"; }
+            else if (data.level === "WARNING") { colorClass = "log-warning"; icon = "⚠️"; }
+
+            div.innerHTML = `<span class="log-time">[${data.timestamp}]</span><span style="margin-right:5px;">${icon}</span><span class="${colorClass}">${data.message}</span>`;
+            logContent.appendChild(div);
+            logContent.scrollTop = logContent.scrollHeight;
+            
+            // Limit log entries
+            if (logContent.children.length > 100) {
+                logContent.removeChild(logContent.children[0]);
             }
-            element.disabled = false;
-        }
-        
-        // Auto-dismiss alerts after 5 seconds
-        document.querySelectorAll('.alert-dismissible').forEach(function(alert) {
-            setTimeout(function() {
-                const bsAlert = new bootstrap.Alert(alert);
-                bsAlert.close();
-            }, 5000);
         });
+        {% endif %}
     </script>
 </body>
 </html>
