@@ -6,7 +6,6 @@ can import: from app import db, migrate, login, socketio, cache, celery, bcrypt,
 """
 
 import os
-import ssl
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
@@ -17,39 +16,41 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from celery import Celery
 
-# Create extension instances (unbound). They will be initialized with create_app.
+# Create extension instances (unbound).
 db = SQLAlchemy()
 migrate = Migrate()
 login = LoginManager()
-socketio = SocketIO(cors_allowed_origins="*")
-cache = Cache()  # default cache instance; configure via app.config
 
-# Bcrypt: optional import. If flask-bcrypt is not installed we provide a safe fallback
-try:
-    from flask_bcrypt import Bcrypt  # type: ignore
-    bcrypt = Bcrypt()
-    _BCRYPT_AVAILABLE = True
-except Exception:
-    bcrypt = None
-    _BCRYPT_AVAILABLE = False
+# Use eventlet for best Socket.IO performance in production
+# The 'launcher.sh' uses eventlet worker, so we should match that here.
+socketio = SocketIO(cors_allowed_origins="*", async_mode='eventlet')
 
-# Simple rate limiter
+cache = Cache()
 limiter = Limiter(key_func=get_remote_address, default_limits=["200 per minute"])
-
-# Create a Celery instance placeholder. We'll configure it for app context inside create_app.
 celery = Celery(__name__)
 
 # Default login settings
 login.login_view = "main.login"
 login.login_message_category = "info"
 
+# Optional Bcrypt
+try:
+    from flask_bcrypt import Bcrypt
+    bcrypt = Bcrypt()
+    _BCRYPT_AVAILABLE = True
+except Exception:
+    bcrypt = None
+    _BCRYPT_AVAILABLE = False
+
 
 def make_celery(app: Flask, celery_obj: Celery):
     """
     Configure a Celery object to work with the Flask app context.
-    This updates celery.conf with app.config and creates a base Task that
-    wraps task execution in app.app_context().
     """
+    # Load configuration from app config
+    celery_obj.conf.update(app.config.get("CELERY", {}))
+    
+    # Ensure broker/backend are set if provided explicitly in config keys
     broker = app.config.get("CELERY_BROKER_URL")
     backend = app.config.get("CELERY_RESULT_BACKEND")
 
@@ -57,19 +58,6 @@ def make_celery(app: Flask, celery_obj: Celery):
         celery_obj.conf.broker_url = broker
     if backend:
         celery_obj.conf.result_backend = backend
-
-    # Load standard config
-    celery_obj.conf.update(app.config.get("CELERY", {}))
-
-    # --- CRITICAL FIX FOR RENDER REDIS ---
-    # Render Redis uses 'rediss://' (SSL). Celery/Redis requires specific SSL cert requests setting
-    # to be set to CERT_NONE to work with self-signed/internal certs often used in these environments.
-    if broker and broker.startswith("rediss://"):
-        celery_obj.conf.update({
-            "broker_use_ssl": {"ssl_cert_reqs": ssl.CERT_NONE},
-            "redis_backend_use_ssl": {"ssl_cert_reqs": ssl.CERT_NONE},
-        })
-    # -------------------------------------
 
     class ContextTask(celery_obj.Task):
         def __call__(self, *args, **kwargs):
@@ -83,13 +71,10 @@ def make_celery(app: Flask, celery_obj: Celery):
 def create_app(config_object=None):
     """
     Application factory.
-
-    Pass in a config object or set environment variables for configuration.
-    Returns a fully configured Flask app and also configures the shared 'celery' object.
     """
     app = Flask(__name__, instance_relative_config=False)
 
-    # Load configuration from provided object or environment variable
+    # Load configuration
     config_path = config_object or os.environ.get("APP_SETTINGS")
     if config_path:
         try:
@@ -105,39 +90,38 @@ def create_app(config_object=None):
     app.config.setdefault("SQLALCHEMY_TRACK_MODIFICATIONS", False)
     app.config.setdefault("SECRET_KEY", os.environ.get("SECRET_KEY", "dev-secret-key"))
     
-    # --- REDIS URL HANDLING ---
+    # Redis defaults
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
-    # If running on Render, ensure we use the SSL URL scheme
-    if os.environ.get('RENDER') and redis_url.startswith('redis://'):
-        redis_url = redis_url.replace('redis://', 'rediss://', 1)
-        
     app.config.setdefault("CELERY_BROKER_URL", redis_url)
     app.config.setdefault("CELERY_RESULT_BACKEND", redis_url)
-    # --------------------------
-
-    app.config.setdefault("CACHE_TYPE", os.environ.get("CACHE_TYPE", "simple"))
+    
+    # Cache defaults - prefer Redis if available
+    if os.environ.get("REDIS_URL"):
+        app.config.setdefault("CACHE_TYPE", "RedisCache")
+        app.config.setdefault("CACHE_REDIS_URL", redis_url)
+    else:
+        app.config.setdefault("CACHE_TYPE", "SimpleCache")
+        
     app.config.setdefault("WTF_CSRF_ENABLED", True)
 
-    # Initialize extensions with app
+    # Initialize extensions
     db.init_app(app)
-    migrate.init_app(app, db)  # registers 'flask db' commands for Flask-Migrate
+    migrate.init_app(app, db)
     login.init_app(app)
-    socketio.init_app(app, cors_allowed_origins=app.config.get("CORS_ALLOWED_ORIGINS", "*"))
+    socketio.init_app(app, cors_allowed_origins=app.config.get("CORS_ALLOWED_ORIGINS", "*"), async_mode='eventlet')
     cache.init_app(app)
     limiter.init_app(app)
 
-    # Initialize bcrypt if available
     if _BCRYPT_AVAILABLE and bcrypt:
         try:
             bcrypt.init_app(app)
         except Exception:
-            # ignore initialization failures to avoid deploy-time crash
             pass
 
-    # Configure celery with the Flask app
+    # Configure Celery
     make_celery(app, celery)
 
-    # Register blueprints inside factory to avoid circular import at module import time
+    # Register blueprints
     try:
         from app.main import bp as main_bp
         app.register_blueprint(main_bp)
@@ -156,7 +140,6 @@ def create_app(config_object=None):
     except Exception:
         pass
 
-    # health route
     @app.route("/healthz")
     def _health():
         return {"status": "ok", "version": "1.0.0"}
