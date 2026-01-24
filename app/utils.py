@@ -104,13 +104,24 @@ def parse_csv_file(file, campaign_id):
         else:
             raw_text = str(raw)
 
+        # Normalize line endings
+        raw_text = raw_text.replace('\r\n', '\n').replace('\r', '\n')
+        
         # Determine filename extension if available
         filename = getattr(file, 'filename', '') or ''
         ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
 
         # First try CSV DictReader
         stream = io.StringIO(raw_text, newline=None)
-        csv_reader = csv.DictReader(stream)
+        
+        # Sniff delimiter if possible
+        try:
+            sample = raw_text[:1024]
+            dialect = csv.Sniffer().sniff(sample)
+            csv_reader = csv.DictReader(stream, dialect=dialect)
+        except csv.Error:
+            # Fallback to default
+            csv_reader = csv.DictReader(stream)
 
         # Normalize headers if present
         if csv_reader.fieldnames:
@@ -142,6 +153,13 @@ def parse_csv_file(file, campaign_id):
 
                 is_suppressed = Suppression.query.filter_by(email=email).first()
 
+                # Autograb check: if firstname missing, try extracting
+                if not row.get('firstname'):
+                    row['firstname'] = extract_firstname_from_email(email)
+                
+                if not row.get('company'):
+                     row['company'] = extract_company_from_domain(extract_domain(email))
+
                 recipient = Recipient(
                     email=email,
                     campaign_id=campaign_id,
@@ -162,84 +180,61 @@ def parse_csv_file(file, campaign_id):
 
         # If no CSV header or file is .txt, fall back to line-based parsing
         lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
-        # If first line looks like CSV header that contained 'email' but earlier DictReader failed, try header detection:
-        if lines and (ext == 'txt' or 'email' not in (csv_reader.fieldnames or [])):
-            added = 0
-            skipped = 0
-            errors = []
-            for idx, line in enumerate(lines, start=1):
-                # If line contains commas, try splitting and find email-like token
-                if ',' in line and idx == 1 and re.search(r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[A-Za-z]{2,}', line):
-                    # This is a header or row with commas; attempt parse as CSV row values
-                    # Re-run DictReader with inferred header from first line if first line contains non-email tokens
-                    header_candidates = [h.strip().lower() for h in line.split(',')]
-                    if 'email' in header_candidates:
-                        # Rewind and use DictReader with these headers
-                        stream2 = io.StringIO(raw_text, newline=None)
-                        dict_reader2 = csv.DictReader(stream2, fieldnames=header_candidates)
-                        # Skip header row
-                        next(dict_reader2, None)
-                        for row_num, row in enumerate(dict_reader2, start=2):
-                            email = (row.get('email') or '').strip().lower()
-                            if not email:
-                                skipped += 1
-                                continue
-                            if not is_valid_email(email):
-                                skipped += 1
-                                if len(errors) < 10:
-                                    errors.append(f"Row {row_num}: Invalid email '{email}'")
-                                continue
-                            existing = Recipient.query.filter_by(campaign_id=campaign_id, email=email).first()
-                            if existing:
-                                skipped += 1
-                                continue
-                            is_suppressed = Suppression.query.filter_by(email=email).first()
-                            recipient = Recipient(
-                                email=email,
-                                campaign_id=campaign_id,
-                                data=json.dumps(row),
-                                status='Suppressed' if is_suppressed else 'Queued',
-                                status_message='Suppressed by global list' if is_suppressed else None
-                            )
-                            db.session.add(recipient)
-                            added += 1
-                            if added % 500 == 0:
-                                db.session.commit()
-                        db.session.commit()
-                        if skipped > 0:
-                            errors.insert(0, f"Skipped {skipped} invalid or duplicate emails")
-                        return added, errors
-                # Otherwise treat line as a plain email
-                email = line.strip().lower()
-                if not is_valid_email(email):
-                    skipped += 1
-                    if len(errors) < 10:
-                        errors.append(f"Line {idx}: Invalid email '{email}'")
-                    continue
-                existing = Recipient.query.filter_by(campaign_id=campaign_id, email=email).first()
-                if existing:
-                    skipped += 1
-                    continue
-                is_suppressed = Suppression.query.filter_by(email=email).first()
-                recipient = Recipient(
-                    email=email,
-                    campaign_id=campaign_id,
-                    data=json.dumps({'email': email}),
-                    status='Suppressed' if is_suppressed else 'Queued',
-                    status_message='Suppressed by global list' if is_suppressed else None
-                )
-                db.session.add(recipient)
-                added += 1
-                if added % 500 == 0:
-                    db.session.commit()
+        
+        added = 0
+        skipped = 0
+        errors = []
+        
+        for idx, line in enumerate(lines, start=1):
+            email = line.strip().lower()
+            # Simple check if line contains multiple comma-separated values
+            if ',' in line:
+                 parts = line.split(',')
+                 # Heuristic: Find the part that looks like an email
+                 for part in parts:
+                     clean_part = part.strip()
+                     if is_valid_email(clean_part):
+                         email = clean_part
+                         break
+            
+            if not is_valid_email(email):
+                skipped += 1
+                if len(errors) < 10:
+                    errors.append(f"Line {idx}: Invalid email '{email}'")
+                continue
+                
+            existing = Recipient.query.filter_by(campaign_id=campaign_id, email=email).first()
+            if existing:
+                skipped += 1
+                continue
+                
+            is_suppressed = Suppression.query.filter_by(email=email).first()
+            
+            # Autograb data for TXT files too
+            row_data = {
+                'email': email,
+                'firstname': extract_firstname_from_email(email),
+                'company': extract_company_from_domain(extract_domain(email))
+            }
+            
+            recipient = Recipient(
+                email=email,
+                campaign_id=campaign_id,
+                data=json.dumps(row_data),
+                status='Suppressed' if is_suppressed else 'Queued',
+                status_message='Suppressed by global list' if is_suppressed else None
+            )
+            db.session.add(recipient)
+            added += 1
+            
+            if added % 500 == 0:
+                db.session.commit()
 
-            db.session.commit()
-            if skipped > 0:
-                errors.insert(0, f"Skipped {skipped} invalid or duplicate emails")
-            return added, errors
+        db.session.commit()
+        if skipped > 0:
+            errors.insert(0, f"Skipped {skipped} invalid or duplicate emails")
+        return added, errors
 
-        # If reached here and nothing matched
-        return 0, ["CSV must have an 'email' column header or TXT must include one email per line"]
     except Exception as e:
         return 0, [f"Error parsing file: {str(e)}"]
 
@@ -318,6 +313,7 @@ def extract_domain(email):
 
 def is_isp_domain(domain):
     """Check if a domain is a common ISP/consumer domain."""
+    if not domain: return False
     return domain.lower() in COMMON_ISP_DOMAINS
 
 
@@ -331,10 +327,13 @@ def extract_company_from_domain(domain):
         return None
 
     parts = domain.split('.')
+    # Handle co.uk, com.au etc
     if len(parts) > 2 and parts[-2] in ('co', 'com', 'org', 'net', 'ac', 'gov', 'edu'):
         company_part = parts[-3]
-    else:
+    elif len(parts) >= 2:
         company_part = parts[0]
+    else:
+        return None
 
     return '-'.join(p.capitalize() for p in company_part.split('-'))
 
@@ -345,6 +344,7 @@ def extract_firstname_from_email(email):
         return None
 
     local_part = email.split('@')[0].lower()
+    # Handle first.last, first_last, first-last
     potential_parts = re.split(r'[._\-+]+', local_part)
     valid_parts = [p for p in potential_parts if len(p) > 1 and p.isalpha()]
 
@@ -354,13 +354,18 @@ def extract_firstname_from_email(email):
         'careers', 'service', 'team', 'office', 'billing', 'accounts',
         'dev', 'webmaster', 'media', 'noreply', 'no-reply', 'marketing',
         'newsletter', 'updates', 'general', 'enquiry', 'staff', 'manager',
-        'hr', 'recruitment', 'inquiries', 'help', 'feedback', 'postmaster'
+        'hr', 'recruitment', 'inquiries', 'help', 'feedback', 'postmaster',
+        'finance', 'legal', 'ceo', 'director'
     }
 
-    for part in valid_parts:
-        if part not in generic_words:
-            return part.capitalize()
+    if not valid_parts:
+        return None
 
+    # Try the first part
+    part = valid_parts[0]
+    if part not in generic_words:
+        return part.capitalize()
+        
     return None
 
 
