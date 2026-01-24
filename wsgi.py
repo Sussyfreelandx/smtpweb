@@ -2,8 +2,7 @@
 WSGI entrypoint for production servers (gunicorn, uWSGI, Render, etc.)
 """
 import eventlet
-# Monkey patch must be the very first thing
-# The os=False argument is critical to prevent conflicts with the 'socks' library
+# Monkey patch must be the very first thing. os=False is the fix.
 eventlet.monkey_patch(os=False)
 
 import os
