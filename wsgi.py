@@ -2,9 +2,13 @@
 WSGI entrypoint for production servers (gunicorn, uWSGI, Render, etc.)
 """
 import eventlet
-# Monkey patch must be the very first thing. os=False is the fix.
+
+# MONKEY-PATCHING MUST BE THE VERY FIRST THING.
+# The os=False argument is the specific fix for the RecursionError
+# you are experiencing with the 'socks' library.
 eventlet.monkey_patch(os=False)
 
+# Now, import other modules
 import os
 from app import create_app, socketio
 
