@@ -2,4 +2,5 @@ from flask import Blueprint
 
 bp = Blueprint('main', __name__)
 
-from app.main import routes, errors
+# Import routes to register them with the blueprint
+from app.main import routes
