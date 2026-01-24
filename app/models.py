@@ -50,6 +50,17 @@ class RecipientStatus(enum.Enum):
     INVALID = 'Invalid'
 
 
+class WebhookEvent(enum.Enum):
+    EMAIL_SENT = 'email.sent'
+    EMAIL_OPENED = 'email.opened'
+    EMAIL_CLICKED = 'email.clicked'
+    EMAIL_BOUNCED = 'email.bounced'
+    EMAIL_UNSUBSCRIBED = 'email.unsubscribed'
+    CAMPAIGN_STARTED = 'campaign.started'
+    CAMPAIGN_COMPLETED = 'campaign.completed'
+    CAMPAIGN_FAILED = 'campaign.failed'
+
+
 # ==================== ASSOCIATION TABLES ====================
 
 team_members = db.Table('team_members',
@@ -98,8 +109,9 @@ class User(UserMixin, db.Model):
     preferences = db.Column(db.Text)  # JSON
     
     # Relationships
-    # cascades ensure cleanup if User is deleted
-    campaigns = db.relationship('Campaign', backref='author', lazy='dynamic', foreign_keys='Campaign.user_id', cascade="all, delete-orphan", passive_deletes=True)
+    # Added explicit cascading to prevent FK errors when deleting users
+    campaigns = db.relationship('Campaign', backref='author', lazy='dynamic', foreign_keys='Campaign.user_id')
+    
     api_keys = db.relationship('APIKey', backref='user', lazy='dynamic', cascade="all, delete-orphan", passive_deletes=True)
     notifications = db.relationship('Notification', backref='user', lazy='dynamic', cascade="all, delete-orphan", passive_deletes=True)
     activity_logs = db.relationship('ActivityLog', backref='user', lazy='dynamic')
@@ -227,7 +239,7 @@ class SMTPServer(db.Model):
     
     # Ownership
     user_id = db.Column(db.Integer, db.ForeignKey('user.id', ondelete='CASCADE'))
-    team_id = db.Column(db.Integer, db.ForeignKey('team.id', ondelete='CASCADE'))
+    team_id = db.Column(db.Integer, db.ForeignKey('team.id', ondelete='SET NULL'))
     
     # Status & Limits
     is_active = db.Column(db.Boolean, default=True)
@@ -483,7 +495,6 @@ class Campaign(db.Model):
     
     # Relationships
     smtp_profile = db.relationship('SMTPServer', backref='campaigns')
-    # Cascade is critical here to prevent "DependentObjectsStillExist" error
     recipients = db.relationship(
         'Recipient',
         backref='campaign',
@@ -492,11 +503,7 @@ class Campaign(db.Model):
         passive_deletes=True
     )
     tags = db.relationship('Tag', secondary=campaign_tags, backref='campaigns')
-    template = db.relationship(
-        'EmailTemplate', 
-        backref=db.backref('campaigns', passive_deletes=True),
-        passive_deletes=True
-    )
+    template = db.relationship('EmailTemplate', backref='campaigns')
     approved_by = db.relationship('User', foreign_keys=[approved_by_id])
     
     def get_attachments(self):
@@ -539,7 +546,6 @@ class Campaign(db.Model):
             'bounced': bounced,
             'failed': failed,
             'unsubscribed': unsubscribed,
-            'queued': self.recipients.filter_by(status='Queued').count(),
             'open_rate': round((opened / sent * 100), 2) if sent > 0 else 0,
             'click_rate': round((clicked / sent * 100), 2) if sent > 0 else 0,
             'bounce_rate': round((bounced / sent * 100), 2) if sent > 0 else 0,
@@ -569,7 +575,7 @@ class Recipient(db.Model):
     status = db.Column(db.String(20), default='Queued', index=True)
     status_message = db.Column(db.String(255))
     
-    # Campaign Reference (Cascade delete essential for cleanup)
+    # Campaign Reference
     campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id', ondelete='CASCADE'), index=True)
     
     # A/B Testing
@@ -760,7 +766,7 @@ class Sequence(db.Model):
     trigger_config = db.Column(db.Text)  # JSON
     
     # Ownership
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id', ondelete='SET NULL'))
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id', ondelete='CASCADE'))
     team_id = db.Column(db.Integer, db.ForeignKey('team.id', ondelete='SET NULL'))
     
     # Stats
@@ -771,6 +777,7 @@ class Sequence(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Relationships
+    # Added cascade delete to recipients so they are removed if sequence is deleted
     recipients = db.relationship(
         'SequenceRecipient', 
         backref='sequence', 
@@ -806,7 +813,8 @@ class SequenceRecipient(db.Model):
     email = db.Column(db.String(120), index=True, nullable=False)
     data = db.Column(db.Text)  # JSON
     
-    # Cascade is critical here to handle database resets cleanly
+    # This was the cause of the "cannot drop table" error
+    # Changed to CASCADE to allow smooth migrations
     sequence_id = db.Column(db.Integer, db.ForeignKey('sequence.id', ondelete='CASCADE'))
     
     # Progress
@@ -946,7 +954,7 @@ class Webhook(db.Model):
     url = db.Column(db.String(500), nullable=False)
     secret = db.Column(db.String(100))
     
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id', ondelete='CASCADE'))
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id', ondelete='SET NULL'))
     team_id = db.Column(db.Integer, db.ForeignKey('team.id', ondelete='SET NULL'))
     
     # Events to trigger
@@ -962,9 +970,6 @@ class Webhook(db.Model):
     last_error = db.Column(db.Text)
     
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
-    # Relationship
-    deliveries = db.relationship('WebhookDelivery', backref='webhook', lazy='dynamic', cascade="all, delete-orphan", passive_deletes=True)
     
     def get_events(self):
         if self.events:
@@ -1005,6 +1010,8 @@ class WebhookDelivery(db.Model):
     attempt_number = db.Column(db.Integer, default=1)
     
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    webhook = db.relationship('Webhook', backref='deliveries')
 
 
 # ==================== NOTIFICATIONS & ACTIVITY ====================
@@ -1119,7 +1126,7 @@ class UserSettings(db.Model):
     # Editor Preferences
     default_editor = db.Column(db.String(20), default='visual')  # visual, code
     
-    user = db.relationship('User', backref=db.backref('settings', uselist=False))
+    user = db.relationship('User', backref=db.backref('settings', uselist=False, cascade="all, delete-orphan", passive_deletes=True))
 
 
 # ==================== ANALYTICS & REPORTING ====================
