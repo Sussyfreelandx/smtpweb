@@ -1,8 +1,9 @@
 """
 WSGI entrypoint for production servers (gunicorn, uWSGI, Render, etc.)
-
-Set FLASK_APP=wsgi:app when using flask CLI or let your WSGI server import `app`.
 """
+import eventlet
+# Monkey patch must be the very first thing
+eventlet.monkey_patch()
 
 import os
 from app import create_app, socketio
@@ -20,5 +21,4 @@ app = _app
 
 # Optional: expose socketio.run when running locally with "python wsgi.py"
 if __name__ == "__main__":  # pragma: no cover
-    # Use eventlet or gevent if available for production websockets in simple runs
     socketio.run(app, host=os.environ.get("HOST", "0.0.0.0"), port=int(os.environ.get("PORT", 5000)))
