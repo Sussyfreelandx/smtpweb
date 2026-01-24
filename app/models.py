@@ -50,17 +50,6 @@ class RecipientStatus(enum.Enum):
     INVALID = 'Invalid'
 
 
-class WebhookEvent(enum.Enum):
-    EMAIL_SENT = 'email.sent'
-    EMAIL_OPENED = 'email.opened'
-    EMAIL_CLICKED = 'email.clicked'
-    EMAIL_BOUNCED = 'email.bounced'
-    EMAIL_UNSUBSCRIBED = 'email.unsubscribed'
-    CAMPAIGN_STARTED = 'campaign.started'
-    CAMPAIGN_COMPLETED = 'campaign.completed'
-    CAMPAIGN_FAILED = 'campaign.failed'
-
-
 # ==================== ASSOCIATION TABLES ====================
 
 team_members = db.Table('team_members',
@@ -109,10 +98,10 @@ class User(UserMixin, db.Model):
     preferences = db.Column(db.Text)  # JSON
     
     # Relationships
-    campaigns = db.relationship('Campaign', backref='author', lazy='dynamic', foreign_keys='Campaign.user_id')
-    
-    api_keys = db.relationship('APIKey', backref='user', lazy='dynamic')
-    notifications = db.relationship('Notification', backref='user', lazy='dynamic')
+    # cascades ensure cleanup if User is deleted
+    campaigns = db.relationship('Campaign', backref='author', lazy='dynamic', foreign_keys='Campaign.user_id', cascade="all, delete-orphan", passive_deletes=True)
+    api_keys = db.relationship('APIKey', backref='user', lazy='dynamic', cascade="all, delete-orphan", passive_deletes=True)
+    notifications = db.relationship('Notification', backref='user', lazy='dynamic', cascade="all, delete-orphan", passive_deletes=True)
     activity_logs = db.relationship('ActivityLog', backref='user', lazy='dynamic')
     
     def set_password(self, password):
@@ -494,6 +483,7 @@ class Campaign(db.Model):
     
     # Relationships
     smtp_profile = db.relationship('SMTPServer', backref='campaigns')
+    # Cascade is critical here to prevent "DependentObjectsStillExist" error
     recipients = db.relationship(
         'Recipient',
         backref='campaign',
@@ -502,7 +492,11 @@ class Campaign(db.Model):
         passive_deletes=True
     )
     tags = db.relationship('Tag', secondary=campaign_tags, backref='campaigns')
-    template = db.relationship('EmailTemplate', backref='campaigns')
+    template = db.relationship(
+        'EmailTemplate', 
+        backref=db.backref('campaigns', passive_deletes=True),
+        passive_deletes=True
+    )
     approved_by = db.relationship('User', foreign_keys=[approved_by_id])
     
     def get_attachments(self):
@@ -545,6 +539,7 @@ class Campaign(db.Model):
             'bounced': bounced,
             'failed': failed,
             'unsubscribed': unsubscribed,
+            'queued': self.recipients.filter_by(status='Queued').count(),
             'open_rate': round((opened / sent * 100), 2) if sent > 0 else 0,
             'click_rate': round((clicked / sent * 100), 2) if sent > 0 else 0,
             'bounce_rate': round((bounced / sent * 100), 2) if sent > 0 else 0,
@@ -574,7 +569,7 @@ class Recipient(db.Model):
     status = db.Column(db.String(20), default='Queued', index=True)
     status_message = db.Column(db.String(255))
     
-    # Campaign Reference
+    # Campaign Reference (Cascade delete essential for cleanup)
     campaign_id = db.Column(db.Integer, db.ForeignKey('campaign.id', ondelete='CASCADE'), index=True)
     
     # A/B Testing
@@ -776,7 +771,13 @@ class Sequence(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Relationships
-    recipients = db.relationship('SequenceRecipient', backref='sequence', lazy='dynamic', cascade="all, delete-orphan", passive_deletes=True)
+    recipients = db.relationship(
+        'SequenceRecipient', 
+        backref='sequence', 
+        lazy='dynamic', 
+        cascade="all, delete-orphan", 
+        passive_deletes=True
+    )
     
     def get_steps(self):
         if self.steps:
@@ -805,6 +806,7 @@ class SequenceRecipient(db.Model):
     email = db.Column(db.String(120), index=True, nullable=False)
     data = db.Column(db.Text)  # JSON
     
+    # Cascade is critical here to handle database resets cleanly
     sequence_id = db.Column(db.Integer, db.ForeignKey('sequence.id', ondelete='CASCADE'))
     
     # Progress
@@ -881,7 +883,7 @@ class APIKey(db.Model):
     key_hash = db.Column(db.String(256), unique=True, nullable=False)
     key_prefix = db.Column(db.String(10))  # First 8 chars for identification
     
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id', ondelete='SET NULL'))
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id', ondelete='CASCADE'))
     team_id = db.Column(db.Integer, db.ForeignKey('team.id', ondelete='SET NULL'))
     
     # Permissions
@@ -944,7 +946,7 @@ class Webhook(db.Model):
     url = db.Column(db.String(500), nullable=False)
     secret = db.Column(db.String(100))
     
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id', ondelete='SET NULL'))
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id', ondelete='CASCADE'))
     team_id = db.Column(db.Integer, db.ForeignKey('team.id', ondelete='SET NULL'))
     
     # Events to trigger
@@ -960,6 +962,9 @@ class Webhook(db.Model):
     last_error = db.Column(db.Text)
     
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    # Relationship
+    deliveries = db.relationship('WebhookDelivery', backref='webhook', lazy='dynamic', cascade="all, delete-orphan", passive_deletes=True)
     
     def get_events(self):
         if self.events:
@@ -1000,8 +1005,6 @@ class WebhookDelivery(db.Model):
     attempt_number = db.Column(db.Integer, default=1)
     
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
-    webhook = db.relationship('Webhook', backref='deliveries')
 
 
 # ==================== NOTIFICATIONS & ACTIVITY ====================
