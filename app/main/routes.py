@@ -1,3 +1,4 @@
+
 from flask import (render_template, flash, redirect, url_for, request,
                    jsonify, current_app, Response, send_file, abort, session)
 from flask_login import login_user, logout_user, current_user, login_required
@@ -88,6 +89,7 @@ def get_or_create_global_settings():
 def emit_campaign_update(campaign_id, data):
     """Emit real-time campaign update via WebSocket."""
     try:
+        # Use background task/thread to avoid blocking if using standard socketio
         socketio.emit('campaign_update', {
             'campaign_id': campaign_id,
             **data
@@ -692,12 +694,14 @@ def campaign_control(campaign_id, action):
 
     try:
         if action == 'start':
+            # Check for queued recipients
             queued_count = campaign.recipients.filter_by(status='Queued').count()
 
             if queued_count == 0:
                 flash('No queued recipients to send to.', 'warning')
                 return redirect(url_for('main.view_campaign', campaign_id=campaign.id))
 
+            # SMTP check
             if not campaign.smtp_profile and not campaign.smtp_rotation_enabled:
                 flash('No SMTP profile configured for this campaign.', 'danger')
                 return redirect(url_for('main.view_campaign', campaign_id=campaign.id))
@@ -708,10 +712,12 @@ def campaign_control(campaign_id, action):
                     flash('SMTP password not configured. Please update your SMTP profile.', 'danger')
                     return redirect(url_for('main.view_campaign', campaign_id=campaign.id))
 
+            # Set status immediately
             campaign.status = 'Sending'
             campaign.started_at = datetime.utcnow()
             db.session.commit()
 
+            # Offload to Celery immediately
             from app.tasks import send_campaign_task
             send_campaign_task.delay(campaign_id)
 
@@ -737,14 +743,15 @@ def campaign_control(campaign_id, action):
             flash('Campaign paused.', 'warning')
 
         elif action == 'resume':
-            # Support both 'resume' and 'start' flows: in UI resume often uses 'start'
-            if campaign.status not in ['Paused', 'Draft', 'Stopped']:
+            # Support both 'resume' and 'start' flows
+            if campaign.status not in ['Paused', 'Draft', 'Stopped', 'Scheduled']:
                 flash('Campaign cannot be resumed from its current state.', 'warning')
                 return redirect(url_for('main.view_campaign', campaign_id=campaign.id))
 
             campaign.status = 'Sending'
             db.session.commit()
 
+            # Offload immediately
             from app.tasks import send_campaign_task
             send_campaign_task.delay(campaign_id)
 
@@ -771,15 +778,18 @@ def campaign_control(campaign_id, action):
         elif action == 'retry':
             failed = campaign.recipients.filter(Recipient.status.in_(['Failed', 'Bounced'])).all()
 
-            for r in failed:
-                r.status = 'Queued'
-                r.status_message = None
-                r.attempts = 0
+            if not failed:
+                flash('No failed recipients to retry.', 'info')
+            else:
+                for r in failed:
+                    r.status = 'Queued'
+                    r.status_message = None
+                    r.attempts = 0
 
-            db.session.commit()
+                db.session.commit()
 
-            log_activity(f"Queued {len(failed)} failed recipients for retry.", "INFO")
-            flash(f'Queued {len(failed)} failed recipients for retry.', 'info')
+                log_activity(f"Queued {len(failed)} failed recipients for retry.", "INFO")
+                flash(f'Queued {len(failed)} failed recipients for retry.', 'info')
 
     except Exception as e:
         db.session.rollback()
@@ -1624,84 +1634,3 @@ def bulk_delete_suppression():
         flash(f'Error deleting emails: {str(e)}', 'danger')
 
     return redirect(url_for('main.suppression_list'))
-
-
-# ==================== API KEY MANAGEMENT ====================
-
-
-@bp.route('/settings/api-keys')
-@login_required
-def api_keys():
-    """Manage API Keys."""
-    keys = APIKey.query.filter_by(user_id=current_user.id).all()
-    # Check if a new key was just created and stored in session/flash (handled in template)
-    return render_template('api_keys.html', title='API Keys', api_keys=keys)
-
-
-@bp.route('/settings/api-keys/create', methods=['POST'])
-@login_required
-def create_api_key():
-    """Create a new API Key."""
-    name = request.form.get('name', 'New API Key').strip()
-    scopes_list = request.form.getlist('scopes')  # ['read', 'write', 'send']
-    expires_in_days = int(request.form.get('expires_in', 0))
-
-    if not name:
-        flash('Key name is required.', 'danger')
-        return redirect(url_for('main.api_keys'))
-
-    try:
-        # Generate raw key
-        raw_key = APIKey.generate_key()
-        
-        # Calculate expiry
-        expires_at = None
-        if expires_in_days > 0:
-            expires_at = datetime.utcnow() + timedelta(days=expires_in_days)
-
-        api_key = APIKey(
-            name=name,
-            user_id=current_user.id,
-            expires_at=expires_at
-        )
-        api_key.set_key(raw_key)
-        api_key.set_scopes(scopes_list)
-
-        db.session.add(api_key)
-        db.session.commit()
-
-        log_user_activity('api_key_created', f'Created API key: {name}')
-        log_activity(f"API Key created: {name}", "SUCCESS")
-
-        # Pass raw key to template ONLY ONCE
-        return render_template('api_keys.html', 
-                               title='API Keys', 
-                               api_keys=APIKey.query.filter_by(user_id=current_user.id).all(),
-                               new_api_key=raw_key)
-
-    except Exception as e:
-        db.session.rollback()
-        flash(f"Error creating API key: {e}", "danger")
-        return redirect(url_for('main.api_keys'))
-
-
-@bp.route('/settings/api-keys/revoke/<int:key_id>', methods=['POST'])
-@login_required
-def revoke_api_key(key_id):
-    """Revoke an API Key."""
-    key = APIKey.query.get_or_404(key_id)
-
-    if key.user_id != current_user.id:
-        flash("You do not have permission.", "danger")
-        return redirect(url_for('main.api_keys'))
-
-    try:
-        db.session.delete(key)
-        db.session.commit()
-        log_user_activity('api_key_revoked', f'Revoked API key: {key.name}')
-        flash('API Key revoked.', 'success')
-    except Exception as e:
-        db.session.rollback()
-        flash(f"Error revoking key: {e}", "danger")
-
-    return redirect(url_for('main.api_keys'))
