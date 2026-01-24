@@ -7,10 +7,10 @@ import os
 # Bind to port 10000 (Render's default)
 bind = "0.0.0.0:10000"
 
-# Worker configuration - Use eventlet for Socket.IO support
+# Worker configuration - use eventlet for SocketIO support
 worker_class = 'eventlet'
-workers = 1  # For eventlet/socket.io, 1 worker is often sufficient for many connections, scale if needed
-threads = 1  # Threads are not used with eventlet
+workers = 1  # Eventlet handles concurrency via green threads, so 1 worker is usually sufficient for IO-bound apps
+threads = 1  # Not used with eventlet
 timeout = 120
 keepalive = 5
 
@@ -29,13 +29,9 @@ def post_worker_init(worker):
     import socket
     import os
     
-    # Ensure eventlet patching happened
-    try:
-        import eventlet
-        eventlet.monkey_patch()
-    except ImportError:
-        pass
-
+    # Eventlet monkey patching should happen as early as possible, usually in wsgi.py or launcher
+    # But we can double check here or apply specific proxy logic
+    
     PROXY_HOST = os.environ.get('SMTP_PROXY_HOST')
     PROXY_PORT = int(os.environ.get('SMTP_PROXY_PORT', 1080))
     PROXY_USER = os.environ.get('SMTP_PROXY_USER')
@@ -47,8 +43,9 @@ def post_worker_init(worker):
         
         print(f"🔌 Worker: Applying Smart Proxy Patch ({PROXY_HOST}:{PROXY_PORT})...")
         
-        # We patch the socket module that is already monkey-patched by eventlet
-        # This is tricky but required for SOCKS support in async workers
+        # When using eventlet, socket is already patched. We need to be careful not to break it.
+        # However, PySocks wraps the underlying socket.
+        
         original_socket = socket.socket
 
         class SmartSocket(socks.socksocket):
@@ -62,14 +59,10 @@ def post_worker_init(worker):
                 
                 if not is_internal: 
                     try:
-                        # Simple check if IP is private
-                        try:
-                            ip = ipaddress.ip_address(host)
-                            if ip.is_private or ip.is_loopback:
-                                is_internal = True
-                        except ValueError:
-                            pass
-                    except Exception:
+                        ip = ipaddress.ip_address(host)
+                        if ip.is_private or ip.is_loopback:
+                            is_internal = True
+                    except ValueError:
                         pass
 
                 if is_internal:
@@ -92,4 +85,4 @@ def post_worker_init(worker):
         socket.getaddrinfo = patched_getaddrinfo
         
         socket._paris_proxy_patched = True
-        print(f"✅ Worker: Proxy patch applied")
+        print(f"✅ Worker:  Proxy patch applied")
