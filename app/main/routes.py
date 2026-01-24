@@ -1,4 +1,3 @@
-
 from flask import (render_template, flash, redirect, url_for, request,
                    jsonify, current_app, Response, send_file, abort, session)
 from flask_login import login_user, logout_user, current_user, login_required
@@ -946,6 +945,17 @@ def delete_campaign(campaign_id):
         flash(f"Error deleting campaign: {e}", "danger")
 
     return redirect(url_for('main.index'))
+
+
+# ==================== API KEY ROUTES ====================
+
+@bp.route('/api-keys')
+@login_required
+def api_keys():
+    """Manage API keys."""
+    # This assumes your api_keys.html template is prepared to receive 'keys'
+    keys = APIKey.query.filter_by(user_id=current_user.id).all()
+    return render_template('api_keys.html', title='API Keys', keys=keys)
 
 
 # ==================== SMTP SETTINGS ====================
