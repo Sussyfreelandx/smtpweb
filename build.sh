@@ -1,30 +1,20 @@
 #!/usr/bin/env bash
-# exit on error
+# build.sh - Prepare the application for deployment
+# Usage (Render): set this script as the "Build Command"
+
+# Exit immediately if a command exits with a non-zero status
 set -o errexit
 
 echo "🚀 Starting Build Process..."
 
-# 1. Install dependencies
-echo "📦 Installing requirements..."
+# 1. Upgrade pip to ensure smooth installation
+pip install --upgrade pip
+
+# 2. Install dependencies
+echo "📦 Installing dependencies..."
 pip install -r requirements.txt
 
-# 2. Database Migration Handling
-export FLASK_APP=wsgi:app
+# 3. (Optional) Compile assets or other build steps here
+# e.g., npm install && npm run build (if you had a frontend build)
 
-if [ ! -d "migrations" ]; then
-  echo "⚠️ Migrations folder not found. Initializing..."
-  flask db init
-  # Attempt to create an initial migration, but don't fail if it's empty
-  flask db migrate -m "Initial migration" || true
-else
-  echo "✅ Migrations folder exists."
-  # Try to generate a migration for any new model changes
-  echo "🔄 Checking for schema changes..."
-  flask db migrate -m "Auto schema update" || true
-fi
-
-# 3. Upgrade the database
-echo "⬆️ Upgrading database..."
-flask db upgrade
-
-echo "🎉 Build Complete!"
+echo "✅ Build Completed Successfully!"
