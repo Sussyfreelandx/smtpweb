@@ -6,6 +6,7 @@ can import: from app import db, migrate, login, socketio, cache, celery, bcrypt,
 """
 
 import os
+import ssl
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
@@ -59,7 +60,18 @@ def make_celery(app: Flask, celery_obj: Celery):
     if backend:
         celery_obj.conf.result_backend = backend
 
-    celery_obj.conf.update(app.config.get("CELERY", {}))
+    # CRITICAL FIX: Update configuration with specific SSL settings for Render
+    celery_conf = app.config.get("CELERY", {}).copy()
+    
+    # If using Redis with SSL (rediss://), we must enforce SSL cert requirements
+    # This prevents the "Retry limit exceeded" error on Render
+    if broker and broker.startswith('rediss://'):
+        celery_conf.update({
+            'broker_use_ssl': {"ssl_cert_reqs": ssl.CERT_NONE},
+            'redis_backend_use_ssl': {"ssl_cert_reqs": ssl.CERT_NONE}
+        })
+
+    celery_obj.conf.update(celery_conf)
 
     class ContextTask(celery_obj.Task):
         def __call__(self, *args, **kwargs):
@@ -79,8 +91,7 @@ def create_app(config_object=None):
     """
     app = Flask(__name__, instance_relative_config=False)
 
-    # 1. CRITICAL: Set SECRET_KEY immediately to prevent session/flash errors
-    # We set this BEFORE loading other configs to guarantee a fallback exists.
+    # 1. Set SECRET_KEY immediately to prevent session/flash errors
     app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key-change-this-in-prod")
     app.config["SECRET_KEY"] = app.secret_key
 
@@ -95,11 +106,17 @@ def create_app(config_object=None):
         except Exception:
             pass
 
-    # 3. Set Defaults (if not overridden by config_path)
+    # 3. Set Defaults
     app.config.setdefault("SQLALCHEMY_DATABASE_URI", os.environ.get("DATABASE_URL", "sqlite:///data.db"))
     app.config.setdefault("SQLALCHEMY_TRACK_MODIFICATIONS", False)
-    app.config.setdefault("CELERY_BROKER_URL", os.environ.get("CELERY_BROKER_URL", "redis://localhost:6379/0"))
-    app.config.setdefault("CELERY_RESULT_BACKEND", os.environ.get("CELERY_RESULT_BACKEND", "redis://localhost:6379/0"))
+    
+    # Ensure Redis URLs are correctly formatted for SSL if on Render
+    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+    if os.environ.get('RENDER') and redis_url.startswith('redis://'):
+        redis_url = redis_url.replace('redis://', 'rediss://', 1)
+        
+    app.config.setdefault("CELERY_BROKER_URL", redis_url)
+    app.config.setdefault("CELERY_RESULT_BACKEND", redis_url)
     app.config.setdefault("CACHE_TYPE", os.environ.get("CACHE_TYPE", "simple"))
     app.config.setdefault("WTF_CSRF_ENABLED", True)
 
@@ -110,9 +127,8 @@ def create_app(config_object=None):
     socketio.init_app(app, cors_allowed_origins=app.config.get("CORS_ALLOWED_ORIGINS", "*"))
     cache.init_app(app)
     limiter.init_app(app)
-    csrf.init_app(app)  # FIX: Initializes CSRF protection for forms
+    csrf.init_app(app)
 
-    # Initialize bcrypt if available
     if _BCRYPT_AVAILABLE and bcrypt:
         try:
             bcrypt.init_app(app)
@@ -131,7 +147,6 @@ def create_app(config_object=None):
 
     try:
         from app.api import bp as api_bp
-        # Exempt API routes from CSRF protection (they use API tokens)
         csrf.exempt(api_bp)
         app.register_blueprint(api_bp, url_prefix="/api")
     except Exception:
@@ -139,13 +154,11 @@ def create_app(config_object=None):
 
     try:
         from app.tracking import bp as tracking_bp
-        # Exempt tracking routes from CSRF (they are public pixels/links)
         csrf.exempt(tracking_bp)
         app.register_blueprint(tracking_bp)
     except Exception:
         pass
 
-    # Health check route
     @app.route("/healthz")
     def _health():
         return {"status": "ok", "version": "1.0.0"}
