@@ -81,8 +81,7 @@ def create_app(config_object=None):
     config_path = config_object or os.environ.get("APP_SETTINGS")
     if config_path:
         try:
-            # FIX: Check if config_path is a string before checking if it's a file.
-            # This prevents TypeError when passing a Class object as config.
+            # Check if config_path is a string before checking if it's a file.
             if isinstance(config_path, str) and os.path.exists(config_path):
                 app.config.from_pyfile(config_path)
             else:
@@ -101,7 +100,7 @@ def create_app(config_object=None):
 
     # Initialize extensions with app
     db.init_app(app)
-    migrate.init_app(app, db)  # registers 'flask db' commands for Flask-Migrate
+    migrate.init_app(app, db)
     login.init_app(app)
     socketio.init_app(app, cors_allowed_origins=app.config.get("CORS_ALLOWED_ORIGINS", "*"))
     cache.init_app(app)
@@ -112,32 +111,23 @@ def create_app(config_object=None):
         try:
             bcrypt.init_app(app)
         except Exception:
-            # ignore initialization failures to avoid deploy-time crash
             pass
 
     # Configure celery with the Flask app
     make_celery(app, celery)
 
-    # Register blueprints inside factory to avoid circular import at module import time
-    try:
-        from app.main import bp as main_bp
-        app.register_blueprint(main_bp)
-    except Exception:
-        pass
+    # Register blueprints EXPLICITLY without silence-on-error
+    # This ensures 404s don't happen due to silent import failures
+    from app.main import bp as main_bp
+    app.register_blueprint(main_bp)
 
-    try:
-        from app.api import bp as api_bp
-        app.register_blueprint(api_bp, url_prefix="/api")
-    except Exception:
-        pass
+    from app.api import bp as api_bp
+    app.register_blueprint(api_bp, url_prefix="/api")
 
-    try:
-        from app.tracking import bp as tracking_bp
-        app.register_blueprint(tracking_bp)
-    except Exception:
-        pass
+    from app.tracking import bp as tracking_bp
+    app.register_blueprint(tracking_bp)
 
-    # health route
+    # Health route
     @app.route("/healthz")
     def _health():
         return {"status": "ok", "version": "1.0.0"}
