@@ -2,7 +2,7 @@
 Application factory and extension initialization.
 
 This module exposes commonly-used extensions at package level so other modules
-can import: from app import db, migrate, login, socketio, cache, celery, bcrypt, limiter, csrf
+can import: from app import db, migrate, login, socketio, cache, celery, bcrypt, limiter
 """
 
 import os
@@ -15,7 +15,6 @@ from flask_socketio import SocketIO
 from flask_caching import Cache
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-from flask_wtf.csrf import CSRFProtect
 from celery import Celery
 
 # Create extension instances (unbound). They will be initialized with create_app.
@@ -24,7 +23,6 @@ migrate = Migrate()
 login = LoginManager()
 socketio = SocketIO(cors_allowed_origins="*")
 cache = Cache()  # default cache instance; configure via app.config
-csrf = CSRFProtect()
 
 # Bcrypt: optional import. If flask-bcrypt is not installed we provide a safe fallback
 try:
@@ -60,18 +58,18 @@ def make_celery(app: Flask, celery_obj: Celery):
     if backend:
         celery_obj.conf.result_backend = backend
 
-    # CRITICAL FIX: Update configuration with specific SSL settings for Render
-    celery_conf = app.config.get("CELERY", {}).copy()
-    
-    # If using Redis with SSL (rediss://), we must enforce SSL cert requirements
-    # This prevents the "Retry limit exceeded" error on Render
-    if broker and broker.startswith('rediss://'):
-        celery_conf.update({
-            'broker_use_ssl': {"ssl_cert_reqs": ssl.CERT_NONE},
-            'redis_backend_use_ssl': {"ssl_cert_reqs": ssl.CERT_NONE}
-        })
+    # Load standard config
+    celery_obj.conf.update(app.config.get("CELERY", {}))
 
-    celery_obj.conf.update(celery_conf)
+    # --- CRITICAL FIX FOR RENDER REDIS ---
+    # Render Redis uses 'rediss://' (SSL). Celery/Redis requires specific SSL cert requests setting
+    # to be set to CERT_NONE to work with self-signed/internal certs often used in these environments.
+    if broker and broker.startswith("rediss://"):
+        celery_obj.conf.update({
+            "broker_use_ssl": {"ssl_cert_reqs": ssl.CERT_NONE},
+            "redis_backend_use_ssl": {"ssl_cert_reqs": ssl.CERT_NONE},
+        })
+    # -------------------------------------
 
     class ContextTask(celery_obj.Task):
         def __call__(self, *args, **kwargs):
@@ -91,11 +89,7 @@ def create_app(config_object=None):
     """
     app = Flask(__name__, instance_relative_config=False)
 
-    # 1. Set SECRET_KEY immediately to prevent session/flash errors
-    app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key-change-this-in-prod")
-    app.config["SECRET_KEY"] = app.secret_key
-
-    # 2. Load configuration
+    # Load configuration from provided object or environment variable
     config_path = config_object or os.environ.get("APP_SETTINGS")
     if config_path:
         try:
@@ -106,39 +100,44 @@ def create_app(config_object=None):
         except Exception:
             pass
 
-    # 3. Set Defaults
+    # Defaults
     app.config.setdefault("SQLALCHEMY_DATABASE_URI", os.environ.get("DATABASE_URL", "sqlite:///data.db"))
     app.config.setdefault("SQLALCHEMY_TRACK_MODIFICATIONS", False)
+    app.config.setdefault("SECRET_KEY", os.environ.get("SECRET_KEY", "dev-secret-key"))
     
-    # Ensure Redis URLs are correctly formatted for SSL if on Render
+    # --- REDIS URL HANDLING ---
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+    # If running on Render, ensure we use the SSL URL scheme
     if os.environ.get('RENDER') and redis_url.startswith('redis://'):
         redis_url = redis_url.replace('redis://', 'rediss://', 1)
         
     app.config.setdefault("CELERY_BROKER_URL", redis_url)
     app.config.setdefault("CELERY_RESULT_BACKEND", redis_url)
+    # --------------------------
+
     app.config.setdefault("CACHE_TYPE", os.environ.get("CACHE_TYPE", "simple"))
     app.config.setdefault("WTF_CSRF_ENABLED", True)
 
-    # 4. Initialize extensions
+    # Initialize extensions with app
     db.init_app(app)
-    migrate.init_app(app, db)
+    migrate.init_app(app, db)  # registers 'flask db' commands for Flask-Migrate
     login.init_app(app)
     socketio.init_app(app, cors_allowed_origins=app.config.get("CORS_ALLOWED_ORIGINS", "*"))
     cache.init_app(app)
     limiter.init_app(app)
-    csrf.init_app(app)
 
+    # Initialize bcrypt if available
     if _BCRYPT_AVAILABLE and bcrypt:
         try:
             bcrypt.init_app(app)
         except Exception:
+            # ignore initialization failures to avoid deploy-time crash
             pass
 
-    # Configure celery
+    # Configure celery with the Flask app
     make_celery(app, celery)
 
-    # 5. Register Blueprints
+    # Register blueprints inside factory to avoid circular import at module import time
     try:
         from app.main import bp as main_bp
         app.register_blueprint(main_bp)
@@ -147,18 +146,17 @@ def create_app(config_object=None):
 
     try:
         from app.api import bp as api_bp
-        csrf.exempt(api_bp)
         app.register_blueprint(api_bp, url_prefix="/api")
     except Exception:
         pass
 
     try:
         from app.tracking import bp as tracking_bp
-        csrf.exempt(tracking_bp)
         app.register_blueprint(tracking_bp)
     except Exception:
         pass
 
+    # health route
     @app.route("/healthz")
     def _health():
         return {"status": "ok", "version": "1.0.0"}
