@@ -2,7 +2,7 @@
 Application factory and extension initialization.
 
 This module exposes commonly-used extensions at package level so other modules
-can import: from app import db, migrate, login, socketio, cache, celery, bcrypt, limiter
+can import: from app import db, migrate, login, socketio, cache, celery, bcrypt, limiter, csrf
 """
 
 import os
@@ -14,6 +14,7 @@ from flask_socketio import SocketIO
 from flask_caching import Cache
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+from flask_wtf.csrf import CSRFProtect  # Added import
 from celery import Celery
 
 # Create extension instances (unbound). They will be initialized with create_app.
@@ -22,6 +23,7 @@ migrate = Migrate()
 login = LoginManager()
 socketio = SocketIO(cors_allowed_origins="*")
 cache = Cache()  # default cache instance; configure via app.config
+csrf = CSRFProtect()  # Added CSRFProtect instance
 
 # Bcrypt: optional import. If flask-bcrypt is not installed we provide a safe fallback
 try:
@@ -75,15 +77,14 @@ def create_app(config_object=None):
     Pass in a config object or set environment variables for configuration.
     Returns a fully configured Flask app and also configures the shared 'celery' object.
     """
-    # Explicitly set template/static folders relative to this file
-    # app/__init__.py is in app/, so templates are likely in app/templates or ../templates
-    # Assuming standard structure: root/templates or root/app/templates
     app = Flask(__name__, instance_relative_config=False)
 
     # Load configuration from provided object or environment variable
     config_path = config_object or os.environ.get("APP_SETTINGS")
     if config_path:
         try:
+            # FIX: Check if config_path is a string before checking if it's a file.
+            # This prevents TypeError when passing a Class object as config.
             if isinstance(config_path, str) and os.path.exists(config_path):
                 app.config.from_pyfile(config_path)
             else:
@@ -91,20 +92,10 @@ def create_app(config_object=None):
         except Exception:
             pass
 
-    # --- CRITICAL CONFIGURATION DEFAULTS ---
+    # Defaults
     app.config.setdefault("SQLALCHEMY_DATABASE_URI", os.environ.get("DATABASE_URL", "sqlite:///data.db"))
     app.config.setdefault("SQLALCHEMY_TRACK_MODIFICATIONS", False)
-    
-    # Force SECRET_KEY ensuring it is never None
-    secret = os.environ.get("SECRET_KEY")
-    if not secret:
-        # Fallback for dev/local if env var is missing
-        secret = "dev-secret-key-change-in-prod-987654321"
-    
-    app.config["SECRET_KEY"] = secret
-    # Ensure app.secret_key is also set directly on the instance
-    app.secret_key = secret
-
+    app.config.setdefault("SECRET_KEY", os.environ.get("SECRET_KEY", "dev-secret-key"))
     app.config.setdefault("CELERY_BROKER_URL", os.environ.get("CELERY_BROKER_URL", "redis://localhost:6379/0"))
     app.config.setdefault("CELERY_RESULT_BACKEND", os.environ.get("CELERY_RESULT_BACKEND", "redis://localhost:6379/0"))
     app.config.setdefault("CACHE_TYPE", os.environ.get("CACHE_TYPE", "simple"))
@@ -117,12 +108,14 @@ def create_app(config_object=None):
     socketio.init_app(app, cors_allowed_origins=app.config.get("CORS_ALLOWED_ORIGINS", "*"))
     cache.init_app(app)
     limiter.init_app(app)
+    csrf.init_app(app)  # Initialize CSRF protection
 
     # Initialize bcrypt if available
     if _BCRYPT_AVAILABLE and bcrypt:
         try:
             bcrypt.init_app(app)
         except Exception:
+            # ignore initialization failures to avoid deploy-time crash
             pass
 
     # Configure celery with the Flask app
@@ -137,20 +130,18 @@ def create_app(config_object=None):
 
     try:
         from app.api import bp as api_bp
+        # API routes usually don't need CSRF protection if using tokens
+        csrf.exempt(api_bp) 
         app.register_blueprint(api_bp, url_prefix="/api")
     except Exception:
         pass
 
     try:
         from app.tracking import bp as tracking_bp
+        # Tracking pixels/links don't have CSRF tokens
+        csrf.exempt(tracking_bp)
         app.register_blueprint(tracking_bp)
     except Exception:
-        pass
-    
-    # Import error handlers so they are registered
-    try:
-        from app import errors
-    except ImportError:
         pass
 
     # health route
