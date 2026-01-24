@@ -7,10 +7,10 @@ import os
 # Bind to port 10000 (Render's default)
 bind = "0.0.0.0:10000"
 
-# Worker configuration - use threads, not eventlet
-worker_class = 'gthread'
-workers = 2
-threads = 4
+# Worker configuration - Use eventlet for Socket.IO support
+worker_class = 'eventlet'
+workers = 1  # For eventlet/socket.io, 1 worker is often sufficient for many connections, scale if needed
+threads = 1  # Threads are not used with eventlet
 timeout = 120
 keepalive = 5
 
@@ -29,6 +29,13 @@ def post_worker_init(worker):
     import socket
     import os
     
+    # Ensure eventlet patching happened
+    try:
+        import eventlet
+        eventlet.monkey_patch()
+    except ImportError:
+        pass
+
     PROXY_HOST = os.environ.get('SMTP_PROXY_HOST')
     PROXY_PORT = int(os.environ.get('SMTP_PROXY_PORT', 1080))
     PROXY_USER = os.environ.get('SMTP_PROXY_USER')
@@ -40,6 +47,8 @@ def post_worker_init(worker):
         
         print(f"🔌 Worker: Applying Smart Proxy Patch ({PROXY_HOST}:{PROXY_PORT})...")
         
+        # We patch the socket module that is already monkey-patched by eventlet
+        # This is tricky but required for SOCKS support in async workers
         original_socket = socket.socket
 
         class SmartSocket(socks.socksocket):
@@ -53,10 +62,14 @@ def post_worker_init(worker):
                 
                 if not is_internal: 
                     try:
-                        ip = ipaddress.ip_address(host)
-                        if ip.is_private or ip.is_loopback:
-                            is_internal = True
-                    except ValueError:
+                        # Simple check if IP is private
+                        try:
+                            ip = ipaddress.ip_address(host)
+                            if ip.is_private or ip.is_loopback:
+                                is_internal = True
+                        except ValueError:
+                            pass
+                    except Exception:
                         pass
 
                 if is_internal:
@@ -71,15 +84,12 @@ def post_worker_init(worker):
 
         socket.socket = SmartSocket
         
+        # Patch getaddrinfo to handle IPv6/IPv4 preference if needed
         original_getaddrinfo = socket.getaddrinfo
         def patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
-            if family == 0 or family == socket.AF_INET6:
-                try:
-                    return original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
-                except socket.gaierror:
-                    pass
             return original_getaddrinfo(host, port, family, type, proto, flags)
+            
         socket.getaddrinfo = patched_getaddrinfo
         
         socket._paris_proxy_patched = True
-        print(f"✅ Worker:  Proxy patch applied")
+        print(f"✅ Worker: Proxy patch applied")
