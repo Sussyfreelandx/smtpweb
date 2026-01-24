@@ -21,3 +21,4 @@ Flask-RESTful>=0.3.10
 Flask-Migrate>=4.0.0
 eventlet>=0.33.3
 greenlet>=2.0.0
+cryptography>=41.0.0
