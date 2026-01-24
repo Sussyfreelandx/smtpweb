@@ -9,79 +9,96 @@ from app.models import (
 from app.utils import is_valid_email, log_activity
 from datetime import datetime, timedelta
 import json
-
+from flask_login import current_user
 
 # ==================== API AUTHENTICATION ====================
 
 def require_api_key(f):
-    """Decorator to require valid API key."""
+    """
+    Decorator to require valid API key OR valid session cookie.
+    Allows frontend to access API via session, and external tools via Key.
+    """
     @wraps(f)
     def decorated_function(*args, **kwargs):
         api_key = None
         
-        # Check Authorization header
+        # 1. Check for API Key Headers
         auth_header = request.headers.get('Authorization')
         if auth_header and auth_header.startswith('Bearer '):
             api_key = auth_header[7:]
         
-        # Check X-API-Key header
         if not api_key:
             api_key = request.headers.get('X-API-Key')
         
-        # Check query parameter (not recommended but supported)
         if not api_key: 
             api_key = request.args.get('api_key')
         
-        if not api_key:
-            return jsonify({
-                'error': 'Authentication required',
-                'message': 'Please provide an API key via Authorization header or X-API-Key header'
-            }), 401
-        
-        # Validate API key
-        key_prefix = api_key[:8] if len(api_key) >= 8 else api_key
-        api_key_record = APIKey.query.filter_by(key_prefix=key_prefix).first()
-        
-        if not api_key_record or not api_key_record.verify_key(api_key):
-            return jsonify({
-                'error': 'Invalid API key',
-                'message': 'The provided API key is invalid'
-            }), 401
-        
-        if not api_key_record.is_valid():
-            return jsonify({
-                'error': 'API key expired or inactive',
-                'message': 'Your API key has expired or been deactivated'
-            }), 401
-        
-        # Update usage stats
-        api_key_record.last_used_at = datetime.utcnow()
-        api_key_record.request_count += 1
-        db.session.commit()
-        
-        # Store user in g for access in route
-        g.current_user = User.query.get(api_key_record.user_id)
-        g.api_key = api_key_record
-        
-        return f(*args, **kwargs)
+        # 2. If API Key found, validate it
+        if api_key:
+            key_prefix = api_key[:8] if len(api_key) >= 8 else api_key
+            api_key_record = APIKey.query.filter_by(key_prefix=key_prefix).first()
+            
+            if not api_key_record or not api_key_record.verify_key(api_key):
+                return jsonify({
+                    'error': 'Invalid API key',
+                    'message': 'The provided API key is invalid'
+                }), 401
+            
+            if not api_key_record.is_valid():
+                return jsonify({
+                    'error': 'API key expired or inactive',
+                    'message': 'Your API key has expired or been deactivated'
+                }), 401
+            
+            # Update usage stats
+            api_key_record.last_used_at = datetime.utcnow()
+            api_key_record.request_count += 1
+            db.session.commit()
+            
+            # Store user in g for access in route
+            g.current_user = User.query.get(api_key_record.user_id)
+            g.api_key = api_key_record
+            g.auth_method = 'api_key'
+            
+            return f(*args, **kwargs)
+
+        # 3. If NO API Key, check for Session Cookie (Browser access)
+        if current_user.is_authenticated:
+            g.current_user = current_user
+            g.api_key = None # No specific key used
+            g.auth_method = 'session'
+            return f(*args, **kwargs)
+
+        # 4. Neither found
+        return jsonify({
+            'error': 'Authentication required',
+            'message': 'Please provide an API key or log in.'
+        }), 401
     
     return decorated_function
 
 
 def check_scope(required_scope):
-    """Check if API key has required scope."""
+    """
+    Check if user/key has required scope.
+    Session-based users (admins/owners) implicitly have all scopes.
+    """
     def decorator(f):
         @wraps(f)
         def decorated_function(*args, **kwargs):
-            if not hasattr(g, 'api_key'):
-                return jsonify({'error': 'No API key context'}), 401
-            
-            scopes = g.api_key.get_scopes()
-            if required_scope not in scopes and 'admin' not in scopes:
-                return jsonify({
-                    'error': 'Insufficient permissions',
-                    'message': f'This endpoint requires the "{required_scope}" scope'
-                }), 403
+            # If authenticated via session, allow access (assuming dashboard users have full rights for now)
+            # You can add role checks here if needed (e.g. if g.current_user.role == 'viewer')
+            if getattr(g, 'auth_method', '') == 'session':
+                return f(*args, **kwargs)
+
+            # If authenticated via API Key, check scopes
+            if getattr(g, 'api_key', None):
+                scopes = g.api_key.get_scopes()
+                if required_scope not in scopes and 'admin' not in scopes:
+                    return jsonify({
+                        'error': 'Insufficient permissions',
+                        'message': f'This endpoint requires the "{required_scope}" scope'
+                    }), 403
             
             return f(*args, **kwargs)
         return decorated_function
@@ -773,6 +790,42 @@ def delete_webhook(webhook_id):
     db.session.commit()
     
     return jsonify({'message': 'Webhook deleted successfully'})
+
+
+# ==================== CAMPAIGN STATUS API ====================
+
+@bp.route('/campaign/<int:campaign_id>/status', methods=['GET'])
+@require_api_key
+@check_scope('read')
+def api_campaign_status(campaign_id):
+    """Get live status of a campaign. Accessible by frontend session or API key."""
+    campaign = Campaign.query.get_or_404(campaign_id)
+
+    if campaign.user_id != g.current_user.id:
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    total = int(campaign.total_recipients or 0)
+    sent = campaign.recipients.filter_by(status='Sent').count()
+    failed = campaign.recipients.filter_by(status='Failed').count()
+
+    progress = round(((sent + failed) / total * 100), 1) if total > 0 else 0.0
+
+    return jsonify({
+        'campaign': {
+            'id': campaign.id,
+            'status': campaign.status,
+            'analytics': {
+                'sent': sent,
+                'failed': failed,
+                'total': total
+            }
+        },
+        'status': campaign.status,
+        'sent': sent,
+        'failed': failed,
+        'total': total,
+        'progress': progress
+    })
 
 
 # ==================== ERROR HANDLERS ====================
