@@ -4,12 +4,20 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}{{ title|default('Paris Sender') }}{% endblock %} - Paris Sender Web</title>
+    <!-- Favicon -->
     <link rel="icon" type="image/png" href="https://upload.wikimedia.org/wikipedia/commons/0/0f/Afterlogic_Webmail_Lite_logo.png">
+    
+    <!-- Bootstrap 5 CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <!-- Font Awesome -->
+    
+    <!-- FontAwesome -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <!-- Google Fonts -->
+    
+    <!-- Google Fonts: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
     <style>
         :root {
             --primary-color: #4f46e5;
@@ -18,92 +26,64 @@
             --danger-color: #ef4444;
             --warning-color: #f59e0b;
             --info-color: #3b82f6;
-            --dark-color: #0f172a;
-            --light-bg: #f8fafc;
+            --bg-color: #f8fafc;
+            --card-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
         }
         
         body { 
-            background-color: var(--light-bg); 
+            background-color: var(--bg-color); 
             padding-bottom: 200px; 
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-            color: #334155;
+            font-family: 'Inter', sans-serif;
+            color: #1e293b;
+            -webkit-font-smoothing: antialiased;
         }
         
-        /* Navbar Styling */
         .navbar {
             background: #ffffff !important;
-            box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
-            padding: 0.75rem 1rem;
+            box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+            padding: 0.75rem 0;
+            border-bottom: 1px solid #e2e8f0;
         }
         
         .navbar-brand {
-            font-weight: 800;
-            letter-spacing: -0.5px;
-            color: var(--primary-color) !important;
+            font-weight: 700;
+            color: #0f172a !important;
             font-size: 1.25rem;
+            letter-spacing: -0.025em;
         }
-        
+
         .nav-link {
+            color: #475569 !important;
             font-weight: 500;
-            color: #64748b !important;
-            transition: color 0.2s;
+            padding: 0.5rem 1rem;
+            transition: color 0.15s;
         }
-        
+
         .nav-link:hover, .nav-link.active {
             color: var(--primary-color) !important;
         }
         
-        /* Card Styling */
         .card {
             border: 1px solid #e2e8f0;
+            box-shadow: var(--card-shadow);
             border-radius: 12px;
-            box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
-            transition: box-shadow 0.2s;
             background: white;
-        }
-        
-        .card:hover {
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            transition: transform 0.2s, box-shadow 0.2s;
+            overflow: hidden;
         }
         
         .card-header {
-            background-color: white;
-            border-bottom: 1px solid #f1f5f9;
+            background-color: #fff;
+            border-bottom: 1px solid #e2e8f0;
             font-weight: 600;
-            padding: 1rem 1.25rem;
+            padding: 1rem 1.5rem;
+            color: #0f172a;
+        }
+
+        .card-body {
+            padding: 1.5rem;
         }
         
-        /* Stats Cards */
-        .stat-card { 
-            text-align: center; 
-            padding: 1.25rem; 
-            border-radius: 12px;
-            background: white;
-            border: 1px solid #e2e8f0;
-            transition: transform 0.2s, box-shadow 0.2s;
-        }
-        
-        .stat-card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
-        }
-        
-        .stat-card .value { 
-            font-size: 1.8rem; 
-            font-weight: 700;
-            line-height: 1.2;
-            margin-bottom: 0.25rem;
-        }
-        
-        .stat-card .label { 
-            color: #64748b; 
-            font-size: 0.8rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        
-        /* Buttons */
         .btn {
             font-weight: 500;
             border-radius: 8px;
@@ -114,115 +94,135 @@
         .btn-primary {
             background-color: var(--primary-color);
             border-color: var(--primary-color);
+            box-shadow: 0 1px 2px 0 rgba(79, 70, 229, 0.5);
         }
         
         .btn-primary:hover {
             background-color: #4338ca;
             border-color: #4338ca;
+            transform: translateY(-1px);
         }
 
-        .btn-outline-secondary {
-            border-color: #e2e8f0;
-            color: #64748b;
-        }
-
-        .btn-outline-secondary:hover {
-            background-color: #f8fafc;
-            color: #334155;
-            border-color: #cbd5e1;
+        .stat-card { 
+            text-align: center; 
+            padding: 1.5rem; 
+            border-radius: 12px;
+            background: white;
+            border: 1px solid #e2e8f0;
+            box-shadow: var(--card-shadow);
+            transition: all 0.2s;
         }
         
-        /* Activity Log Console */
+        .stat-card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+        }
+        
+        .stat-card .value { 
+            font-size: 2.25rem; 
+            font-weight: 700;
+            line-height: 1;
+            margin-bottom: 0.5rem;
+        }
+        
+        .stat-card .label { 
+            color: #64748b; 
+            font-size: 0.875rem;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        
+        /* Activity Log */
         #activity-log-container {
             position: fixed;
             bottom: 0;
             left: 0;
             width: 100%;
-            height: 200px;
-            background-color: #1e1e1e;
-            color: #d4d4d4;
+            height: 180px;
+            background-color: #0f172a;
+            color: #e2e8f0;
             font-family: 'Consolas', 'Monaco', monospace;
-            font-size: 0.8rem;
+            font-size: 0.85rem;
             z-index: 1030;
             border-top: 3px solid var(--primary-color);
             display: flex;
             flex-direction: column;
-            box-shadow: 0 -4px 20px rgba(0,0,0,0.3);
-            transition: height 0.3s ease;
+            box-shadow: 0 -4px 6px -1px rgba(0, 0, 0, 0.1);
+            transition: height 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         }
         
         #activity-log-header {
-            background-color: #2d2d2d;
-            padding: 8px 16px;
+            background-color: #1e293b;
+            padding: 10px 20px;
             font-weight: 600;
+            font-size: 0.8rem;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            border-bottom: 1px solid #333;
+            border-bottom: 1px solid #334155;
             cursor: pointer;
             user-select: none;
         }
         
         #activity-log-content {
             overflow-y: auto;
-            padding: 10px 16px;
+            padding: 12px 20px;
             flex-grow: 1;
             scrollbar-width: thin;
-            scrollbar-color: #555 #1e1e1e;
+            scrollbar-color: #475569 #0f172a;
         }
-        
-        .log-entry { 
-            margin-bottom: 3px; 
-            line-height: 1.4; 
-            border-bottom: 1px solid #333;
-            padding-bottom: 2px;
-            animation: fadeIn 0.2s ease;
-        }
-        
-        .log-time { color: #569cd6; margin-right: 10px; font-weight: bold; }
+
+        .log-entry { margin-bottom: 6px; border-bottom: 1px solid #1e293b; padding-bottom: 6px; }
+        .log-time { color: #60a5fa; margin-right: 12px; font-weight: 600; }
         .log-success { color: #4ade80; }
         .log-error { color: #f87171; }
         .log-warning { color: #fbbf24; }
-        .log-info { color: #60a5fa; }
+        .log-info { color: #e2e8f0; }
         
-        /* Status Badges */
         .status-badge {
-            padding: 4px 8px;
-            border-radius: 6px;
-            font-size: 0.7rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        
-        .status-sent { background: #dcfce7; color: #15803d; }
-        .status-failed { background: #fee2e2; color: #b91c1c; }
-        .status-queued { background: #e0f2fe; color: #0369a1; }
-        .status-sending { background: #fef3c7; color: #b45309; }
-        
-        /* Campaign Status Pill */
-        .campaign-status {
-            display: inline-flex;
-            align-items: center;
-            padding: 0.25rem 0.75rem;
+            padding: 0.35em 0.8em;
             border-radius: 9999px;
-            font-weight: 600;
             font-size: 0.75rem;
+            font-weight: 600;
             text-transform: uppercase;
         }
         
-        .campaign-draft { background: #f1f5f9; color: #475569; }
-        .campaign-sending { background: #dcfce7; color: #166534; }
-        .campaign-completed { background: #e0e7ff; color: #3730a3; }
+        .status-sent { background-color: #d1fae5; color: #065f46; }
+        .status-failed { background-color: #fee2e2; color: #991b1b; }
+        .status-queued { background-color: #e0f2fe; color: #075985; }
         
+        .table thead th {
+            background-color: #f8fafc;
+            color: #64748b;
+            text-transform: uppercase;
+            font-size: 0.75rem;
+            letter-spacing: 0.05em;
+            font-weight: 600;
+            border-bottom: 2px solid #e2e8f0;
+        }
+        
+        .form-control, .form-select {
+            border-radius: 8px;
+            border-color: #cbd5e1;
+            padding: 0.625rem 0.875rem;
+        }
+        
+        .form-control:focus {
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+        }
     </style>
     {% block extra_css %}{% endblock %}
 </head>
 <body>
-    <nav class="navbar navbar-expand-lg navbar-light fixed-top">
+    <nav class="navbar navbar-expand-lg sticky-top">
         <div class="container-fluid px-4">
-            <a class="navbar-brand" href="{{ url_for('main.index') }}">
-                <i class="fas fa-paper-plane me-2"></i>PARIS SENDER
+            <a class="navbar-brand d-flex align-items-center" href="{{ url_for('main.index') }}">
+                <div class="bg-primary text-white rounded p-1 me-2 d-flex align-items-center justify-content-center" style="width: 32px; height: 32px;">
+                    <i class="fas fa-paper-plane fa-sm"></i>
+                </div>
+                PARIS SENDER
             </a>
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
                 <span class="navbar-toggler-icon"></span>
@@ -232,66 +232,68 @@
                     {% if current_user.is_authenticated %}
                     <li class="nav-item">
                         <a class="nav-link {% if request.endpoint == 'main.index' %}active{% endif %}" href="{{ url_for('main.index') }}">
-                            <i class="fas fa-grid-2 me-1"></i> Dashboard
+                            <i class="fas fa-chart-line me-1"></i> Dashboard
                         </a>
                     </li>
                     <li class="nav-item">
                         <a class="nav-link {% if request.endpoint == 'main.new_campaign' %}active{% endif %}" href="{{ url_for('main.new_campaign') }}">
-                            <i class="fas fa-plus me-1"></i> Create
+                            <i class="fas fa-plus-circle me-1"></i> Create
                         </a>
                     </li>
                     <li class="nav-item">
                         <a class="nav-link {% if request.endpoint == 'main.analytics_dashboard' %}active{% endif %}" href="{{ url_for('main.analytics_dashboard') }}">
-                            <i class="fas fa-chart-bar me-1"></i> Analytics
+                            <i class="fas fa-chart-pie me-1"></i> Reports
                         </a>
                     </li>
                     {% endif %}
                 </ul>
-                <ul class="navbar-nav ms-auto">
+                <ul class="navbar-nav ms-auto align-items-center">
                     {% if current_user.is_authenticated %}
                     <li class="nav-item dropdown">
                         <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
-                            <i class="fas fa-cog me-1"></i> Tools
+                            <i class="fas fa-cog me-1"></i> System
                         </a>
-                        <ul class="dropdown-menu dropdown-menu-end shadow-sm border-0">
-                            <li><a class="dropdown-item" href="{{ url_for('main.smtp_profiles') }}">SMTP Profiles</a></li>
-                            <li><a class="dropdown-item" href="{{ url_for('main.suppression_list') }}">Suppression List</a></li>
+                        <ul class="dropdown-menu dropdown-menu-end shadow-lg border-0">
+                            <li><a class="dropdown-item" href="{{ url_for('main.smtp_profiles') }}"><i class="fas fa-server me-2 text-primary"></i>SMTP Profiles</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('main.suppression_list') }}"><i class="fas fa-ban me-2 text-danger"></i>Suppression List</a></li>
                             <li><hr class="dropdown-divider"></li>
-                            <li><a class="dropdown-item" href="{{ url_for('main.general_settings') }}">Settings</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('main.general_settings') }}"><i class="fas fa-sliders-h me-2"></i>General Settings</a></li>
                         </ul>
                     </li>
-                    <li class="nav-item dropdown">
-                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
-                            <div class="d-inline-flex align-items-center justify-content-center bg-primary text-white rounded-circle me-1" style="width: 24px; height: 24px; font-size: 12px;">
-                                {{ current_user.username[0]|upper }}
+                    <li class="nav-item dropdown ms-3">
+                        <a class="nav-link dropdown-toggle d-flex align-items-center" href="#" role="button" data-bs-toggle="dropdown">
+                            <div class="bg-light rounded-circle border d-flex align-items-center justify-content-center me-2" style="width: 32px; height: 32px;">
+                                <i class="fas fa-user text-secondary"></i>
                             </div>
                             {{ current_user.username }}
                         </a>
-                        <ul class="dropdown-menu dropdown-menu-end shadow-sm border-0">
-                            <li><a class="dropdown-item text-danger" href="{{ url_for('main.logout') }}">Logout</a></li>
+                        <ul class="dropdown-menu dropdown-menu-end shadow-lg border-0">
+                            <li><a class="dropdown-item" href="{{ url_for('main.api_keys') }}"><i class="fas fa-key me-2"></i>API Keys</a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item text-danger" href="{{ url_for('main.logout') }}"><i class="fas fa-sign-out-alt me-2"></i>Logout</a></li>
                         </ul>
                     </li>
                     {% else %}
-                    <li class="nav-item">
-                        <a class="nav-link btn btn-sm btn-outline-primary ms-2 px-3" href="{{ url_for('main.login') }}">Login</a>
-                    </li>
+                    <li class="nav-item"><a class="nav-link" href="{{ url_for('main.login') }}">Log In</a></li>
+                    <li class="nav-item ms-2"><a class="btn btn-primary btn-sm px-3" href="{{ url_for('main.register') }}">Get Started</a></li>
                     {% endif %}
                 </ul>
             </div>
         </div>
     </nav>
 
-    <div class="container-fluid content-area px-4" style="margin-top: 80px;">
+    <div class="container-fluid px-4 py-4">
         {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
-        <div class="row mt-3">
+        <div class="row mb-4">
             <div class="col-12">
                 {% for category, message in messages %}
-                <div class="alert alert-{{ category if category != 'message' else 'info' }} alert-dismissible fade show shadow-sm" role="alert">
-                    {% if category == 'success' %}<i class="fas fa-check-circle me-2"></i>{% endif %}
-                    {% if category == 'error' or category == 'danger' %}<i class="fas fa-exclamation-circle me-2"></i>{% endif %}
+                <div class="alert alert-{{ category if category != 'message' else 'info' }} alert-dismissible fade show shadow-sm border-0" role="alert">
+                    {% if category == 'success' %}<i class="fas fa-check-circle me-2"></i>
+                    {% elif category == 'danger' or category == 'error' %}<i class="fas fa-exclamation-circle me-2"></i>
+                    {% endif %}
                     {{ message }}
-                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
                 </div>
                 {% endfor %}
             </div>
@@ -305,14 +307,14 @@
     {% if current_user.is_authenticated %}
     <div id="activity-log-container">
         <div id="activity-log-header" onclick="toggleLog()">
-            <span><i class="fas fa-terminal me-2 text-primary"></i> LIVE SYSTEM LOGS</span>
+            <span><i class="fas fa-terminal me-2 text-primary"></i> LIVE ACTIVITY LOG</span>
             <div>
-                <span class="text-success me-3" style="font-size: 0.7rem;">● ONLINE</span>
+                <span id="log-status" class="text-success me-3" style="font-size: 0.7rem;">● ONLINE</span>
                 <i class="fas fa-chevron-down" id="log-toggle-icon"></i>
             </div>
         </div>
         <div id="activity-log-content">
-            <div class="log-entry text-muted">System connected. Listening for events...</div>
+            <div class="log-entry text-muted">System initialized. Listening for events...</div>
         </div>
     </div>
     {% endif %}
@@ -330,39 +332,49 @@
 
         function toggleLog() {
             if (isCollapsed) {
-                logContainer.style.height = "200px";
+                logContainer.style.height = "180px";
                 document.getElementById('log-toggle-icon').className = "fas fa-chevron-down";
             } else {
-                logContainer.style.height = "35px";
+                logContainer.style.height = "40px";
                 document.getElementById('log-toggle-icon').className = "fas fa-chevron-up";
             }
             isCollapsed = !isCollapsed;
         }
 
-        // Initialize Socket.IO
-        const socket = io({ path: '/socket.io' });
-        
-        // Listen for logs
-        const logsSocket = io('/logs');
-        logsSocket.on('log_entry', (data) => {
-            const div = document.createElement('div');
-            div.className = "log-entry";
-            let colorClass = "log-info";
-            let icon = "ℹ️";
-            
-            if (data.level === "ERROR") { colorClass = "log-error"; icon = "❌"; }
-            else if (data.level === "SUCCESS") { colorClass = "log-success"; icon = "✅"; }
-            else if (data.level === "WARNING") { colorClass = "log-warning"; icon = "⚠️"; }
+        // Setup Socket.IO
+        (function setupSocketIO() {
+            try {
+                // Determine socket path and options
+                const socket = io({ 
+                    path: '/socket.io', 
+                    transports: ['websocket', 'polling'],
+                    reconnectionAttempts: 5
+                });
+                
+                socket.on('connect', () => {
+                    // Connection successful
+                });
 
-            div.innerHTML = `<span class="log-time">[${data.timestamp}]</span><span style="margin-right:5px;">${icon}</span><span class="${colorClass}">${data.message}</span>`;
-            logContent.appendChild(div);
-            logContent.scrollTop = logContent.scrollHeight;
-            
-            // Limit log entries
-            if (logContent.children.length > 100) {
-                logContent.removeChild(logContent.children[0]);
+                // Logs Namespace
+                const logsSocket = io('/logs');
+                logsSocket.on('log_entry', (data) => {
+                    const div = document.createElement('div');
+                    div.className = "log-entry";
+                    let colorClass = "log-info";
+                    let icon = "ℹ️";
+                    
+                    if (data.level === "ERROR") { colorClass = "log-error"; icon = "❌"; }
+                    else if (data.level === "SUCCESS") { colorClass = "log-success"; icon = "✅"; }
+                    else if (data.level === "WARNING") { colorClass = "log-warning"; icon = "⚠️"; }
+
+                    div.innerHTML = `<span class="log-time">[${data.timestamp}]</span><span class="${colorClass}">${icon} ${data.message}</span>`;
+                    logContent.appendChild(div);
+                    logContent.scrollTop = logContent.scrollHeight;
+                });
+            } catch (e) {
+                console.warn("Socket.IO error:", e);
             }
-        });
+        })();
         {% endif %}
     </script>
 </body>
