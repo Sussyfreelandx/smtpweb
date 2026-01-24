@@ -1,54 +1,43 @@
 #!/usr/bin/env bash
-# release_migrate.sh - run DB migrations during a deployment/release phase
-# Usage (Render): set this script as the "Release Command" for your service
-# This script will attempt to run 'flask db upgrade' and will retry on transient failures.
+# release_migrate.sh - Smart DB migrations for Render
+# Usage (Render): set this script as the "Release Command"
 
-set -euo pipefail
+set -e
 
 FLASK_APP=${FLASK_APP:-wsgi:app}
-RETRIES=${RETRIES:-8}
-SLEEP_SECONDS=${SLEEP_SECONDS:-5}
-
 export FLASK_APP
 
-echo "Release migration start: $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
-echo "Using FLASK_APP=${FLASK_APP}"
-echo "Retries: ${RETRIES}, initial sleep: ${SLEEP_SECONDS}s"
+echo "🔄 Release Command Started..."
 
-# Ensure alembic migrations folder exists; if not, initialize and create initial migration.
+# 1. Check if migrations directory exists
 if [ ! -d "migrations" ]; then
-  echo "Migrations folder not found — initializing migrations directory"
-  flask db init || true
-  echo "Creating initial migration..."
-  # try to autogenerate (may be empty)
-  flask db migrate -m "Initial migration" || true
+    echo "⚠️  Migrations folder not found. Initializing..."
+    flask db init
+    
+    # 2. CRITICAL FIX: Check if the database is already populated.
+    # We check if the 'user' table exists. If it does, we assume the DB is live.
+    # We then 'stamp' the DB to say "Current Code matches DB State" to prevent
+    # Alembic from trying to DROP all your existing tables.
+    if python -c "from app import create_app, db; from sqlalchemy import inspect; app=create_app(); ctx=app.app_context(); ctx.push(); inspector=inspect(db.engine); exit(0 if inspector.has_table('user') else 1)"; then
+        echo "✅ Existing database detected. Stamping 'head' to skip initial creation..."
+        flask db stamp head
+    else
+        echo "✨ Fresh database detected. Generating initial migration..."
+        flask db migrate -m "Initial migration"
+    fi
+else
+    echo "📂 Migrations folder exists."
 fi
 
-attempt=1
-sleep_time=${SLEEP_SECONDS}
+# 3. Generate a new migration if there are model changes
+echo "🔎 Checking for schema changes..."
+flask db migrate -m "Auto migration $(date +%s)" || true
 
-while [ "$attempt" -le "$RETRIES" ]; do
-  echo "Attempt ${attempt}/${RETRIES}: running 'flask db upgrade'..."
-  if flask db upgrade; then
-    echo "Database upgrade applied successfully."
-    break
-  else
-    echo "Database upgrade failed on attempt ${attempt}."
-    if [ "$attempt" -lt "$RETRIES" ]; then
-    
-      echo "Sleeping ${sleep_time}s before retry..."
-      sleep "$sleep_time"
-      # exponential backoff with cap
-      sleep_time=$((sleep_time * 2))
-      if [ "$sleep_time" -gt 60 ]; then
-        sleep_time=60
-      fi
-    else
-      echo "Reached max retries (${RETRIES}). Exiting with error."
-      exit 1
-    fi
-  fi
-  attempt=$((attempt + 1))
-done
+# 4. Apply Upgrades
+echo "📈 Applying database upgrades..."
+flask db upgrade
 
-echo "Release migration finished: $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
+# 5. (Optional) Seed standard data if needed
+# python manage.py seed_data
+
+echo "✅ Release Command Finished."
