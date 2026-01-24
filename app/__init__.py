@@ -28,7 +28,7 @@ try:
     from flask_bcrypt import Bcrypt  # type: ignore
     bcrypt = Bcrypt()
     _BCRYPT_AVAILABLE = True
-except ImportError:
+except Exception:
     bcrypt = None
     _BCRYPT_AVAILABLE = False
 
@@ -75,7 +75,11 @@ def create_app(config_object=None):
     Pass in a config object or set environment variables for configuration.
     Returns a fully configured Flask app and also configures the shared 'celery' object.
     """
-    app = Flask(__name__, instance_relative_config=False)
+    # Explicitly set template folder to ensure templates are found
+    template_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'templates'))
+    static_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'static'))
+    
+    app = Flask(__name__, instance_relative_config=False, template_folder=template_dir, static_folder=static_dir)
 
     # Load configuration from provided object or environment variable
     config_path = config_object or os.environ.get("APP_SETTINGS")
@@ -91,17 +95,22 @@ def create_app(config_object=None):
     # Defaults
     app.config.setdefault("SQLALCHEMY_DATABASE_URI", os.environ.get("DATABASE_URL", "sqlite:///data.db"))
     app.config.setdefault("SQLALCHEMY_TRACK_MODIFICATIONS", False)
-    app.config.setdefault("SECRET_KEY", os.environ.get("SECRET_KEY", "dev-secret-key"))
+    
+    # CRITICAL FIX: Ensure SECRET_KEY is set on both config AND app instance
+    secret_key = os.environ.get("SECRET_KEY", "dev-secret-key-change-this-in-prod")
+    app.config.setdefault("SECRET_KEY", secret_key)
+    app.secret_key = app.config["SECRET_KEY"]
+
     app.config.setdefault("CELERY_BROKER_URL", os.environ.get("CELERY_BROKER_URL", "redis://localhost:6379/0"))
     app.config.setdefault("CELERY_RESULT_BACKEND", os.environ.get("CELERY_RESULT_BACKEND", "redis://localhost:6379/0"))
-    app.config.setdefault("CACHE_TYPE", os.environ.get("CACHE_TYPE", "SimpleCache")) # Changed to SimpleCache for compatibility
+    app.config.setdefault("CACHE_TYPE", os.environ.get("CACHE_TYPE", "SimpleCache")) # Changed to SimpleCache which is safer default
     app.config.setdefault("WTF_CSRF_ENABLED", True)
 
     # Initialize extensions with app
     db.init_app(app)
-    migrate.init_app(app, db)
+    migrate.init_app(app, db)  # registers 'flask db' commands for Flask-Migrate
     login.init_app(app)
-    socketio.init_app(app, cors_allowed_origins=app.config.get("CORS_ALLOWED_ORIGINS", "*"), async_mode='threading') # Force threading for Gunicorn compatibility without eventlet if needed
+    socketio.init_app(app, cors_allowed_origins=app.config.get("CORS_ALLOWED_ORIGINS", "*"))
     cache.init_app(app)
     limiter.init_app(app)
 
@@ -116,24 +125,23 @@ def create_app(config_object=None):
     make_celery(app, celery)
 
     # Register blueprints inside factory to avoid circular import at module import time
-    with app.app_context():
-        try:
-            from app.main import bp as main_bp
-            app.register_blueprint(main_bp)
-        except Exception as e:
-            app.logger.error(f"Error registering main blueprint: {e}")
+    try:
+        from app.main import bp as main_bp
+        app.register_blueprint(main_bp)
+    except Exception as e:
+        print(f"Error registering main blueprint: {e}")
 
-        try:
-            from app.api import bp as api_bp
-            app.register_blueprint(api_bp, url_prefix="/api")
-        except Exception as e:
-            app.logger.error(f"Error registering api blueprint: {e}")
+    try:
+        from app.api import bp as api_bp
+        app.register_blueprint(api_bp, url_prefix="/api")
+    except Exception as e:
+        print(f"Error registering api blueprint: {e}")
 
-        try:
-            from app.tracking import bp as tracking_bp
-            app.register_blueprint(tracking_bp)
-        except Exception as e:
-            app.logger.error(f"Error registering tracking blueprint: {e}")
+    try:
+        from app.tracking import bp as tracking_bp
+        app.register_blueprint(tracking_bp)
+    except Exception as e:
+        print(f"Error registering tracking blueprint: {e}")
 
     # health route
     @app.route("/healthz")
