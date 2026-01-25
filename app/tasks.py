@@ -1,24 +1,21 @@
 """
 Celery tasks for campaign sending and scheduled jobs.
 
-This version uses the Celery instance exported by app (app.celery) and relies on
-the Celery Task base class configured in app.create_app() (make_celery) which
-wraps task execution in a Flask app context.
-
-Note: Ensure you start celery workers using the configured app.celery instance
-(e.g., `python manage.py celery-worker` or `celery -A app.celery worker ...`)
-so the application context is available to tasks.
+Tasks now import the unified 'celery' instance from the app package,
+ensuring they use the correct configuration and app context.
 """
 
 import time
 import logging
 import traceback
-from datetime import datetime, timedelta
+from datetime import datetime
 
-from app import celery, db
+# Import the celery instance defined in celery_app.py
+from celery_app import celery
+from app import db
 from app.utils import log_activity
 
-# Use a standard logger for better integration with production logging systems
+# Logger for tasks
 logger = logging.getLogger(__name__)
 
 
@@ -32,93 +29,90 @@ def _safe_import_models():
 def send_campaign_task(self, campaign_id):
     """
     Main Celery task to send a campaign.
-
-    This task assumes that the Celery app has been configured with a Task base
-    that pushes a Flask application context (see celery_worker.py).
+    This task now correctly runs within the Flask application context provided by
+    the custom ContextTask in celery_app.py.
     """
     Campaign, Recipient, SMTPServer = _safe_import_models()
     from app.core_logic.smtp_handler import SMTPHandler
     from app.core_logic.personalization import PersonalizationEngine
 
-    # Use standard logger for better log management
-    logger.info("=" * 60)
-    logger.info(f"📧 TASK RECEIVED: send_campaign_task for Campaign ID: {campaign_id}")
-    logger.info(f"   Task ID: {getattr(self.request, 'id', 'unknown')}")
-    logger.info("=" * 60)
+    log_activity("=" * 60)
+    log_activity(f"📧 TASK RECEIVED: send_campaign_task")
+    log_activity(f"   Campaign ID: {campaign_id}")
+    log_activity(f"   Task ID: {getattr(self.request, 'id', 'unknown')}")
+    log_activity("=" * 60)
 
     try:
         campaign = Campaign.query.get(campaign_id)
 
         if not campaign:
-            logger.error(f"Campaign {campaign_id} not found.")
+            log_activity(f"Campaign {campaign_id} not found", "ERROR")
             return {"status": "error", "message": "Campaign not found"}
 
-        logger.info(f"Processing Campaign: '{campaign.name}', Current Status: {campaign.status}")
+        log_activity(f"Campaign:  '{campaign.name}', Status: {campaign.status}")
 
         if campaign.status != 'Sending':
-            logger.warning(f"Campaign not in 'Sending' status. Current is '{campaign.status}'. Skipping.")
+            log_activity(f"Campaign not in 'Sending' status. Current: {campaign.status}", "WARNING")
             return {"status": "skipped", "message": f"Status is {campaign.status}"}
 
         smtp_profile = campaign.smtp_profile
         if not smtp_profile:
-            logger.error(f"Campaign {campaign_id} has no SMTP profile assigned.")
+            log_activity("No SMTP profile assigned", "ERROR")
             campaign.status = 'Failed'
-            campaign.completed_at = datetime.utcnow()
             db.session.commit()
-            return {"status": "error", "message": "No SMTP profile assigned"}
+            return {"status": "error", "message": "No SMTP profile"}
 
-        logger.info(f"Using SMTP Profile: {smtp_profile.profile_name}")
+        log_activity(f"SMTP Profile: {smtp_profile.profile_name}")
 
         smtp_config = smtp_profile.to_dict()
         if not smtp_config.get('password'):
-            logger.error(f"SMTP profile '{smtp_profile.profile_name}' is missing a password.")
+            log_activity("SMTP password not configured", "ERROR")
             campaign.status = 'Failed'
-            campaign.completed_at = datetime.utcnow()
             db.session.commit()
             return {"status": "error", "message": "SMTP password missing"}
 
         smtp_handler = SMTPHandler(smtp_config)
-        logger.info("SMTP Handler initialized successfully.")
+        log_activity("SMTP Handler initialized")
 
         batch_size = campaign.throttle_amount or 20
         delay_seconds = campaign.throttle_delay or 60
-        logger.info(f"Configuration: Batch Size={batch_size}, Delay={delay_seconds}s")
+        log_activity(f"Config: batch={batch_size}, delay={delay_seconds}s")
 
         attachments = campaign.get_attachments() or []
-
-        total_sent_in_run = 0
-        total_failed_in_run = 0
+        total_sent_in_task = 0
+        total_failed_in_task = 0
+        batch_num = 0
 
         while True:
-            # Refresh campaign from DB to get the latest status inside the loop
-            db.session.refresh(campaign)
-            if campaign.status != 'Sending':
-                logger.warning(f"Campaign status changed to '{campaign.status}'. Stopping send loop.")
+            batch_num += 1
+            db.session.expire_all()
+            campaign = Campaign.query.get(campaign_id)
+
+            if not campaign or campaign.status != 'Sending':
+                log_activity(f"Stopping task. Campaign deleted or status changed to '{campaign.status if campaign else 'DELETED'}'", "WARNING")
                 break
 
-            recipients = Recipient.query.with_for_update().filter_by(campaign_id=campaign.id, status='Queued').limit(batch_size).all()
+            recipients = campaign.recipients.filter_by(status='Queued').limit(batch_size).all()
 
             if not recipients:
-                logger.info("No more 'Queued' recipients found. Finalizing campaign.")
+                log_activity("No more queued recipients. Completing campaign.")
                 campaign.status = 'Completed'
                 campaign.completed_at = datetime.utcnow()
                 db.session.commit()
                 break
-            
-            logger.info(f"--- Processing batch of {len(recipients)} recipients ---")
+
+            log_activity(f"--- Batch #{batch_num}: Processing {len(recipients)} recipients ---")
 
             for recipient in recipients:
                 try:
-                    # Mark as sending immediately to prevent other workers from picking it up
                     recipient.status = 'Sending'
                     recipient.attempts = (recipient.attempts or 0) + 1
                     db.session.commit()
 
-                    logger.info(f"Personalizing for: {recipient.email}")
                     personalizer = PersonalizationEngine(campaign, recipient)
                     subject, body_html, body_plain = personalizer.personalize()
 
-                    logger.info(f"Sending to: {recipient.email}")
+                    log_activity(f"Sending to: {recipient.email}")
                     success, error_msg = smtp_handler.send_email(
                         to_email=recipient.email,
                         subject=subject,
@@ -131,63 +125,58 @@ def send_campaign_task(self, campaign_id):
                         recipient.status = 'Sent'
                         recipient.sent_at = datetime.utcnow()
                         recipient.status_message = 'OK'
-                        total_sent_in_run += 1
-                        logger.info(f"✅ Sent: {recipient.email}")
+                        campaign.sent_count = (campaign.sent_count or 0) + 1
+                        total_sent_in_task += 1
+                        log_activity(f"✅ Sent: {recipient.email}")
                     else:
                         recipient.status = 'Failed'
-                        recipient.status_message = str(error_msg)[:250] if error_msg else 'Unknown send error'
-                        total_failed_in_run += 1
-                        logger.error(f"❌ Failed: {recipient.email} - {error_msg}")
-
+                        recipient.status_message = str(error_msg)[:250] if error_msg else 'Unknown'
+                        campaign.failed_count = (campaign.failed_count or 0) + 1
+                        total_failed_in_task += 1
+                        log_activity(f"❌ Failed: {recipient.email} - {error_msg}", "ERROR")
+                    
                     db.session.commit()
 
                 except Exception as e:
-                    logger.error(f"Unhandled exception for recipient {getattr(recipient, 'email', 'unknown')}: {e}", exc_info=True)
+                    log_activity(f"Critical error for recipient {getattr(recipient, 'email', 'unknown')}: {e}", "ERROR")
                     db.session.rollback()
+                    # Mark recipient as failed if possible
                     try:
-                        # Try to mark recipient as failed even after rollback
                         recipient.status = 'Failed'
                         recipient.status_message = str(e)[:250]
+                        campaign.failed_count = (campaign.failed_count or 0) + 1
                         db.session.commit()
-                    except Exception as inner_e:
-                        logger.error(f"Could not even mark recipient as failed: {inner_e}")
+                    except Exception:
                         db.session.rollback()
-                    total_failed_in_run += 1
+                    total_failed_in_task += 1
 
-            # After batch, check if more recipients are queued
-            remaining = Recipient.query.filter_by(campaign_id=campaign.id, status='Queued').count()
+            log_activity(f"Batch #{batch_num} done. Sent: {total_sent_in_task}, Failed: {total_failed_in_task}")
+
+            remaining = campaign.recipients.filter_by(status='Queued').count()
             if remaining > 0 and delay_seconds > 0:
-                logger.info(f"Batch complete. Waiting for {delay_seconds} seconds. {remaining} recipients remaining.")
+                log_activity(f"Waiting {delay_seconds}s. {remaining} recipients remaining.")
                 time.sleep(delay_seconds)
-            else:
-                logger.info("Batch complete. Checking for more recipients immediately.")
 
-        # Final cleanup and logging
-        try:
-            smtp_handler.disconnect()
-        except Exception as e:
-            logger.warning(f"Error during SMTP disconnect: {e}")
+        log_activity("=" * 60)
+        log_activity(f"🏁 CAMPAIGN TASK FINISHED: {campaign.name if campaign else campaign_id}")
+        log_activity(f"   Total Sent in this task: {total_sent_in_task}, Total Failed in this task: {total_failed_in_task}")
+        log_activity("=" * 60)
 
-        logger.info("=" * 60)
-        logger.info(f"🏁 CAMPAIGN FINISHED: {campaign.name}")
-        logger.info(f"   Sent in this run: {total_sent_in_run}, Failed in this run: {total_failed_in_run}")
-        logger.info("=" * 60)
-
-        return {"status": "completed", "sent": total_sent_in_run, "failed": total_failed_in_run}
+        return {"status": "completed", "sent": total_sent_in_task, "failed": total_failed_in_task}
 
     except Exception as e:
-        logger.critical(f"💥 CRITICAL ERROR in send_campaign_task for campaign {campaign_id}: {e}", exc_info=True)
+        log_activity(f"💥 CRITICAL TASK ERROR: {e}", "ERROR")
+        log_activity(traceback.format_exc(), "ERROR")
         db.session.rollback()
         try:
-            # Attempt to mark the campaign as failed on critical error
             campaign = Campaign.query.get(campaign_id)
             if campaign:
                 campaign.status = 'Failed'
-                campaign.completed_at = datetime.utcnow()
+                campaign.status_message = "A critical error occurred in the sending task."
                 db.session.commit()
-        except Exception as final_e:
-            logger.error(f"Could not mark campaign as failed after critical error: {final_e}")
-        # Retry the task using Celery's built-in mechanism
+        except Exception as db_err:
+            log_activity(f"Could not even mark campaign as failed: {db_err}", "ERROR")
+        
         raise self.retry(exc=e, countdown=60)
 
 
@@ -198,24 +187,21 @@ def send_single_email_task(self, recipient_id, campaign_id):
     from app.core_logic.smtp_handler import SMTPHandler
     from app.core_logic.personalization import PersonalizationEngine
 
-    logger.info(f"Received single email task: recipient={recipient_id}, campaign={campaign_id}")
+    log_activity(f"Single email task: recipient={recipient_id}, campaign={campaign_id}")
 
     try:
         recipient = Recipient.query.get(recipient_id)
         campaign = Campaign.query.get(campaign_id)
 
         if not recipient or not campaign:
-            logger.error("Recipient or Campaign not found in single email task.")
             return {"status": "error", "message": "Not found"}
 
         smtp_profile = campaign.smtp_profile
         if not smtp_profile:
-            logger.error("No SMTP profile for single send.")
             return {"status": "error", "message": "No SMTP profile"}
 
         config = smtp_profile.to_dict()
         if not config.get('password'):
-            logger.error("SMTP password missing for single send.")
             return {"status": "error", "message": "Password missing"}
 
         handler = SMTPHandler(config)
@@ -227,8 +213,7 @@ def send_single_email_task(self, recipient_id, campaign_id):
         try:
             engine = PersonalizationEngine(campaign, recipient)
             subject, body_html, body_plain = engine.personalize()
-        except Exception as e:
-            logger.warning(f"Personalization failed in single send, using defaults. Error: {e}")
+        except Exception:
             subject = campaign.subject
             body_html = campaign.body_html
             body_plain = campaign.body_plain or ""
@@ -243,7 +228,7 @@ def send_single_email_task(self, recipient_id, campaign_id):
         if success:
             recipient.status = 'Sent'
             recipient.sent_at = datetime.utcnow()
-            recipient.status_message = 'OK (Retry)'
+            recipient.status_message = 'OK'
         else:
             recipient.status = 'Failed'
             recipient.status_message = str(message)[:250]
@@ -257,7 +242,7 @@ def send_single_email_task(self, recipient_id, campaign_id):
         return {"status": "sent" if success else "failed", "message": message}
 
     except Exception as e:
-        logger.error(f"Single email task failed critically: {e}", exc_info=True)
+        log_activity(f"Single email error: {e}", "ERROR")
         db.session.rollback()
         return {"status": "error", "message": str(e)}
 
@@ -266,33 +251,28 @@ def send_single_email_task(self, recipient_id, campaign_id):
 def process_scheduled_campaigns():
     """Check and start scheduled campaigns."""
     Campaign, Recipient, SMTPServer = _safe_import_models()
-    logger.info("Running scheduled campaign check...")
+    log_activity("Running process_scheduled_campaigns")
 
     try:
         now = datetime.utcnow()
-        scheduled_campaigns = Campaign.query.filter(
+        scheduled = Campaign.query.filter(
             Campaign.status == 'Scheduled',
             Campaign.scheduled_at <= now
         ).all()
 
-        if not scheduled_campaigns:
-            logger.info("No scheduled campaigns to start.")
-            return {"processed": 0}
-
         count = 0
-        for campaign in scheduled_campaigns:
-            logger.info(f"Starting scheduled campaign: {campaign.name} (ID: {campaign.id})")
+        for campaign in scheduled:
+            log_activity(f"Starting scheduled:  {campaign.name}")
             campaign.status = 'Sending'
             campaign.started_at = now
             db.session.commit()
+            # Enqueue the send_campaign_task
             send_campaign_task.delay(campaign.id)
             count += 1
 
-        logger.info(f"Started {count} scheduled campaigns.")
         return {"processed": count}
-
     except Exception as e:
-        logger.error(f"Error in process_scheduled_campaigns: {e}", exc_info=True)
+        log_activity(f"Error in process_scheduled_campaigns: {e}", "ERROR")
         db.session.rollback()
         return {"status": "error", "message": str(e)}
 
@@ -301,22 +281,20 @@ def process_scheduled_campaigns():
 def reset_daily_smtp_counts():
     """Reset daily SMTP counts for profiles (used by scheduled job)."""
     Campaign, Recipient, SMTPServer = _safe_import_models()
-    logger.info("Running daily SMTP count reset...")
+    log_activity("Running reset_daily_smtp_counts")
 
     try:
         today = datetime.utcnow().date()
-        updated_count = SMTPServer.query.filter(
+        updated = SMTPServer.query.filter(
             SMTPServer.last_reset_date != today
         ).update(
             {'sent_today': 0, 'last_reset_date': today},
             synchronize_session=False
         )
         db.session.commit()
-        logger.info(f"Reset daily counts for {updated_count} SMTP profiles.")
-        return {"reset_count": updated_count}
-
+        return {"reset": updated}
     except Exception as e:
-        logger.error(f"Error resetting SMTP counts: {e}", exc_info=True)
+        log_activity(f"Error resetting smtp counts: {e}", "ERROR")
         db.session.rollback()
         return {"status": "error", "message": str(e)}
 
@@ -324,23 +302,19 @@ def reset_daily_smtp_counts():
 # Lightweight scheduled tasks / placeholders
 @celery.task(name='app.tasks.process_sequence_automation')
 def process_sequence_automation():
-    logger.info("Running sequence automation task (placeholder)...")
     return {"status": "ok"}
 
 
 @celery.task(name='app.tasks.check_imap_replies')
 def check_imap_replies():
-    logger.info("Running IMAP reply check task (placeholder)...")
     return {"status": "checked"}
 
 
 @celery.task(name='app.tasks.cleanup_old_data')
 def cleanup_old_data():
-    logger.info("Running old data cleanup task (placeholder)...")
     return {"status": "cleaned"}
 
 
 @celery.task(name='app.tasks.generate_campaign_report')
 def generate_campaign_report(campaign_id, user_email):
-    logger.info("Running campaign report generation task (placeholder)...")
     return {"status": "completed"}
