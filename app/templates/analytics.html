@@ -88,7 +88,6 @@
                     </div>
                 </div>
                 <div class="progress" style="height: 20px;">
-                    <!-- Fixed: Using [val, 100]|min list syntax -->
                     <div class="progress-bar bg-primary" role="progressbar" style="width: {{ [summary.avg_open_rate, 100]|min }}%">
                         {{ summary.avg_open_rate }}%
                     </div>
@@ -119,7 +118,6 @@
                     </div>
                 </div>
                 <div class="progress" style="height: 20px;">
-                    <!-- Fixed: Correct Jinja2 syntax for min calculation -->
                     <div class="progress-bar bg-success" role="progressbar" style="width: {{ [summary.avg_click_rate * 10, 100]|min }}%">
                         {{ summary.avg_click_rate }}%
                     </div>
