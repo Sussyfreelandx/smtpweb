@@ -16,7 +16,7 @@ class Config:
     
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     
-    # Disable connection pool for compatibility with threading
+    # Disable connection pool for compatibility with some environments
     SQLALCHEMY_ENGINE_OPTIONS = {
         'poolclass': NullPool,
         'pool_pre_ping': True
@@ -29,37 +29,40 @@ class Config:
     if _redis_url.endswith('/'):
         _redis_url = _redis_url.rstrip('/')
         
-    # Force SSL scheme for Render
+    # --- RENDER SSL FIX ---
+    # Force rediss:// scheme and define shared SSL options for all Redis clients
+    _redis_ssl_options = {}
     if os.environ.get('RENDER'):
         if _redis_url.startswith('redis://'):
             _redis_url = _redis_url.replace('redis://', 'rediss://', 1)
-    
+        _redis_ssl_options = {'ssl_cert_reqs': ssl.CERT_NONE}
+    # -----------------------
+
     REDIS_URL = _redis_url
             
     # Celery
     CELERY_BROKER_URL = _redis_url
     CELERY_RESULT_BACKEND = _redis_url
-    
-    # Render requires SSL for Redis
     if os.environ.get('RENDER'):
-        CELERY_BROKER_USE_SSL = {'ssl_cert_reqs': ssl.CERT_NONE}
-        CELERY_REDIS_BACKEND_USE_SSL = {'ssl_cert_reqs': ssl.CERT_NONE}
+        CELERY_BROKER_USE_SSL = _redis_ssl_options
+        CELERY_REDIS_BACKEND_USE_SSL = _redis_ssl_options
     
     # Redis Cache
     CACHE_TYPE = 'RedisCache'
     CACHE_REDIS_URL = _redis_url
+    # --- FIX: Added SSL options for Flask-Caching ---
+    CACHE_OPTIONS = { 'redis_connect_options': _redis_ssl_options } if os.environ.get('RENDER') else {}
     CACHE_DEFAULT_TIMEOUT = 300
     
     # Rate Limiting - Use Redis
     RATELIMIT_STORAGE_URL = _redis_url
-    RATELIMIT_STORAGE_OPTIONS = {}
-    if os.environ.get('RENDER'):
-        RATELIMIT_STORAGE_OPTIONS = {'ssl_cert_reqs': ssl.CERT_NONE}
+    # --- FIX: Added SSL options for Flask-Limiter ---
+    RATELIMIT_STORAGE_OPTIONS = _redis_ssl_options
     RATELIMIT_DEFAULT = "200 per day"
     RATELIMIT_HEADERS_ENABLED = True
     
-    # WebSocket Configuration - Disabled for threading mode
-    SOCKETIO_MESSAGE_QUEUE = None
+    # WebSocket Configuration
+    SOCKETIO_MESSAGE_QUEUE = _redis_url
     
     # AI Configuration
     OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
@@ -109,6 +112,7 @@ class DevelopmentConfig(Config):
     SESSION_COOKIE_SECURE = False
     SERVER_NAME = None
     CACHE_TYPE = 'SimpleCache'
+    SOCKETIO_MESSAGE_QUEUE = None # Don't use Redis for SocketIO in dev
 
 
 class ProductionConfig(Config):
@@ -120,6 +124,7 @@ class TestingConfig(Config):
     TESTING = True
     SQLALCHEMY_DATABASE_URI = 'sqlite:///:memory:'
     CACHE_TYPE = 'SimpleCache'
+    SOCKETIO_MESSAGE_QUEUE = None
 
 
 config = {
