@@ -2,21 +2,19 @@ databases:
   - name: paris-sender-db
     databaseName: paris_sender_db
     user: paris_sender_user
-    plan: free
 
 services:
   - type: redis
     name: paris-sender-redis
-    ipAllowList: [] # Keep empty to allow access from other Render services
-    plan: free
+    ipAllowList: []
 
   - type: web
     name: paris-sender-web
     env: python
-    # pythonVersion is not needed for python environments on Render
-    plan: free
-    buildCommand: "./build.sh"
-    startCommand: "gunicorn -c gunicorn.conf.py wsgi:app"
+    pythonVersion: 3.11.4
+    buildCommand: chmod +x build.sh && ./build.sh
+    # CORRECTED: Use the launcher script to load the gunicorn.conf.py file
+    startCommand: ./launcher.sh
     envVars:
       - key: DATABASE_URL
         fromDatabase:
@@ -33,7 +31,6 @@ services:
         value: wsgi:app
       - key: RENDER
         value: "true"
-      # These SMTP proxy vars are fine as sync: false, user provides them in UI
       - key: SMTP_PROXY_HOST
         sync: false
       - key: SMTP_PROXY_PORT
@@ -46,13 +43,10 @@ services:
   - type: worker
     name: paris-sender-worker
     env: python
-    plan: free
-    buildCommand: "pip install --upgrade pip && pip install -r requirements.txt"
-    # CORRECTED startCommand:
-    # - Points to the unified Celery app instance in `celery_app.py`.
-    # - Uses 'eventlet' pool for consistency with gunicorn and better I/O performance.
-    # - Reduced concurrency to 4 as a safe default for a free plan.
-    startCommand: "celery -A celery_app:celery worker --loglevel=info --pool=eventlet --concurrency=4"
+    pythonVersion: 3.11.4
+    buildCommand: chmod +x build.sh && ./build.sh
+    # CORRECTED: Use eventlet for consistency with the web worker
+    startCommand: celery -A celery_worker.celery worker --loglevel=info --pool=eventlet --concurrency=10
     envVars:
       - key: DATABASE_URL
         fromDatabase:
@@ -63,14 +57,11 @@ services:
           type: redis
           name: paris-sender-redis
           property: connectionString
-      # The worker needs its own reference to the secret key
       - key: SECRET_KEY
         fromService:
           type: web
           name: paris-sender-web
           envVarKey: SECRET_KEY
-      - key: FLASK_APP
-        value: wsgi:app
       - key: RENDER
         value: "true"
       - key: SMTP_PROXY_HOST
