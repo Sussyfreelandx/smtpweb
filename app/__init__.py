@@ -10,8 +10,10 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
 from config import config
+# Import the unconfigured celery instance from celery_app
+from celery_app import celery
 
-# --- Initialize Extensions ---
+# --- Initialize Extensions (without app) ---
 db = SQLAlchemy()
 login_manager = LoginManager()
 login_manager.login_view = 'main.login'
@@ -23,9 +25,6 @@ limiter = Limiter(
     key_func=get_remote_address,
     default_limits=["200 per day", "50 per hour"]
 )
-
-# This will be populated by the factory
-celery = None
 
 # --- Application Factory ---
 def create_app(config_name=None):
@@ -48,23 +47,26 @@ def create_app(config_name=None):
     cache.init_app(app)
     limiter.init_app(app)
 
-    # Initialize Celery
-    # We do this import here to avoid circular dependencies
-    from celery_app import celery as celery_instance
-    global celery
-    celery = celery_instance
+    # --- Configure Celery with App Context ---
+    # Update the celery config with the Flask app config
     celery.conf.update(app.config)
 
+    # Create a custom Task class that operates within the app context
+    class ContextTask(celery.Task):
+        def __call__(self, *args, **kwargs):
+            with app.app_context():
+                return self.run(*args, **kwargs)
+
+    # Set the custom task class as the default for all tasks
+    celery.Task = ContextTask
+
     # --- Register Blueprints ---
-    # Main application routes
     from .main import bp as main_bp
     app.register_blueprint(main_bp)
 
-    # API routes
     from .api import bp as api_bp
     app.register_blueprint(api_bp, url_prefix='/api/v1')
     
-    # Tracking routes
     from .tracking import bp as tracking_bp
     app.register_blueprint(tracking_bp)
 
