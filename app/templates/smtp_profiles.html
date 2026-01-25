@@ -104,12 +104,11 @@
                             {% endif %}
                         </td>
                         <td class="text-center">
-                            {% set usage_percent = ((profile.sent_today or 0) / (profile.daily_limit or 500) * 100) %}
+                            {% set usage_percent = ((profile.sent_today or 0) / (profile.daily_limit or 500) * 100)|int %}
                             <div class="d-flex align-items-center justify-content-center">
                                 <div class="progress me-2" style="width: 60px; height: 8px;">
-                                    <!-- FIXED: Replaced invalid |min(100) filter with conditional logic -->
                                     <div class="progress-bar {% if usage_percent > 90 %}bg-danger{% elif usage_percent > 70 %}bg-warning{% else %}bg-success{% endif %}" 
-                                         style="width: {{ 100 if usage_percent > 100 else usage_percent }}%"></div>
+                                         style="width: {{ [usage_percent, 100]|min }}%"></div>
                                 </div>
                                 <small class="text-muted">{{ profile.sent_today or 0 }}/{{ profile.daily_limit or 500 }}</small>
                             </div>
