@@ -16,53 +16,46 @@ class Config:
     
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     
-    # Disable connection pool for compatibility with some environments
+    # Disable connection pool for compatibility with threading
     SQLALCHEMY_ENGINE_OPTIONS = {
         'poolclass': NullPool,
         'pool_pre_ping': True
     }
     
     # --- REDIS CONFIGURATION ---
-    _redis_url = os.environ.get('REDIS_URL') or 'redis://localhost:6379/0'
-    
-    # Clean up trailing slashes
-    if _redis_url.endswith('/'):
-        _redis_url = _redis_url.rstrip('/')
-        
-    # --- RENDER SSL FIX ---
-    # Force rediss:// scheme and define shared SSL options for all Redis clients
-    _redis_ssl_options = {}
-    if os.environ.get('RENDER'):
-        if _redis_url.startswith('redis://'):
-            _redis_url = _redis_url.replace('redis://', 'rediss://', 1)
-        _redis_ssl_options = {'ssl_cert_reqs': ssl.CERT_NONE}
-    # -----------------------
-
-    REDIS_URL = _redis_url
+    REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
             
     # Celery
-    CELERY_BROKER_URL = _redis_url
-    CELERY_RESULT_BACKEND = _redis_url
-    if os.environ.get('RENDER'):
-        CELERY_BROKER_USE_SSL = _redis_ssl_options
-        CELERY_REDIS_BACKEND_USE_SSL = _redis_ssl_options
+    CELERY_BROKER_URL = REDIS_URL
+    CELERY_RESULT_BACKEND = REDIS_URL
     
+    CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+    CELERY_REDIS_BACKEND_HEALTH_CHECK_INTERVAL = 30
+    
+    # Render requires SSL for Redis
+    if 'RENDER' in os.environ:
+        CELERY_TASK_ALWAYS_EAGER = False
+        CELERY_BROKER_USE_SSL = {'ssl_cert_reqs': ssl.CERT_NONE}
+        CELERY_REDIS_BACKEND_USE_SSL = {'ssl_cert_reqs': ssl.CERT_NONE}
+    else:
+        # Use eager tasks locally for simpler debugging
+        CELERY_TASK_ALWAYS_EAGER = True
+
     # Redis Cache
     CACHE_TYPE = 'RedisCache'
-    CACHE_REDIS_URL = _redis_url
-    # --- FIX: Added SSL options for Flask-Caching ---
-    CACHE_OPTIONS = { 'redis_connect_options': _redis_ssl_options } if os.environ.get('RENDER') else {}
+    CACHE_REDIS_URL = REDIS_URL
     CACHE_DEFAULT_TIMEOUT = 300
     
     # Rate Limiting - Use Redis
-    RATELIMIT_STORAGE_URL = _redis_url
-    # --- FIX: Added SSL options for Flask-Limiter ---
-    RATELIMIT_STORAGE_OPTIONS = _redis_ssl_options
+    RATELIMIT_STORAGE_URL = REDIS_URL
+    RATELIMIT_STORAGE_OPTIONS = {}
+    if 'RENDER' in os.environ:
+        RATELIMIT_STORAGE_OPTIONS['ssl_cert_reqs'] = ssl.CERT_NONE
     RATELIMIT_DEFAULT = "200 per day"
     RATELIMIT_HEADERS_ENABLED = True
     
     # WebSocket Configuration
-    SOCKETIO_MESSAGE_QUEUE = _redis_url
+    SOCKETIO_MESSAGE_QUEUE = REDIS_URL
     
     # AI Configuration
     OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
@@ -112,7 +105,6 @@ class DevelopmentConfig(Config):
     SESSION_COOKIE_SECURE = False
     SERVER_NAME = None
     CACHE_TYPE = 'SimpleCache'
-    SOCKETIO_MESSAGE_QUEUE = None # Don't use Redis for SocketIO in dev
 
 
 class ProductionConfig(Config):
@@ -124,9 +116,9 @@ class TestingConfig(Config):
     TESTING = True
     SQLALCHEMY_DATABASE_URI = 'sqlite:///:memory:'
     CACHE_TYPE = 'SimpleCache'
-    SOCKETIO_MESSAGE_QUEUE = None
 
 
+# Add 'default' key back to point to ProductionConfig
 config = {
     'development': DevelopmentConfig,
     'production': ProductionConfig,
