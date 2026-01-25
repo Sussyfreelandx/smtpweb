@@ -13,16 +13,16 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_wtf.csrf import CSRFProtect
 from celery import Celery
+from config import config, ProductionConfig # <-- Import config objects
 
 # Create extension instances
 db = SQLAlchemy()
 migrate = Migrate()
 login = LoginManager()
 csrf = CSRFProtect()
-# async_mode='eventlet' is critical for Render
 socketio = SocketIO(cors_allowed_origins="*", async_mode='eventlet')
 cache = Cache()
-limiter = Limiter(key_func=get_remote_address) # Default limits set in config
+limiter = Limiter(key_func=get_remote_address, default_limits=["200 per minute"])
 celery = Celery(__name__)
 
 # Bcrypt setup
@@ -39,8 +39,14 @@ login.login_message_category = "info"
 
 def make_celery(app: Flask, celery_obj: Celery):
     """Configure Celery to use Flask app context."""
-    celery_obj.conf.broker_url = app.config['CELERY_BROKER_URL']
-    celery_obj.conf.result_backend = app.config['CELERY_RESULT_BACKEND']
+    broker = app.config.get("CELERY_BROKER_URL")
+    backend = app.config.get("CELERY_RESULT_BACKEND")
+
+    if broker:
+        celery_obj.conf.broker_url = broker
+    if backend:
+        celery_obj.conf.result_backend = backend
+
     celery_obj.conf.update(app.config.get("CELERY", {}))
 
     class ContextTask(celery_obj.Task):
@@ -51,32 +57,41 @@ def make_celery(app: Flask, celery_obj: Celery):
     celery_obj.Task = ContextTask
     return celery_obj
 
-def create_app(config_object=None):
+def create_app(config_name=None):
     """Application factory."""
     app = Flask(__name__, instance_relative_config=False)
 
-    # 1. Determine config source (env var or direct object)
-    config_source = os.environ.get("APP_SETTINGS", 'config.default')
+    # Determine which configuration to use
+    if config_name is None:
+        config_name = os.environ.get("APP_SETTINGS", "production").replace("config.", "")
+    
+    # Use ProductionConfig as a fallback default
+    config_obj = config.get(config_name, ProductionConfig)
+    app.config.from_object(config_obj)
 
-    # Load configuration from config.py
-    # This centralizes config management
-    app.config.from_object(config_source)
+    # Set secret key from environment or config
+    if "SECRET_KEY" not in app.config:
+        app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret-key-change-this-in-prod")
 
-    # Allow overriding with an explicit config object if provided
-    if config_object:
-        app.config.from_object(config_object)
+    # Set other required configs if not present
+    app.config.setdefault("SQLALCHEMY_DATABASE_URI", os.environ.get("DATABASE_URL", "sqlite:///data.db"))
+    app.config.setdefault("SQLALCHEMY_TRACK_MODIFICATIONS", False)
+    app.config.setdefault("WTF_CSRF_ENABLED", True)
+    
+    # Use the REDIS_URL from config for other services
+    redis_url = app.config.get('REDIS_URL')
+    app.config.setdefault("CELERY_BROKER_URL", redis_url)
+    app.config.setdefault("CELERY_RESULT_BACKEND", redis_url)
+    app.config.setdefault("CACHE_TYPE", "RedisCache" if redis_url else "SimpleCache")
+    app.config.setdefault("CACHE_REDIS_URL", redis_url)
 
-    # SECRET_KEY is crucial, ensure it's set
-    if not app.config.get("SECRET_KEY"):
-        raise ValueError("SECRET_KEY is not set! Please set it in your config or environment.")
-
-    # 2. Initialize extensions with app
+    # Initialize extensions with app
     db.init_app(app)
     migrate.init_app(app, db)
     login.init_app(app)
     csrf.init_app(app)
     
-    # SocketIO init uses the message queue from the config
+    # Initialize SocketIO with message queue
     socketio.init_app(app, message_queue=app.config.get('SOCKETIO_MESSAGE_QUEUE'))
     
     cache.init_app(app)
@@ -88,7 +103,7 @@ def create_app(config_object=None):
     # Configure Celery
     make_celery(app, celery)
 
-    # 3. Register Blueprints
+    # Register Blueprints
     with app.app_context():
         from app.main import bp as main_bp
         app.register_blueprint(main_bp)
