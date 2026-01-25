@@ -41,11 +41,20 @@ def runserver(host, port, reload):
 
 @app.cli.command("celery-worker")
 @click.option("--loglevel", default="info")
-@click.option("--concurrency", default=2)
-def celery_worker(loglevel, concurrency):
-    """Start Celery worker."""
-    cmd = ["celery", "-A", "app.celery", "worker", "--loglevel", loglevel, "--concurrency", str(concurrency)]
+@click.option("--concurrency", default=4)
+@click.option("--pool", default="eventlet")
+def celery_worker(loglevel, concurrency, pool):
+    """Start Celery worker. Now points to the correct Celery app instance."""
+    # The -A flag points to `celery_app.py` and the `celery` instance within it.
+    cmd = [
+        "celery", "-A", "celery_app:celery", "worker", 
+        f"--loglevel={loglevel}", 
+        f"--concurrency={concurrency}",
+        f"--pool={pool}"
+    ]
+    # Using os.execvp replaces the current process with the Celery worker
     os.execvp(cmd[0], cmd)
+
 
 @app.cli.command("create-admin")
 @click.argument("username")
