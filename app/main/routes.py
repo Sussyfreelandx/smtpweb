@@ -2,6 +2,10 @@ from flask import (render_template, flash, redirect, url_for, request,
                    jsonify, current_app, Response, send_file, abort, session)
 from flask_login import login_user, logout_user, current_user, login_required
 from werkzeug.utils import secure_filename
+
+# Correctly import forms from the app/forms.py file
+from app.forms import LoginForm, RegistrationForm, DeliverabilityForm, SuppressionForm, SMTPServerForm
+
 from app import db, cache, socketio
 from app.models import (
     User, UserRole, Campaign, Recipient, SMTPServer, Suppression,
@@ -30,7 +34,8 @@ from datetime import datetime, timedelta
 from sqlalchemy import func
 
 # ==================== FORMS ====================
-
+# These forms are re-defined here, but it's better practice to import them
+# from a dedicated forms.py file. However, leaving them as is per your request.
 
 class DeliverabilityForm(FlaskForm):
     domain_ip = StringField('Domain or IP', validators=[DataRequired()])
@@ -158,26 +163,23 @@ def login():
     if current_user.is_authenticated:
         return redirect(url_for('main.index'))
 
-    if request.method == 'POST':
-        username = request.form.get('username', '').strip()
-        password = request.form.get('password', '')
-        remember = bool(request.form.get('remember', False))
-
+    form = LoginForm()
+    if form.validate_on_submit():
+        username = form.username.data.strip()
         user = User.query.filter(
             (User.username == username) | (User.email == username)
         ).first()
 
-        if user and user.check_password(password):
+        if user and user.check_password(form.password.data):
             if not user.is_active:
                 flash('Your account has been deactivated. Please contact support.', 'danger')
                 return redirect(url_for('main.login'))
 
-            # Check 2FA if enabled
             if user.two_factor_enabled:
                 session['pending_2fa_user_id'] = user.id
                 return redirect(url_for('main.verify_2fa'))
 
-            login_user(user, remember=remember)
+            login_user(user, remember=form.remember_me.data)
             user.last_login = datetime.utcnow()
             db.session.commit()
 
@@ -185,14 +187,15 @@ def login():
             log_activity(f"User {user.username} logged in", "SUCCESS")
 
             next_page = request.args.get('next')
-            if next_page and next_page.startswith('/'):
-                return redirect(next_page)
-            return redirect(url_for('main.index'))
+            if not next_page or not next_page.startswith('/'):
+                next_page = url_for('main.index')
+            return redirect(next_page)
 
         flash('Invalid username or password', 'danger')
         log_activity(f"Failed login attempt for: {username}", "WARNING")
 
-    return render_template('login.html', title='Sign In')
+    # Pass the form object to the template
+    return render_template('login.html', title='Sign In', form=form)
 
 
 @bp.route('/verify-2fa', methods=['GET', 'POST'])
@@ -242,56 +245,30 @@ def register():
     if current_user.is_authenticated:
         return redirect(url_for('main.index'))
 
-    if request.method == 'POST':
-        username = request.form.get('username', '').strip()
-        email = request.form.get('email', '').strip().lower()
-        password = request.form.get('password', '')
-        confirm_password = request.form.get('confirm_password', '')
+    form = RegistrationForm()
+    if form.validate_on_submit():
+        try:
+            user = User(username=form.username.data, email=form.email.data)
+            user.set_password(form.password.data)
 
-        # Validation
-        errors = []
+            db.session.add(user)
+            db.session.flush()
 
-        if len(username) < 3:
-            errors.append('Username must be at least 3 characters long.')
+            user_settings = UserSettings(user_id=user.id)
+            db.session.add(user_settings)
 
-        if not is_valid_email(email):
-            errors.append('Please enter a valid email address.')
+            db.session.commit()
 
-        if len(password) < 8:
-            errors.append('Password must be at least 8 characters long.')
+            log_activity(f"New user registered: {form.username.data}", "SUCCESS")
+            flash('Registration successful! Please login.', 'success')
+            return redirect(url_for('main.login'))
+        except Exception as e:
+            db.session.rollback()
+            flash(f"An error occurred during registration: {e}", "danger")
+            current_app.logger.error(f"Registration error: {e}")
 
-        if password != confirm_password:
-            errors.append('Passwords do not match.')
-
-        if User.query.filter_by(username=username).first():
-            errors.append('Username already exists.')
-
-        if User.query.filter_by(email=email).first():
-            errors.append('Email already registered.')
-
-        if errors:
-            for error in errors:
-                flash(error, 'danger')
-            return redirect(url_for('main.register'))
-
-        # Create user
-        user = User(username=username, email=email)
-        user.set_password(password)
-
-        # Create default settings
-        db.session.add(user)
-        db.session.flush()
-
-        user_settings = UserSettings(user_id=user.id)
-        db.session.add(user_settings)
-
-        db.session.commit()
-
-        log_activity(f"New user registered: {username}", "SUCCESS")
-        flash('Registration successful! Please login.', 'success')
-        return redirect(url_for('main.login'))
-
-    return render_template('register.html', title='Register')
+    # Pass the form object to the template, which makes csrf_token() available
+    return render_template('register.html', title='Register', form=form)
 
 
 # ==================== DASHBOARD & MAIN ROUTES ====================
@@ -949,13 +926,64 @@ def delete_campaign(campaign_id):
 
 # ==================== API KEY ROUTES ====================
 
-@bp.route('/api-keys')
+@bp.route('/api-keys', methods=['GET', 'POST'])
 @login_required
 def api_keys():
-    """Manage API keys."""
-    # This assumes your api_keys.html template is prepared to receive 'keys'
-    keys = APIKey.query.filter_by(user_id=current_user.id).all()
-    return render_template('api_keys.html', title='API Keys', keys=keys)
+    if request.method == 'POST':
+        name = request.form.get('name')
+        if not name:
+            flash('Key name is required.', 'danger')
+            return redirect(url_for('main.api_keys'))
+
+        key = APIKey.generate_key()
+        api_key = APIKey(user_id=current_user.id, name=name)
+        api_key.set_key(key)
+        db.session.add(api_key)
+        db.session.commit()
+        session['new_api_key'] = key
+        flash(f'API Key "{name}" created.', 'success')
+        return redirect(url_for('main.api_keys'))
+
+    keys = APIKey.query.filter_by(user_id=current_user.id, is_active=True).all()
+    new_api_key = session.pop('new_api_key', None)
+    return render_template('api_keys.html', title='API Keys', api_keys=keys, new_api_key=new_api_key)
+
+@bp.route('/api-keys/create', methods=['POST'])
+@login_required
+def create_api_key():
+    name = request.form.get('name')
+    scopes = request.form.getlist('scopes')
+    expires_in = int(request.form.get('expires_in', 30))
+
+    if not name:
+        flash('Key name is required.', 'danger')
+        return redirect(url_for('main.api_keys'))
+
+    key = APIKey.generate_key()
+    api_key_obj = APIKey(user_id=current_user.id, name=name)
+    api_key_obj.set_key(key)
+    api_key_obj.set_scopes(scopes)
+
+    if expires_in > 0:
+        api_key_obj.expires_at = datetime.utcnow() + timedelta(days=expires_in)
+
+    db.session.add(api_key_obj)
+    db.session.commit()
+
+    session['new_api_key'] = key
+    return redirect(url_for('main.api_keys'))
+
+@bp.route('/api-keys/revoke/<int:key_id>', methods=['POST'])
+@login_required
+def revoke_api_key(key_id):
+    key = APIKey.query.get_or_404(key_id)
+    if key.user_id != current_user.id:
+        abort(403)
+    
+    key.is_active = False
+    db.session.commit()
+    flash(f'API Key "{key.name}" has been revoked.', 'success')
+    return redirect(url_for('main.api_keys'))
 
 
 # ==================== SMTP SETTINGS ====================
