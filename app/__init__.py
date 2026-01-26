@@ -10,13 +10,12 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
 from config import config
-# Import the unconfigured celery instance from celery_app
 from celery_app import celery
 
 # --- Initialize Extensions (without app) ---
 db = SQLAlchemy()
 login_manager = LoginManager()
-login_manager.login_view = 'main.login'
+login_manager.login_view = 'main.login' # Where to redirect for login
 socketio = SocketIO()
 bcrypt = Bcrypt()
 migrate = Migrate()
@@ -41,23 +40,18 @@ def create_app(config_name=None):
     # --- Initialize Extensions with App ---
     db.init_app(app)
     login_manager.init_app(app)
-    socketio.init_app(app, message_queue=app.config['SOCKETIO_MESSAGE_QUEUE'])
+    socketio.init_app(app, message_queue=app.config.get('SOCKETIO_MESSAGE_QUEUE'))
     bcrypt.init_app(app)
     migrate.init_app(app, db)
     cache.init_app(app)
     limiter.init_app(app)
 
     # --- Configure Celery with App Context ---
-    # Update the celery config with the Flask app config
     celery.conf.update(app.config)
-
-    # Create a custom Task class that operates within the app context
     class ContextTask(celery.Task):
         def __call__(self, *args, **kwargs):
             with app.app_context():
                 return self.run(*args, **kwargs)
-
-    # Set the custom task class as the default for all tasks
     celery.Task = ContextTask
 
     # --- Register Blueprints ---
@@ -70,11 +64,9 @@ def create_app(config_name=None):
     from .tracking import bp as tracking_bp
     app.register_blueprint(tracking_bp)
 
-    # --- Import models here to ensure they are registered with SQLAlchemy ---
+    # --- Import models and events within app context to avoid circular issues ---
     with app.app_context():
         from . import models
-
-    # --- Import SocketIO event handlers ---
-    from . import events
+        from . import events
 
     return app
