@@ -162,3 +162,25 @@ class GlobalSettingsForm(FlaskForm):
     local_ai_model = StringField('Local AI Model', default='llama3', validators=[Optional()])
 
     submit = SubmitField('Save Settings')
+
+# ==================== TOOL & MISC FORMS ====================
+
+class DeliverabilityForm(FlaskForm):
+    """Form for the deliverability tools page."""
+    domain_ip = StringField('Domain or IP', validators=[DataRequired()])
+    check_auth = SubmitField('Check Authentication')
+    check_blacklist = SubmitField('Check Blacklist')
+
+
+class TeamForm(FlaskForm):
+    """Form for creating a new team."""
+    name = StringField('Team Name', validators=[DataRequired()])
+    description = TextAreaField('Description')
+    submit = SubmitField('Create Team')
+
+
+class WebhookForm(FlaskForm):
+    """Form for creating or editing a webhook."""
+    name = StringField('Webhook Name', validators=[DataRequired()])
+    url = StringField('Webhook URL', validators=[DataRequired()])
+    submit = SubmitField('Save Webhook')
