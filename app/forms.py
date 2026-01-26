@@ -163,24 +163,38 @@ class GlobalSettingsForm(FlaskForm):
 
     submit = SubmitField('Save Settings')
 
-# ==================== TOOL & MISC FORMS ====================
+
+# ==================== FORMS MOVED FROM ROUTES ====================
 
 class DeliverabilityForm(FlaskForm):
-    """Form for the deliverability tools page."""
     domain_ip = StringField('Domain or IP', validators=[DataRequired()])
     check_auth = SubmitField('Check Authentication')
     check_blacklist = SubmitField('Check Blacklist')
 
 
+class SMTPProfileForm(FlaskForm):
+    name = StringField('Profile Name', validators=[DataRequired()])
+    server = StringField('SMTP Server', validators=[DataRequired()])
+    port = StringField('Port', default='587')
+    username = StringField('Username', validators=[DataRequired()])
+    password = StringField('Password')
+    sender_name = StringField('Sender Name')
+    sender_email = StringField('Sender Email', validators=[Optional(), Email()])
+    use_tls = BooleanField('Use TLS', default=True)
+    use_ssl = BooleanField('Use SSL', default=False)
+    is_active = BooleanField('Active', default=True)
+    daily_limit = StringField('Daily Limit', default='500')
+    priority = StringField('Priority', default='1')
+    submit = SubmitField('Save Profile')
+
+
 class TeamForm(FlaskForm):
-    """Form for creating a new team."""
     name = StringField('Team Name', validators=[DataRequired()])
     description = TextAreaField('Description')
     submit = SubmitField('Create Team')
 
 
 class WebhookForm(FlaskForm):
-    """Form for creating or editing a webhook."""
     name = StringField('Webhook Name', validators=[DataRequired()])
     url = StringField('Webhook URL', validators=[DataRequired()])
     submit = SubmitField('Save Webhook')
