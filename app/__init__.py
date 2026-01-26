@@ -8,6 +8,8 @@ from flask_migrate import Migrate
 from flask_caching import Cache
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+# Import CSRFProtect from Flask-WTF
+from flask_wtf.csrf import CSRFProtect
 
 from config import config
 from celery_app import celery
@@ -15,7 +17,7 @@ from celery_app import celery
 # --- Initialize Extensions (without app) ---
 db = SQLAlchemy()
 login_manager = LoginManager()
-login_manager.login_view = 'main.login' # Where to redirect for login
+login_manager.login_view = 'main.login'
 socketio = SocketIO()
 bcrypt = Bcrypt()
 migrate = Migrate()
@@ -24,6 +26,8 @@ limiter = Limiter(
     key_func=get_remote_address,
     default_limits=["200 per day", "50 per hour"]
 )
+# Create the CSRFProtect instance
+csrf = CSRFProtect()
 
 # --- Application Factory ---
 def create_app(config_name=None):
@@ -45,6 +49,8 @@ def create_app(config_name=None):
     migrate.init_app(app, db)
     cache.init_app(app)
     limiter.init_app(app)
+    # Initialize CSRF protection for the app
+    csrf.init_app(app)
 
     # --- Configure Celery with App Context ---
     celery.conf.update(app.config)
