@@ -2,15 +2,16 @@ from flask import (render_template, flash, redirect, url_for, request,
                    jsonify, current_app, Response, send_file, abort, session)
 from flask_login import login_user, logout_user, current_user, login_required
 from werkzeug.utils import secure_filename
-from app import db, cache, socketio
-from app.forms import (
-    DeliverabilityForm, SuppressionForm, SMTPServerForm, TeamForm, WebhookForm
-)
+from app import db, socketio
+from app.main import bp
 from app.models import (
     User, UserRole, Campaign, Recipient, SMTPServer, Suppression,
     GlobalSettings, Sequence, SequenceRecipient, Tag, Segment,
     EmailTemplate, Team, APIKey, Webhook, Notification, ActivityLog,
     DailyStats, HourlyStats, UserSettings, ConsentRecord
+)
+from app.forms import (
+    DeliverabilityForm, SuppressionForm, SMTPProfileForm, TeamForm, WebhookForm
 )
 from app.core_logic.deliverability import DeliverabilityHelper
 from app.core_logic.ai_handler import AIHandler
@@ -19,7 +20,6 @@ from app.utils import (
     log_activity, get_logs, is_valid_email, html_to_plain_text,
     allowed_file, parse_csv_file
 )
-from app.main import bp
 import csv
 import io
 import json
@@ -912,52 +912,7 @@ def api_keys():
     """Manage API keys."""
     # This assumes your api_keys.html template is prepared to receive 'keys'
     keys = APIKey.query.filter_by(user_id=current_user.id).all()
-    new_api_key_val = session.pop('new_api_key', None)
-    return render_template('api_keys.html', title='API Keys', api_keys=keys, new_api_key=new_api_key_val)
-
-@bp.route('/api-keys/create', methods=['POST'])
-@login_required
-def create_api_key():
-    """Create a new API key."""
-    name = request.form.get('name')
-    scopes = request.form.getlist('scopes')
-    expires_in = int(request.form.get('expires_in', 0))
-
-    if not name:
-        flash('Key name is required.', 'danger')
-        return redirect(url_for('main.api_keys'))
-
-    new_key_val = APIKey.generate_key()
-    api_key = APIKey(
-        name=name,
-        user_id=current_user.id
-    )
-    api_key.set_key(new_key_val)
-    api_key.set_scopes(scopes if scopes else ['read'])
-    
-    if expires_in > 0:
-        api_key.expires_at = datetime.utcnow() + timedelta(days=expires_in)
-
-    db.session.add(api_key)
-    db.session.commit()
-
-    session['new_api_key'] = new_key_val
-    flash('API Key created successfully!', 'success')
-    return redirect(url_for('main.api_keys'))
-
-
-@bp.route('/api-keys/revoke/<int:key_id>', methods=['POST'])
-@login_required
-def revoke_api_key(key_id):
-    """Revoke an API key."""
-    key = APIKey.query.get_or_404(key_id)
-    if key.user_id != current_user.id:
-        abort(403)
-    
-    db.session.delete(key)
-    db.session.commit()
-    flash(f"API key '{key.name}' has been revoked.", 'success')
-    return redirect(url_for('main.api_keys'))
+    return render_template('api_keys.html', title='API Keys', keys=keys)
 
 
 # ==================== SMTP SETTINGS ====================
@@ -1316,7 +1271,7 @@ def deliverability_tools():
                 'auth': auth_results
             }
         elif form.check_blacklist.data:
-            blacklist_result, _ = helper.check_blacklist(target)
+            blacklist_result = helper.check_blacklist(target)
             results = {
                 'type': 'blacklist',
                 'target': target,
