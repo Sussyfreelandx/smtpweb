@@ -3,7 +3,8 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from flask_login import UserMixin
 from itsdangerous import URLSafeTimedSerializer as Serializer
 from flask import current_app
-from app import db, login
+# Correctly import db and the login_manager instance
+from app import db, login_manager
 from cryptography.fernet import Fernet
 import base64
 import hashlib
@@ -12,7 +13,8 @@ import secrets
 import enum
 
 
-@login.user_loader
+# Use the imported login_manager instance for the user_loader decorator
+@login_manager.user_loader
 def load_user(id):
     return User.query.get(int(id))
 
