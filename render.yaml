@@ -46,7 +46,7 @@ services:
     pythonVersion: 3.11.4
     buildCommand: chmod +x build.sh && ./build.sh
     # CORRECTED: Use eventlet for consistency with the web worker
-    startCommand: celery -A celery_worker.celery worker --loglevel=info --pool=eventlet --concurrency=10
+    startCommand: celery -A celery_worker:celery worker --loglevel=info --pool=eventlet --concurrency=10
     envVars:
       - key: DATABASE_URL
         fromDatabase:
