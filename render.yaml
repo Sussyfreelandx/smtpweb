@@ -11,7 +11,6 @@ services:
   - type: web
     name: paris-sender-web
     env: python
-    pythonVersion: 3.11.4
     buildCommand: chmod +x build.sh && ./build.sh
     # CORRECTED: Use the launcher script to load the gunicorn.conf.py file
     startCommand: ./launcher.sh
@@ -43,7 +42,6 @@ services:
   - type: worker
     name: paris-sender-worker
     env: python
-    pythonVersion: 3.11.4
     buildCommand: chmod +x build.sh && ./build.sh
     # CORRECTED: Use eventlet for consistency with the web worker
     startCommand: celery -A celery_worker:celery worker --loglevel=info --pool=eventlet --concurrency=10
