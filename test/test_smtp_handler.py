@@ -25,8 +25,12 @@ class MockConn:
         self.closed = True
     def close(self):
         self.closed = True
+    def __enter__(self):
+        return self
+    def __exit__(self, *args):
+        pass
 
-def test_pooling_reuses_connections(monkeypatch):
+def test_send_email_sync(monkeypatch):
     # Prepare a minimal smtp_config
     smtp_config = {
         'server': 'smtp.test.local',
@@ -39,27 +43,17 @@ def test_pooling_reuses_connections(monkeypatch):
         'sender_email': 'user@test.local'
     }
 
-    handler = SMTPHandler(smtp_config, pool_size=2)
+    handler = SMTPHandler(smtp_config)
 
-    # Monkeypatch _establish_connection to return a MockConn
-    def fake_establish():
-        conn = MockConn()
-        # Simulate returning (conn, True, 'Connected')
-        # Note: _establish_connection in SMTPHandler returns tuple (conn, True, msg)
-        return conn, True, "Connected"
+    # Monkeypatch ProxySMTP to return a MockConn
+    import app.core_logic.smtp_handler as smtp_module
+    monkeypatch.setattr(smtp_module, "ProxySMTP", lambda *a, **kw: MockConn())
 
-    monkeypatch.setattr(handler, "_establish_connection", fake_establish)
-
-    # Send two messages; connections should be created and reused from the pool
     success1, msg1 = handler.send_email_sync("a@example.com", "Subject 1", "<p>Hello</p>")
     success2, msg2 = handler.send_email_sync("b@example.com", "Subject 2", "<p>Hi</p>")
 
     assert success1 is True
     assert success2 is True
-
-    # Pool should now have at most pool_size connections
-    # Release and disconnect
-    handler.disconnect()
 
 def test_send_bulk_threaded_works(monkeypatch):
     smtp_config = {
@@ -73,12 +67,10 @@ def test_send_bulk_threaded_works(monkeypatch):
         'sender_email': 'user@test.local'
     }
 
-    handler = SMTPHandler(smtp_config, pool_size=2)
+    handler = SMTPHandler(smtp_config)
 
-    def fake_establish():
-        return MockConn(), True, "Connected"
-
-    monkeypatch.setattr(handler, "_establish_connection", fake_establish)
+    import app.core_logic.smtp_handler as smtp_module
+    monkeypatch.setattr(smtp_module, "ProxySMTP", lambda *a, **kw: MockConn())
 
     tasks = [
         {'to_email': 'a@example.com', 'subject': '1', 'html_content': '<p>1</p>'},

@@ -153,7 +153,7 @@ class PersonalizationEngine:
         if not text:
             return text
         
-        pattern = re.compile(r'\{([^{}]*)\}')
+        pattern = re.compile(r'\{([^{}]*\|[^{}]*)\}')
         
         while True:
             match = pattern.search(text)

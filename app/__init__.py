@@ -18,7 +18,7 @@ from config import config, ProductionConfig # <-- Import config objects
 # Create extension instances
 db = SQLAlchemy()
 migrate = Migrate()
-login = LoginManager()
+login_manager = LoginManager()
 csrf = CSRFProtect()
 socketio = SocketIO(cors_allowed_origins="*", async_mode='eventlet')
 cache = Cache()
@@ -34,8 +34,8 @@ except ImportError:
     bcrypt = None
     _BCRYPT_AVAILABLE = False
 
-login.login_view = "main.login"
-login.login_message_category = "info"
+login_manager.login_view = "main.login"
+login_manager.login_message_category = "info"
 
 def make_celery(app: Flask, celery_obj: Celery):
     """Configure Celery to use Flask app context."""
@@ -88,7 +88,7 @@ def create_app(config_name=None):
     # Initialize extensions with app
     db.init_app(app)
     migrate.init_app(app, db)
-    login.init_app(app)
+    login_manager.init_app(app)
     csrf.init_app(app)
     
     # Initialize SocketIO with message queue
