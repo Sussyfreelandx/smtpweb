@@ -5,6 +5,28 @@ from sqlalchemy.pool import NullPool
 
 basedir = os.path.abspath(os.path.dirname(__file__))
 
+def normalize_redis_url(url: str | None, *, is_render_env: bool) -> str | None:
+    """
+    Normalize Redis URL for Celery/Redis SSL requirements.
+
+    Args:
+        url: Redis connection URL. If None/empty, it's returned unchanged.
+        is_render_env: When True, enforce Render's TLS Redis requirement.
+
+    Returns:
+        A normalized URL using `rediss://` (only when `is_render_env` and the
+        input URL uses `redis://`); otherwise returns the original value.
+    """
+    if not url:
+        return url
+    if not is_render_env:
+        return url
+    if url.startswith('rediss://'):
+        return url
+    if url.startswith('redis://'):
+        return url.replace('redis://', 'rediss://', 1)
+    return url
+
 class Config:
     # Basic Flask Config
     SECRET_KEY = os.environ.get('SECRET_KEY') or 'dev-secret-key-change-this-in-production'
@@ -23,8 +45,11 @@ class Config:
     }
     
     # --- REDIS CONFIGURATION ---
-    REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
-            
+    REDIS_URL = normalize_redis_url(
+        os.environ.get('REDIS_URL', 'redis://localhost:6379/0'),
+        is_render_env=('RENDER' in os.environ),
+    )
+             
     # Celery
     CELERY_BROKER_URL = REDIS_URL
     CELERY_RESULT_BACKEND = REDIS_URL
