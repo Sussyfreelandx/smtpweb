@@ -45,9 +45,9 @@ def runserver(host, port, reload):
 @click.option("--pool", default="eventlet")
 def celery_worker(loglevel, concurrency, pool):
     """Start Celery worker. Now points to the correct Celery app instance."""
-    # The -A flag points to `celery_app.py` and the `celery` instance within it.
+    # The -A flag points to `celery_worker.py` and the `celery` instance within it.
     cmd = [
-        "celery", "-A", "celery_app:celery", "worker", 
+        "celery", "-A", "celery_worker:celery", "worker",
         f"--loglevel={loglevel}", 
         f"--concurrency={concurrency}",
         f"--pool={pool}"

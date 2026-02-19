@@ -19,13 +19,14 @@ if not redis_url:
 if 'RENDER' in os.environ and redis_url.startswith('redis://'):
     redis_url = redis_url.replace('redis://', 'rediss://', 1)
 
-# Define the unconfigured Celery instance.
-# We set the broker and backend here, but it will be updated by the Flask app config later.
+# Define the (initially) unconfigured Celery instance.
+# IMPORTANT: we intentionally do NOT import/`include` task modules here.
+# The Celery worker entrypoint (celery_worker.py) configures the task base class
+# to run inside the Flask application context *before* importing tasks.
 celery = Celery(
     'app',  # Use 'app' as the main app name
     backend=redis_url,
     broker=redis_url,
-    include=['app.tasks']  # Auto-discover tasks from this module
 )
 
 # Set a base configuration. This will also be updated by the app factory.
