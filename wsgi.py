@@ -10,6 +10,14 @@ import eventlet
 eventlet.monkey_patch()
 # --------------------------------------------------------
 
+# --- FIX: Patch PySocks to prevent infinite recursion with eventlet ---
+# PySocks' settimeout/setblocking and eventlet's settimeout call each other
+# in an infinite loop. This patch breaks the cycle by short-circuiting when
+# the desired timeout is already set.
+from socks_patch import apply_patch
+apply_patch()
+# ---------------------------------------------------------------------
+
 # Now, import other modules
 import os
 from app import create_app, socketio

@@ -41,6 +41,10 @@ def post_worker_init(worker):
         import socks
         import ipaddress
         
+        # Apply PySocks/eventlet recursion fix before using socks.socksocket
+        from socks_patch import apply_patch
+        apply_patch()
+        
         print(f"🔌 Worker: Applying Smart Proxy Patch ({PROXY_HOST}:{PROXY_PORT})...")
         
         # When using eventlet, socket is already patched. We need to be careful not to break it.
