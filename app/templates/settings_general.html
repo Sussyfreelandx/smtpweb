@@ -219,7 +219,7 @@
                 <div class="card-body">
                     <div class="d-grid gap-2">
                         <a href="{{ url_for('main.smtp_profiles') }}" class="btn btn-outline-primary">
-                            <i class="fas fa-server me-2"></i> Manage SMTP Profiles
+                            <i class="fas fa-server me-2"></i> Manage Mailer Profiles
                         </a>
                         <a href="{{ url_for('main.suppression_list') }}" class="btn btn-outline-danger">
                             <i class="fas fa-ban me-2"></i> Manage Suppression List
@@ -250,7 +250,7 @@
                             <span class="badge bg-success">Connected</span>
                         </li>
                         <li class="list-group-item d-flex justify-content-between align-items-center px-0">
-                            <span>SMTP Profiles</span>
+                            <span>Mailer Profiles</span>
                             <span class="badge bg-info">{{ smtp_count if smtp_count is defined else '?' }}</span>
                         </li>
                         <li class="list-group-item d-flex justify-content-between align-items-center px-0">

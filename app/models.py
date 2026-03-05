@@ -313,6 +313,12 @@ class SMTPServer(db.Model):
             return None
     
     def to_dict(self):
+        transport = 'smtp'
+        provider = None
+        if self.server and self.server.startswith('api://'):
+            transport = 'api'
+            provider = self.server.replace('api://', '', 1).strip().lower()
+
         return {
             'server': self.server,
             'port': self.port,
@@ -322,7 +328,9 @@ class SMTPServer(db.Model):
             'sender_email': self.sender_email,
             'reply_to_email': self.reply_to_email,
             'use_tls': self.use_tls,
-            'use_ssl': self.use_ssl
+            'use_ssl': self.use_ssl,
+            'transport': transport,
+            'provider': provider,
         }
     
     def reset_daily_count_if_needed(self):

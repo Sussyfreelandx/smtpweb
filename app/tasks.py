@@ -33,7 +33,7 @@ def send_campaign_task(self, campaign_id):
     the custom ContextTask in celery_app.py.
     """
     Campaign, Recipient, SMTPServer = _safe_import_models()
-    from app.core_logic.smtp_handler import SMTPHandler
+    from app.core_logic.mailer_transport import create_mailer_transport
     from app.core_logic.personalization import PersonalizationEngine
 
     log_activity("=" * 60)
@@ -57,22 +57,24 @@ def send_campaign_task(self, campaign_id):
 
         smtp_profile = campaign.smtp_profile
         if not smtp_profile:
-            log_activity("No SMTP profile assigned", "ERROR")
+            log_activity("No mailer profile assigned", "ERROR")
             campaign.status = 'Failed'
             db.session.commit()
-            return {"status": "error", "message": "No SMTP profile"}
+            return {"status": "error", "message": "No mailer profile"}
 
-        log_activity(f"SMTP Profile: {smtp_profile.profile_name}")
+        log_activity(f"Mailer Profile: {smtp_profile.profile_name}")
 
         smtp_config = smtp_profile.to_dict()
-        if not smtp_config.get('password'):
-            log_activity("SMTP password not configured", "ERROR")
+        mailer = create_mailer_transport(smtp_config)
+        valid, validation_msg = mailer.validate_configuration()
+        if not valid:
+            log_activity(f"Mailer profile invalid: {validation_msg}", "ERROR")
             campaign.status = 'Failed'
+            campaign.status_message = validation_msg
             db.session.commit()
-            return {"status": "error", "message": "SMTP password missing"}
+            return {"status": "error", "message": validation_msg}
 
-        smtp_handler = SMTPHandler(smtp_config)
-        log_activity("SMTP Handler initialized")
+        log_activity("Mailer transport initialized")
 
         batch_size = campaign.throttle_amount or 20
         delay_seconds = campaign.throttle_delay or 60
@@ -113,7 +115,7 @@ def send_campaign_task(self, campaign_id):
                     subject, body_html, body_plain = personalizer.personalize()
 
                     log_activity(f"Sending to: {recipient.email}")
-                    success, error_msg = smtp_handler.send_email(
+                    success, error_msg = mailer.send_email(
                         to_email=recipient.email,
                         subject=subject,
                         html_content=body_html,
@@ -157,6 +159,11 @@ def send_campaign_task(self, campaign_id):
                 log_activity(f"Waiting {delay_seconds}s. {remaining} recipients remaining.")
                 time.sleep(delay_seconds)
 
+        try:
+            mailer.disconnect()
+        except Exception:
+            pass
+
         log_activity("=" * 60)
         log_activity(f"🏁 CAMPAIGN TASK FINISHED: {campaign.name if campaign else campaign_id}")
         log_activity(f"   Total Sent in this task: {total_sent_in_task}, Total Failed in this task: {total_failed_in_task}")
@@ -184,7 +191,7 @@ def send_campaign_task(self, campaign_id):
 def send_single_email_task(self, recipient_id, campaign_id):
     """Send a single email (used for retrying individual recipients)."""
     Campaign, Recipient, SMTPServer = _safe_import_models()
-    from app.core_logic.smtp_handler import SMTPHandler
+    from app.core_logic.mailer_transport import create_mailer_transport
     from app.core_logic.personalization import PersonalizationEngine
 
     log_activity(f"Single email task: recipient={recipient_id}, campaign={campaign_id}")
@@ -198,13 +205,13 @@ def send_single_email_task(self, recipient_id, campaign_id):
 
         smtp_profile = campaign.smtp_profile
         if not smtp_profile:
-            return {"status": "error", "message": "No SMTP profile"}
+            return {"status": "error", "message": "No mailer profile"}
 
         config = smtp_profile.to_dict()
-        if not config.get('password'):
-            return {"status": "error", "message": "Password missing"}
-
-        handler = SMTPHandler(config)
+        handler = create_mailer_transport(config)
+        valid, validation_msg = handler.validate_configuration()
+        if not valid:
+            return {"status": "error", "message": validation_msg}
 
         recipient.status = 'Sending'
         recipient.attempts = (recipient.attempts or 0) + 1

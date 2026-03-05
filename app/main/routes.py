@@ -15,7 +15,7 @@ from app.forms import (
 )
 from app.core_logic.deliverability import DeliverabilityHelper
 from app.core_logic.ai_handler import AIHandler
-from app.core_logic.smtp_handler import SMTPHandler
+from app.core_logic.mailer_transport import create_mailer_transport
 from app.utils import (
     log_activity, get_logs, is_valid_email, html_to_plain_text,
     allowed_file, parse_csv_file
@@ -657,15 +657,17 @@ def campaign_control(campaign_id, action):
                 flash('No queued recipients to send to.', 'warning')
                 return redirect(url_for('main.view_campaign', campaign_id=campaign.id))
 
-            # SMTP check
+            # Mailer profile check
             if not campaign.smtp_profile and not campaign.smtp_rotation_enabled:
-                flash('No SMTP profile configured for this campaign.', 'danger')
+                flash('No mailer profile configured for this campaign.', 'danger')
                 return redirect(url_for('main.view_campaign', campaign_id=campaign.id))
 
             if campaign.smtp_profile:
                 smtp_config = campaign.smtp_profile.to_dict()
-                if not smtp_config.get('password'):
-                    flash('SMTP password not configured. Please update your SMTP profile.', 'danger')
+                mailer = create_mailer_transport(smtp_config)
+                valid, validation_msg = mailer.validate_configuration()
+                if not valid:
+                    flash(f'Mailer profile invalid: {validation_msg}', 'danger')
                     return redirect(url_for('main.view_campaign', campaign_id=campaign.id))
 
             # Set status immediately
@@ -921,7 +923,7 @@ def api_keys():
 @bp.route('/settings/smtp', methods=['GET', 'POST'])
 @login_required
 def smtp_profiles():
-    """Manage SMTP profiles."""
+    """Manage mailer profiles (SMTP/API)."""
     if request.method == 'POST':
         try:
             profile_id = request.form.get('profile_id')
@@ -935,14 +937,25 @@ def smtp_profiles():
                 profile = SMTPServer(user_id=current_user.id)
 
             profile.profile_name = request.form.get('name', '')
-            profile.server = request.form.get('server', '')
-            profile.port = int(request.form.get('port', 587))
+            transport_type = request.form.get('transport_type', 'smtp')
+            api_provider_map = {
+                'api_google': 'google',
+                'api_microsoft': 'microsoft',
+            }
+            if transport_type in api_provider_map:
+                profile.server = f"api://{api_provider_map[transport_type]}"
+                profile.port = 443
+                profile.use_tls = False
+                profile.use_ssl = False
+            else:
+                profile.server = request.form.get('server', '')
+                profile.port = int(request.form.get('port', 587))
+                profile.use_tls = 'use_tls' in request.form
+                profile.use_ssl = 'use_ssl' in request.form
             profile.username = request.form.get('username', '')
             profile.sender_name = request.form.get('sender_name', '')
             profile.sender_email = request.form.get('sender_email', '')
             profile.reply_to_email = request.form.get('reply_to_email', '')
-            profile.use_tls = 'use_tls' in request.form
-            profile.use_ssl = 'use_ssl' in request.form
             profile.is_active = 'is_active' in request.form
             profile.daily_limit = int(request.form.get('daily_limit', 500))
             profile.hourly_limit = int(request.form.get('hourly_limit', 100))
@@ -967,25 +980,25 @@ def smtp_profiles():
             db.session.add(profile)
             db.session.commit()
 
-            log_user_activity('smtp_profile_saved', f'SMTP Profile saved: {profile.profile_name}', 'smtp_server', profile.id)
-            log_activity(f"SMTP Profile saved: {profile.profile_name}", "SUCCESS")
-            flash('SMTP Profile Saved!', 'success')
+            log_user_activity('smtp_profile_saved', f'Mailer Profile saved: {profile.profile_name}', 'smtp_server', profile.id)
+            log_activity(f"Mailer Profile saved: {profile.profile_name}", "SUCCESS")
+            flash('Mailer Profile Saved!', 'success')
 
         except Exception as e:
             db.session.rollback()
-            log_activity(f"Error saving SMTP profile: {e}", "ERROR")
+            log_activity(f"Error saving mailer profile: {e}", "ERROR")
             flash(f"Error saving profile: {str(e)}", "danger")
 
         return redirect(url_for('main.smtp_profiles'))
 
     profiles = SMTPServer.query.filter_by(user_id=current_user.id).order_by(SMTPServer.priority).all()
-    return render_template('smtp_profiles.html', title='SMTP Profiles', profiles=profiles)
+    return render_template('smtp_profiles.html', title='Mailer Profiles', profiles=profiles)
 
 
 @bp.route('/settings/smtp/test', methods=['POST'])
 @login_required
 def test_smtp_connection():
-    """Test SMTP connection."""
+    """Test mailer profile connection."""
     try:
         data = request.get_json()
         if not data:
@@ -1003,10 +1016,10 @@ def test_smtp_connection():
             return jsonify({'success': False, 'message': 'Unauthorized'}), 403
 
         smtp_config = profile.to_dict()
-        if not smtp_config.get('password'):
-            return jsonify({'success': False, 'message': 'Password not set for this profile'}), 400
-
-        handler = SMTPHandler(smtp_config)
+        handler = create_mailer_transport(smtp_config)
+        valid, valid_msg = handler.validate_configuration()
+        if not valid:
+            return jsonify({'success': False, 'message': valid_msg}), 400
         success, msg = handler.test_connection()
 
         profile.last_test_at = datetime.utcnow()
@@ -1014,21 +1027,21 @@ def test_smtp_connection():
         db.session.commit()
 
         if success:
-            log_activity(f"SMTP Test successful for {profile.profile_name}", "SUCCESS")
+            log_activity(f"Mailer test successful for {profile.profile_name}", "SUCCESS")
             return jsonify({'success': True, 'message': f'Connection successful!'})
         else:
-            log_activity(f"SMTP Test failed for {profile.profile_name}: {msg}", "ERROR")
+            log_activity(f"Mailer test failed for {profile.profile_name}: {msg}", "ERROR")
             return jsonify({'success': False, 'message': f'Failed: {msg}'})
 
     except Exception as e:
-        log_activity(f"SMTP Test error: {str(e)}", "ERROR")
+        log_activity(f"Mailer test error: {str(e)}", "ERROR")
         return jsonify({'success': False, 'message': f'Error: {str(e)}'}), 500
 
 
 @bp.route('/settings/smtp/delete/<int:profile_id>', methods=['POST'])
 @login_required
 def delete_smtp_profile(profile_id):
-    """Delete SMTP profile."""
+    """Delete mailer profile."""
     profile = SMTPServer.query.get_or_404(profile_id)
 
     if profile.user_id != current_user.id:
@@ -1045,7 +1058,7 @@ def delete_smtp_profile(profile_id):
         db.session.delete(profile)
         db.session.commit()
 
-        log_user_activity('smtp_profile_deleted', f'Deleted SMTP profile: {profile_name}')
+        log_user_activity('smtp_profile_deleted', f'Deleted mailer profile: {profile_name}')
         flash('Profile deleted.', 'success')
     except Exception as e:
         db.session.rollback()

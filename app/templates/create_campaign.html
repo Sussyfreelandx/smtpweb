@@ -60,7 +60,7 @@
                                             <li><code>{{ '{{firstname}}' }}</code> - Auto-detected from email or CSV/TXT</li>
                                             <li><code>{{ '{{company}}' }}</code> - Auto-detected from domain or CSV/TXT</li>
                                             <li><code>{{ '{{greetings}}' }}</code> - Time-based greeting</li>
-                                            <li><code>{{ '{{sender_name}}' }}</code> - Name from SMTP Profile</li>
+                                            <li><code>{{ '{{sender_name}}' }}</code> - Name from Mailer Profile</li>
                                         </ul>
                                     </div>
                                     <div class="col-md-6">
@@ -174,7 +174,7 @@ jane@company.org,Jane,Tech Corp</pre>
                 </div>
                 <div class="card-body">
                     <div class="mb-3">
-                        <label class="form-label">SMTP Profile <span class="text-danger">*</span></label>
+                        <label class="form-label">Mailer Profile <span class="text-danger">*</span></label>
                         <select class="form-select" name="smtp_profile_id" required>
                             <option value="">-- Select Profile --</option>
                             {% for profile in smtp_profiles %}
@@ -184,10 +184,10 @@ jane@company.org,Jane,Tech Corp</pre>
                         {% if smtp_profiles|length == 0 %}
                         <div class="form-text text-danger">
                             <i class="fas fa-exclamation-triangle me-1"></i>
-                            No SMTP profiles found. <a href="{{ url_for('main.smtp_profiles') }}">Create one first</a>.
+                            No mailer profiles found. <a href="{{ url_for('main.smtp_profiles') }}">Create one first</a>.
                         </div>
                         {% endif %}
-                        <div class="invalid-feedback">Please select an SMTP profile.</div>
+                        <div class="invalid-feedback">Please select a mailer profile.</div>
                     </div>
                     
                     <hr>

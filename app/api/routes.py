@@ -305,7 +305,7 @@ def start_campaign(campaign_id):
         return jsonify({'error': 'No queued recipients'}), 400
     
     if not campaign.smtp_profile:
-        return jsonify({'error': 'No SMTP profile configured'}), 400
+        return jsonify({'error': 'No mailer profile configured'}), 400
     
     try:
         campaign.status = 'Sending'

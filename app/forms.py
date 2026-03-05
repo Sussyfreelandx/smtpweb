@@ -78,7 +78,7 @@ class NewCampaignForm(FlaskForm):
         DataRequired(),
         FileAllowed(['csv', 'txt'], 'CSV or TXT files only!')
     ])
-    smtp_profile_id = SelectField('SMTP Profile', coerce=int, validators=[DataRequired()])
+    smtp_profile_id = SelectField('Mailer Profile', coerce=int, validators=[DataRequired()])
 
     # A/B Testing
     ab_testing_enabled = BooleanField('Enable A/B Testing', default=False)

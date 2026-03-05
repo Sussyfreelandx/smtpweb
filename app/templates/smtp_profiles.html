@@ -9,8 +9,8 @@
 
 <div class="d-flex justify-content-between align-items-center mb-4">
     <div>
-        <h1 class="mb-1">SMTP Profiles</h1>
-        <p class="text-muted mb-0">Manage your email sending configurations.</p>
+        <h1 class="mb-1">Mailer Profiles</h1>
+        <p class="text-muted mb-0">Manage your email transport configurations (SMTP or API mailer).</p>
     </div>
     <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#profileModal" onclick="clearModal()">
         <i class="fas fa-plus-circle me-1"></i> Add New Profile
@@ -45,6 +45,12 @@
             <button type="button" class="btn btn-outline-secondary btn-sm" onclick="loadPreset('ses')">
                 <i class="fab fa-aws me-1"></i> Amazon SES
             </button>
+            <button type="button" class="btn btn-outline-danger btn-sm" onclick="loadPreset('google_api')">
+                <i class="fab fa-google me-1"></i> Google API
+            </button>
+            <button type="button" class="btn btn-outline-primary btn-sm" onclick="loadPreset('microsoft_api')">
+                <i class="fab fa-microsoft me-1"></i> Microsoft API
+            </button>
         </div>
     </div>
 </div>
@@ -52,7 +58,7 @@
 <!-- Profiles Table -->
 <div class="card">
     <div class="card-header d-flex justify-content-between align-items-center">
-        <span><i class="fas fa-server me-2"></i> Your SMTP Profiles</span>
+        <span><i class="fas fa-server me-2"></i> Your Mailer Profiles</span>
         <span class="badge bg-secondary">{{ profiles|length }} Profile(s)</span>
     </div>
     <div class="card-body p-0">
@@ -143,8 +149,8 @@
                     <tr>
                         <td colspan="8" class="text-center py-5 text-muted">
                             <i class="fas fa-server fa-3x mb-3 d-block"></i>
-                            <h5>No SMTP profiles yet</h5>
-                            <p class="mb-3">Add your first SMTP profile to start sending emails.</p>
+                            <h5>No mailer profiles yet</h5>
+                            <p class="mb-3">Add your first mailer profile to start sending emails.</p>
                             <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#profileModal" onclick="clearModal()">
                                 <i class="fas fa-plus-circle me-1"></i> Add New Profile
                             </button>
@@ -160,7 +166,7 @@
 <!-- Help Card -->
 <div class="card mt-4">
     <div class="card-header">
-        <i class="fas fa-question-circle me-2 text-info"></i> SMTP Configuration Help
+        <i class="fas fa-question-circle me-2 text-info"></i> Mailer Configuration Help
     </div>
     <div class="card-body">
         <div class="row">
@@ -192,6 +198,12 @@
                 </ul>
             </div>
         </div>
+        <div class="alert alert-info mt-3 mb-0 small">
+            <i class="fas fa-info-circle me-1"></i>
+            API mailer mode sends through Google/Microsoft infrastructure, while optionally routing your app's API connections
+            through proxy variables
+            (<code>MAILER_PROXY_URL</code>, <code>HTTP_PROXY</code>, <code>HTTPS_PROXY</code>).
+        </div>
     </div>
 </div>
 
@@ -201,7 +213,7 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title" id="modalTitle">
-                    <i class="fas fa-plus-circle me-2"></i> Add SMTP Profile
+                    <i class="fas fa-plus-circle me-2"></i> Add Mailer Profile
                 </h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
@@ -229,12 +241,23 @@
                         </div>
                     </div>
                     
-                    <!-- SMTP Settings -->
+                    <!-- Mailer Settings -->
                     <div class="border-bottom pb-3 mb-3">
-                        <h6 class="text-muted mb-3"><i class="fas fa-server me-1"></i> SMTP Server Settings</h6>
+                        <h6 class="text-muted mb-3"><i class="fas fa-server me-1"></i> Mailer Transport Settings</h6>
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Transport Type</label>
+                                <select class="form-select" id="transport_type" name="transport_type">
+                                    <option value="smtp" selected>SMTP Transport</option>
+                                    <option value="api_google">Google API Mailer</option>
+                                    <option value="api_microsoft">Microsoft API Mailer</option>
+                                </select>
+                                <div class="form-text">API mode uses provider APIs (Google/Microsoft send from their own infra).</div>
+                            </div>
+                        </div>
                         <div class="row">
                             <div class="col-md-8 mb-3">
-                                <label class="form-label">SMTP Server <span class="text-danger">*</span></label>
+                                <label class="form-label" id="server_label">SMTP Server <span class="text-danger">*</span></label>
                                 <input type="text" class="form-control" id="server" name="server" 
                                        placeholder="smtp.gmail.com" required>
                             </div>
@@ -247,7 +270,7 @@
                         
                         <div class="row">
                             <div class="col-md-6 mb-3">
-                                <label class="form-label">Username <span class="text-danger">*</span></label>
+                                <label class="form-label" id="username_label">Username <span class="text-danger">*</span></label>
                                 <input type="text" class="form-control" id="username" name="username" 
                                        placeholder="your@email.com" required>
                             </div>
@@ -260,7 +283,7 @@
                                         <i class="fas fa-eye" id="password-toggle-icon"></i>
                                     </button>
                                 </div>
-                                <div class="form-text">For Gmail/Outlook with 2FA, use an App Password</div>
+                                <div class="form-text" id="password_help">For Gmail/Outlook with 2FA, use an App Password</div>
                             </div>
                         </div>
                         
@@ -394,8 +417,9 @@
     const testResultModal = new bootstrap.Modal(document.getElementById('testResultModal'));
     
     // SMTP Presets
-    const smtpPresets = {
+    const mailerPresets = {
         'gmail': { 
+            transport: 'smtp',
             server: 'smtp.gmail.com', 
             port: 587, 
             tls: true, 
@@ -405,6 +429,7 @@
             name: 'Gmail'
         },
         'outlook': { 
+            transport: 'smtp',
             server: 'smtp.office365.com', 
             port: 587, 
             tls: true, 
@@ -414,6 +439,7 @@
             name: 'Outlook/Office 365'
         },
         'yahoo': { 
+            transport: 'smtp',
             server: 'smtp.mail.yahoo.com', 
             port: 587, 
             tls: true, 
@@ -423,6 +449,7 @@
             name: 'Yahoo Mail'
         },
         'zoho': { 
+            transport: 'smtp',
             server: 'smtp.zoho.com', 
             port: 587, 
             tls: true, 
@@ -432,6 +459,7 @@
             name: 'Zoho Mail'
         },
         'sendgrid': { 
+            transport: 'smtp',
             server: 'smtp.sendgrid.net', 
             port: 587, 
             tls: true, 
@@ -441,6 +469,7 @@
             name: 'SendGrid'
         },
         'mailgun': { 
+            transport: 'smtp',
             server: 'smtp.mailgun.org', 
             port: 587, 
             tls: true, 
@@ -450,6 +479,7 @@
             name: 'Mailgun'
         },
         'ses': { 
+            transport: 'smtp',
             server: 'email-smtp.us-east-1.amazonaws.com', 
             port: 587, 
             tls: true, 
@@ -457,13 +487,80 @@
             imap_server: '', 
             imap_port: 993,
             name: 'Amazon SES'
+        },
+        'google_api': {
+            transport: 'api_google',
+            server: 'api://google',
+            port: 443,
+            tls: false,
+            ssl: false,
+            imap_server: 'imap.gmail.com',
+            imap_port: 993,
+            name: 'Google API Mailer'
+        },
+        'microsoft_api': {
+            transport: 'api_microsoft',
+            server: 'api://microsoft',
+            port: 443,
+            tls: false,
+            ssl: false,
+            imap_server: 'outlook.office365.com',
+            imap_port: 993,
+            name: 'Microsoft API Mailer'
         }
     };
 
+    function applyTransportMode() {
+        const mode = document.getElementById('transport_type').value;
+        const server = document.getElementById('server');
+        const port = document.getElementById('port');
+        const useTls = document.getElementById('use_tls');
+        const useSsl = document.getElementById('use_ssl');
+        const serverLabel = document.getElementById('server_label');
+        const usernameLabel = document.getElementById('username_label');
+        const passwordHelp = document.getElementById('password_help');
+        if (!server || !port || !useTls || !useSsl || !serverLabel || !usernameLabel || !passwordHelp) {
+            return;
+        }
+
+        if (mode === 'api_google' || mode === 'api_microsoft') {
+            if (server.value && !server.value.startsWith('api://')) {
+                server.dataset.lastMailerServer = server.value;
+            }
+            const provider = mode === 'api_google' ? 'google' : 'microsoft';
+            server.value = `api://${provider}`;
+            server.readOnly = true;
+            port.value = 443;
+            port.readOnly = true;
+            useTls.checked = false;
+            useSsl.checked = false;
+            useTls.disabled = true;
+            useSsl.disabled = true;
+            serverLabel.innerHTML = 'API Transport Identifier <span class="text-danger">*</span>';
+            usernameLabel.innerHTML = 'Account Email <span class="text-danger">*</span>';
+            passwordHelp.textContent = 'Use an OAuth access token for API mailer mode.';
+        } else {
+            if (server.value.startsWith('api://')) {
+                server.value = server.dataset.lastMailerServer || '';
+            }
+            server.readOnly = false;
+            port.readOnly = false;
+            useTls.disabled = false;
+            useSsl.disabled = false;
+            if (port.value === '443') {
+                port.value = '587';
+            }
+            serverLabel.innerHTML = 'SMTP Server <span class="text-danger">*</span>';
+            usernameLabel.innerHTML = 'Username <span class="text-danger">*</span>';
+            passwordHelp.textContent = 'For Gmail/Outlook with 2FA (two-factor authentication), use an App Password';
+        }
+    }
+
     function clearModal() {
-        document.getElementById('modalTitle').innerHTML = '<i class="fas fa-plus-circle me-2"></i> Add SMTP Profile';
+        document.getElementById('modalTitle').innerHTML = '<i class="fas fa-plus-circle me-2"></i> Add Mailer Profile';
         document.getElementById('profileForm').reset();
         document.getElementById('profile_id').value = '';
+        document.getElementById('transport_type').value = 'smtp';
         document.getElementById('use_tls').checked = true;
         document.getElementById('use_ssl').checked = false;
         document.getElementById('is_active').checked = true;
@@ -473,21 +570,24 @@
         document.getElementById('imap_port').value = '993';
         document.getElementById('password').placeholder = 'Enter password';
         document.getElementById('imap_password').placeholder = 'Enter IMAP password';
+        applyTransportMode();
     }
 
     function loadPreset(presetName) {
-        const preset = smtpPresets[presetName];
+        const preset = mailerPresets[presetName];
         if (!preset) return;
         
         clearModal();
         
         document.getElementById('name').value = preset.name + ' Profile';
+        document.getElementById('transport_type').value = preset.transport || 'smtp';
         document.getElementById('server').value = preset.server;
         document.getElementById('port').value = preset.port;
         document.getElementById('use_tls').checked = preset.tls;
         document.getElementById('use_ssl').checked = preset.ssl;
         document.getElementById('imap_server').value = preset.imap_server;
         document.getElementById('imap_port').value = preset.imap_port;
+        applyTransportMode();
         
         profileModal.show();
         
@@ -498,7 +598,18 @@
     }
 
     function editProfile(id, profileName, server, port, username, senderName, senderEmail, useTls, useSsl, isActive, dailyLimit, priority, imapServer, imapPort, imapUsername) {
-        document.getElementById('modalTitle').innerHTML = '<i class="fas fa-pencil-alt me-2"></i> Edit SMTP Profile';
+        document.getElementById('modalTitle').innerHTML = '<i class="fas fa-pencil-alt me-2"></i> Edit Mailer Profile';
+        if (server && server.startsWith('api://')) {
+            if (server.includes('microsoft')) {
+                document.getElementById('transport_type').value = 'api_microsoft';
+            } else if (server.includes('google')) {
+                document.getElementById('transport_type').value = 'api_google';
+            } else {
+                document.getElementById('transport_type').value = 'smtp';
+            }
+        } else {
+            document.getElementById('transport_type').value = 'smtp';
+        }
         
         document.getElementById('profile_id').value = id;
         document.getElementById('name').value = profileName || '';
@@ -515,6 +626,7 @@
         document.getElementById('imap_server').value = imapServer || '';
         document.getElementById('imap_port').value = imapPort || 993;
         document.getElementById('imap_username').value = imapUsername || '';
+        applyTransportMode();
         
         // Clear password fields (security)
         document.getElementById('password').value = '';
@@ -683,9 +795,12 @@
 
     // Auto-detect preset when server is entered
     document.getElementById('server').addEventListener('blur', function() {
+        if (document.getElementById('transport_type').value !== 'smtp') {
+            return;
+        }
         const server = this.value.toLowerCase();
         
-        for (const [key, preset] of Object.entries(smtpPresets)) {
+        for (const [key, preset] of Object.entries(mailerPresets)) {
             if (server.includes(key) || server.includes(preset.server.split('.')[1])) {
                 // Auto-fill related settings
                 if (!document.getElementById('port').value || document.getElementById('port').value === '587') {
@@ -704,6 +819,7 @@
     });
 
     // TLS/SSL mutual exclusivity
+    document.getElementById('transport_type').addEventListener('change', applyTransportMode);
     document.getElementById('use_tls').addEventListener('change', function() {
         if (this.checked) {
             document.getElementById('use_ssl').checked = false;
