@@ -166,6 +166,74 @@
     </div>
 </div>
 
+<!-- Bulk Domain Checker -->
+<div class="row">
+    <div class="col-12 mb-4">
+        <div class="card">
+            <div class="card-header bg-secondary text-white">
+                <i class="fas fa-list-check me-2"></i> Bulk Domain Checker
+            </div>
+            <div class="card-body">
+                <p class="text-muted mb-3">Paste one domain or email per line to run SPF/DKIM/DMARC checks in bulk.</p>
+                <div class="mb-3">
+                    <label for="bulk-domain-input" class="form-label">Enter domains or emails (one per line)</label>
+                    <textarea class="form-control font-monospace" id="bulk-domain-input" rows="5" placeholder="example.com&#10;admin@company.org" aria-describedby="bulk-domain-help"></textarea>
+                    <div id="bulk-domain-help" class="form-text">Each line can be a domain (example.com) or email (user@example.com).</div>
+                </div>
+                <div id="bulk-domain-inline-error" class="alert alert-warning py-2 px-3 small d-none" role="alert" aria-live="polite"></div>
+                <button type="button" class="btn btn-secondary" onclick="runBulkDomainCheck()">
+                    <i class="fas fa-play me-1"></i> Run Bulk Check
+                </button>
+
+                <div id="bulk-domain-result-container" class="mt-3" style="display:none;">
+                    <hr>
+                    <h5 class="mb-3">Bulk Domain Results</h5>
+                    <div id="bulk-domain-results"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Seed Inbox Placement Check -->
+<div class="row">
+    <div class="col-12 mb-4">
+        <div class="card">
+            <div class="card-header bg-dark text-white">
+                <i class="fas fa-inbox me-2"></i> Seed Inbox Placement Check
+            </div>
+            <div class="card-body">
+                <p class="text-muted mb-3">Check whether seed recipients appear in inbox vs spam/junk folders for an IMAP profile.</p>
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <label for="seed-profile" class="form-label">IMAP-enabled Mailer Profile</label>
+                        <select id="seed-profile" class="form-select">
+                            <option value="">-- Select Profile --</option>
+                            {% for profile in smtp_profiles %}
+                            <option value="{{ profile.id }}">{{ profile.profile_name }} ({{ profile.imap_username or 'no-imap-user' }})</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-8">
+                        <label for="seed-list-input" class="form-label">Seed email list (one per line)</label>
+                        <textarea id="seed-list-input" class="form-control font-monospace" rows="4" placeholder="seed1@example.com&#10;seed2@example.com"></textarea>
+                    </div>
+                </div>
+                <div class="mt-3">
+                    <button type="button" class="btn btn-dark" onclick="runSeedInboxCheck()">
+                        <i class="fas fa-vial me-1"></i> Run Seed Check
+                    </button>
+                </div>
+                <div id="seed-result-container" class="mt-3" style="display:none;">
+                    <hr>
+                    <h5 class="mb-3">Seed Check Results</h5>
+                    <div id="seed-results"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Quick Tips -->
 <div class="card">
     <div class="card-header">
@@ -207,6 +275,15 @@
 
 {% block scripts %}
 <script>
+function escapeHtml(value) {
+    return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 function runBasicSpamCheck() {
     const subject = document.getElementById('spam-subject').value;
     const body = document.getElementById('spam-body').value;
@@ -389,6 +466,135 @@ function runLinkCheck() {
     })
     .catch(error => {
         resultsDiv.innerHTML = `<div class="alert alert-danger">Error: ${error}</div>`;
+    });
+}
+
+function runBulkDomainCheck() {
+    const content = document.getElementById('bulk-domain-input').value;
+    const inlineError = document.getElementById('bulk-domain-inline-error');
+    inlineError.classList.add('d-none');
+    inlineError.textContent = '';
+    if (!content.trim()) {
+        inlineError.textContent = 'Please paste at least one domain/email.';
+        inlineError.classList.remove('d-none');
+        return;
+    }
+
+    const resultContainer = document.getElementById('bulk-domain-result-container');
+    const resultDiv = document.getElementById('bulk-domain-results');
+    resultContainer.style.display = 'block';
+    resultDiv.innerHTML = '<div class="text-center"><span class="spinner-border spinner-border-sm me-2"></span>Checking domains...</div>';
+
+    fetch("{{ url_for('main.domain_check_bulk') }}", {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': '{{ csrf_token() }}'
+        },
+        body: JSON.stringify({content})
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (!data.success) {
+            resultDiv.innerHTML = `<div class="alert alert-danger mb-0">${escapeHtml(data.error || 'Failed to check domains')}</div>`;
+            return;
+        }
+        const rows = data.results || [];
+        if (!rows.length) {
+            resultDiv.innerHTML = '<div class="alert alert-warning mb-0">No valid domains found.</div>';
+            return;
+        }
+
+        let html = '';
+        if (data.warning) {
+            html += `<div class="alert alert-warning py-2 px-3 small">${escapeHtml(data.warning)}</div>`;
+        }
+        html += `<div class="table-responsive"><table class="table table-sm table-striped align-middle">
+            <thead><tr><th>Domain</th><th>MX</th><th>SPF</th><th>DKIM</th><th>DMARC</th><th>Status</th></tr></thead><tbody>`;
+        rows.forEach(r => {
+            const { badgeClass, textClass } = getStatusClass(r.tag);
+            const textClassSegment = textClass ? ` ${textClass}` : '';
+            html += `<tr>
+                <td>${escapeHtml(r.domain)}</td>
+                <td>${escapeHtml(r.mx)}</td>
+                <td>${escapeHtml(r.spf)}</td>
+                <td>${escapeHtml(r.dkim)}</td>
+                <td>${escapeHtml(r.dmarc)}</td>
+                <td><span class="badge bg-${badgeClass}${textClassSegment}">${escapeHtml(r.status)}</span></td>
+            </tr>`;
+        });
+        html += '</tbody></table></div>';
+        resultDiv.innerHTML = html;
+    })
+    .catch(err => {
+        const errText = err && err.message ? err.message : String(err);
+        resultDiv.innerHTML = `<div class="alert alert-danger mb-0">Request failed: ${escapeHtml(errText)}</div>`;
+    });
+}
+
+function getStatusClass(tag) {
+    const statusClassMap = {
+        pass: { badgeClass: 'success', textClass: '' },
+        critical: { badgeClass: 'danger', textClass: '' },
+        // Keep warning badge text dark for contrast on yellow background.
+        partial: { badgeClass: 'warning', textClass: 'text-dark' }
+    };
+    return statusClassMap[tag] || { badgeClass: 'secondary', textClass: '' };
+}
+
+function runSeedInboxCheck() {
+    const AUTO_PAUSE_SPAM_THRESHOLD = 50;
+    const WARNING_SPAM_THRESHOLD = 20;
+    const profileId = document.getElementById('seed-profile').value;
+    const seedList = document.getElementById('seed-list-input').value;
+    const resultContainer = document.getElementById('seed-result-container');
+    const resultDiv = document.getElementById('seed-results');
+
+    function showValidationError(message) {
+        resultContainer.style.display = 'block';
+        resultDiv.innerHTML = `<div class="alert alert-warning mb-0">${escapeHtml(message)}</div>`;
+    }
+
+    if (!profileId) {
+        showValidationError('Please select an IMAP-enabled profile.');
+        return;
+    }
+    if (!seedList.trim()) {
+        showValidationError('Please provide at least one seed email.');
+        return;
+    }
+
+    resultContainer.style.display = 'block';
+    resultDiv.innerHTML = '<div class="text-center"><span class="spinner-border spinner-border-sm me-2"></span>Checking seed placement...</div>';
+
+    fetch("{{ url_for('main.seed_inbox_check') }}", {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': '{{ csrf_token() }}'
+        },
+        body: JSON.stringify({profile_id: profileId, seed_list: seedList})
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (!data.success) {
+            resultDiv.innerHTML = `<div class="alert alert-danger mb-0">${escapeHtml(data.error || 'Seed check failed')}</div>`;
+            return;
+        }
+        const r = data.result || {};
+        const spamRate = parseFloat(r.spam_rate || 0);
+        const level = spamRate >= AUTO_PAUSE_SPAM_THRESHOLD ? 'danger' : (spamRate >= WARNING_SPAM_THRESHOLD ? 'warning' : 'success');
+        resultDiv.innerHTML = `
+            <div class="alert alert-${level}">
+                <strong>Spam Rate:</strong> ${spamRate}%<br>
+                <strong>Inbox Rate:</strong> ${parseFloat(r.inbox_rate || 0)}%<br>
+                <strong>Seeds Found in Inbox:</strong> ${escapeHtml((r.inbox_seeds_found || []).join(', ') || 'None')}<br>
+                <strong>Seeds Found in Spam:</strong> ${escapeHtml((r.spam_seeds_found || []).join(', ') || 'None')}
+            </div>
+        `;
+    })
+    .catch(err => {
+        resultDiv.innerHTML = `<div class="alert alert-danger mb-0">Request failed: ${escapeHtml(err && err.message ? err.message : String(err))}</div>`;
     });
 }
 </script>

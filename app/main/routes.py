@@ -15,10 +15,26 @@ from app.forms import (
 )
 from app.core_logic.deliverability import DeliverabilityHelper
 from app.core_logic.ai_handler import AIHandler
+from app.core_logic.desktop_content_compat import (
+    validate_template_content,
+    build_context_preview_from_email,
+)
+from app.core_logic.desktop_deliverability_compat import (
+    extract_domains_from_text,
+    build_domain_check_row,
+)
+from app.core_logic.desktop_seed_inbox_compat import (
+    parse_seed_emails,
+    check_seed_inbox_placement_imap,
+)
+from app.core_logic.desktop_sent_log_compat import (
+    append_sent_log,
+    format_recipient_log_entry,
+)
 from app.core_logic.mailer_transport import create_mailer_transport
 from app.utils import (
     log_activity, get_logs, is_valid_email, html_to_plain_text,
-    allowed_file, parse_csv_file
+    allowed_file, parse_csv_file, clear_logs
 )
 import csv
 import io
@@ -31,6 +47,9 @@ from sqlalchemy import func
 
 # ==================== HELPER FUNCTIONS ====================
 
+MAX_BULK_DOMAIN_CHECK = 100
+LEGACY_ACTIVITY_CUTOFF_DEFAULT = "2026-03-05T00:00:00"
+
 
 def get_or_create_global_settings():
     """Get or create global settings."""
@@ -40,6 +59,31 @@ def get_or_create_global_settings():
         db.session.add(settings)
         db.session.commit()
     return settings
+
+
+def get_active_mailer_profiles_for_user(user_id):
+    return SMTPServer.query.filter(
+        SMTPServer.user_id == user_id,
+        SMTPServer.is_active,
+    ).all()
+
+
+def get_active_imap_profiles_for_user(user_id):
+    return SMTPServer.query.filter(
+        SMTPServer.user_id == user_id,
+        SMTPServer.is_active,
+        SMTPServer.imap_server.isnot(None),
+        SMTPServer.imap_username.isnot(None),
+    ).all()
+
+
+def get_legacy_activity_cutoff():
+    raw = current_app.config.get("LEGACY_ACTIVITY_CUTOFF", LEGACY_ACTIVITY_CUTOFF_DEFAULT)
+    try:
+        # ActivityLog.created_at is stored as naive UTC in this app; keep comparison naive.
+        return datetime.fromisoformat(str(raw).replace("Z", ""))
+    except Exception:
+        return datetime.fromisoformat(LEGACY_ACTIVITY_CUTOFF_DEFAULT)
 
 
 def emit_campaign_update(campaign_id, data):
@@ -369,11 +413,33 @@ def view_campaign(campaign_id):
                            search=search)
 
 
+@bp.route('/campaign/<int:campaign_id>/sent_log')
+@login_required
+def campaign_sent_log(campaign_id):
+    """Return recent send log entries for campaign detail live panel."""
+    campaign = Campaign.query.get_or_404(campaign_id)
+    if campaign.user_id != current_user.id:
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+
+    limit = min(max(request.args.get('limit', 200, type=int), 1), 1000)
+    recipients = campaign.recipients.order_by(
+        Recipient.sent_at.desc().nullslast(),
+        Recipient.last_attempt_at.desc().nullslast(),
+        Recipient.id.desc()
+    ).limit(limit).all()
+
+    entries = []
+    for recipient in reversed(recipients):
+        entries = append_sent_log(entries, format_recipient_log_entry(recipient))
+
+    return jsonify({'success': True, 'entries': entries})
+
+
 @bp.route('/campaign/new', methods=['GET', 'POST'])
 @login_required
 def new_campaign():
     """Create new campaign."""
-    smtp_profiles = SMTPServer.query.filter_by(user_id=current_user.id, is_active=True).all()
+    smtp_profiles = get_active_mailer_profiles_for_user(current_user.id)
     templates = EmailTemplate.query.filter(
         (EmailTemplate.user_id == current_user.id) | (EmailTemplate.is_public == True)
     ).all()
@@ -475,6 +541,33 @@ def new_campaign():
                            default_lure=global_settings.lure_path or '',
                            default_throttle_amount=global_settings.default_throttle_amount or 20,
                            default_throttle_delay=global_settings.default_throttle_delay or 60)
+
+
+@bp.route('/campaign/template/validate', methods=['POST'])
+@login_required
+def validate_campaign_template():
+    """Validate campaign subject/body content for placeholder/template issues."""
+    try:
+        data = request.get_json() or {}
+        content = f"{data.get('subject', '')}\n{data.get('body_html', '')}"
+        result = validate_template_content(content)
+        return jsonify({'success': True, 'result': result})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@bp.route('/campaign/context/preview', methods=['POST'])
+@login_required
+def preview_campaign_context():
+    """Build a quick context preview from a recipient email."""
+    try:
+        data = request.get_json() or {}
+        email = (data.get('email') or '').strip()
+        if not email:
+            return jsonify({'success': False, 'error': 'email is required'}), 400
+        return jsonify({'success': True, 'result': build_context_preview_from_email(email)})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @bp.route('/campaign/<int:campaign_id>/edit', methods=['GET', 'POST'])
@@ -947,6 +1040,11 @@ def smtp_profiles():
                 profile.port = 443
                 profile.use_tls = False
                 profile.use_ssl = False
+            elif transport_type == 'direct_mx':
+                profile.server = 'directmx://auto'
+                profile.port = 25
+                profile.use_tls = False
+                profile.use_ssl = False
             else:
                 profile.server = request.form.get('server', '')
                 profile.port = int(request.form.get('port', 587))
@@ -956,6 +1054,8 @@ def smtp_profiles():
             profile.sender_name = request.form.get('sender_name', '')
             profile.sender_email = request.form.get('sender_email', '')
             profile.reply_to_email = request.form.get('reply_to_email', '')
+            profile.cc_emails = request.form.get('cc_emails', '')
+            profile.bcc_emails = request.form.get('bcc_emails', '')
             profile.is_active = 'is_active' in request.form
             profile.daily_limit = int(request.form.get('daily_limit', 500))
             profile.hourly_limit = int(request.form.get('hourly_limit', 100))
@@ -1272,6 +1372,7 @@ def deliverability_tools():
     form = DeliverabilityForm()
     results = None
     helper = DeliverabilityHelper()
+    smtp_profiles = get_active_imap_profiles_for_user(current_user.id)
 
     if form.validate_on_submit():
         target = form.domain_ip.data.strip()
@@ -1294,7 +1395,8 @@ def deliverability_tools():
     return render_template('deliverability.html',
                            title='Deliverability Tools',
                            form=form,
-                           results=results)
+                           results=results,
+                           smtp_profiles=smtp_profiles)
 
 
 @bp.route('/tools/spam_check', methods=['POST'])
@@ -1353,6 +1455,71 @@ def deliverability_tools_ajax():
         return jsonify({'success': success, 'result': result})
     except Exception as e:
         return jsonify({'success': False, 'result': str(e)})
+
+
+@bp.route('/tools/domain_check_bulk', methods=['POST'])
+@login_required
+def domain_check_bulk():
+    """Bulk domain authentication check (desktop parity helper)."""
+    try:
+        data = request.get_json() or {}
+        domains = extract_domains_from_text(data.get('content', ''))
+        if not domains:
+            return jsonify({'success': False, 'error': 'No valid domains/emails found'}), 400
+
+        helper = DeliverabilityHelper()
+        rows = []
+        domains_to_process = domains[:MAX_BULK_DOMAIN_CHECK]
+        for domain in domains_to_process:
+            mx_status, mx_records = helper.check_mx_record(domain)
+            auth = helper.check_domain_authentication(domain)
+            spf = auth.get('spf', '❌ Missing')
+            dkim = auth.get('dkim', '❌ Missing')
+            dmarc = auth.get('dmarc', '❌ Missing')
+            mx_label = next(
+                (record for record in (mx_records or []) if isinstance(record, str) and record.strip()),
+                mx_status
+            )
+            rows.append(build_domain_check_row(domain, mx_label, spf, dkim, dmarc))
+
+        response = {'success': True, 'results': rows}
+        if len(domains) > MAX_BULK_DOMAIN_CHECK:
+            response['warning'] = f"Processed first {MAX_BULK_DOMAIN_CHECK} domains out of {len(domains)} provided."
+        return jsonify(response)
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@bp.route('/tools/seed_inbox_check', methods=['POST'])
+@login_required
+def seed_inbox_check():
+    """Run seed inbox placement check for an IMAP-enabled profile."""
+    try:
+        data = request.get_json() or {}
+        try:
+            profile_id = int(data.get('profile_id', 0))
+        except (TypeError, ValueError):
+            return jsonify({'success': False, 'error': 'Invalid profile_id'}), 400
+        seed_text = data.get('seed_list', '')
+
+        profile = SMTPServer.query.filter_by(id=profile_id, user_id=current_user.id).first()
+        if not profile:
+            return jsonify({'success': False, 'error': 'Profile not found'}), 404
+
+        imap_password = profile.get_imap_password()
+        seeds = parse_seed_emails(seed_text)
+        result = check_seed_inbox_placement_imap(
+            host=profile.imap_server or '',
+            port=int(profile.imap_port or 993),
+            username=profile.imap_username or '',
+            password=imap_password or '',
+            seed_emails=seeds,
+        )
+        if not result.get('ok'):
+            return jsonify({'success': False, 'error': result.get('error', 'Seed check failed')}), 400
+        return jsonify({'success': True, 'result': result})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 # ==================== AI TOOLS ====================
@@ -1438,6 +1605,26 @@ def api_get_logs():
         })
 
     return jsonify(log_list)
+
+
+@bp.route('/api/logs/clear_legacy', methods=['POST'])
+@login_required
+def api_clear_legacy_logs():
+    """Clear in-memory logs and prune ActivityLog entries predating web phase rollout."""
+    try:
+        clear_logs()
+        cutoff = get_legacy_activity_cutoff()
+        deleted_count = ActivityLog.query.filter(ActivityLog.created_at < cutoff).delete(synchronize_session=False)
+        db.session.commit()
+        log_activity(f"Legacy activity logs cleared before {cutoff.isoformat()} (deleted={deleted_count})", "INFO")
+        return jsonify({
+            'success': True,
+            'deleted_count': deleted_count,
+            'cutoff': cutoff.isoformat()
+        })
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 # ==================== CAMPAIGN STATUS API ====================

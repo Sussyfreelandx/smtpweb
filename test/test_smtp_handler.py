@@ -7,6 +7,7 @@ from app.core_logic.smtp_handler import SMTPHandler
 class MockConn:
     def __init__(self):
         self.sent_messages = []
+        self.sent_to_addrs = []
         self.closed = False
     def ehlo(self):
         return
@@ -18,9 +19,10 @@ class MockConn:
         return
     def login(self, user, password):
         return
-    def send_message(self, msg):
+    def send_message(self, msg, to_addrs=None):
         # Simulate sending
         self.sent_messages.append(msg)
+        self.sent_to_addrs.append(to_addrs)
     def quit(self):
         self.closed = True
     def close(self):
@@ -83,3 +85,39 @@ def test_send_bulk_threaded_works(monkeypatch):
     for r in results:
         assert 'email' in r
         assert 'success' in r
+
+
+def test_send_email_sync_with_cc_bcc(monkeypatch):
+    smtp_config = {
+        'server': 'smtp.test.local',
+        'port': 587,
+        'username': 'user@test.local',
+        'password': 'secret',
+        'use_tls': True,
+        'use_ssl': False,
+        'sender_name': 'Tester',
+        'sender_email': 'user@test.local'
+    }
+    handler = SMTPHandler(smtp_config)
+    created = {}
+
+    import app.core_logic.smtp_handler as smtp_module
+
+    def conn_factory(*_args, **_kwargs):
+        conn = MockConn()
+        created['conn'] = conn
+        return conn
+
+    monkeypatch.setattr(smtp_module, "ProxySMTP", conn_factory)
+
+    success, _ = handler.send_email_sync(
+        "to@example.com",
+        "Subject",
+        "<p>Body</p>",
+        cc_emails=["cc1@example.com"],
+        bcc_emails=["bcc1@example.com"],
+    )
+    assert success is True
+    msg = created['conn'].sent_messages[0]
+    assert msg.get('Cc') == "cc1@example.com"
+    assert created['conn'].sent_to_addrs[0] == ["to@example.com", "cc1@example.com", "bcc1@example.com"]

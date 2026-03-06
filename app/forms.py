@@ -119,6 +119,8 @@ class SMTPServerForm(FlaskForm):
     password = PasswordField('Password', validators=[Optional()])
     sender_name = StringField('Sender Name', validators=[Optional()])
     sender_email = StringField('Sender Email', validators=[Optional(), Email()])
+    cc_emails = StringField('CC Emails', validators=[Optional()])
+    bcc_emails = StringField('BCC Emails', validators=[Optional()])
     use_tls = BooleanField('Use TLS', default=True)
     use_ssl = BooleanField('Use SSL', default=False)
     is_active = BooleanField('Active', default=True)

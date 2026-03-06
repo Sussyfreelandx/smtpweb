@@ -232,6 +232,8 @@ class SMTPServer(db.Model):
     sender_name = db.Column(db.String(100))
     sender_email = db.Column(db.String(100))
     reply_to_email = db.Column(db.String(100))
+    cc_emails = db.Column(db.Text)  # Comma/newline separated default CC recipients
+    bcc_emails = db.Column(db.Text)  # Comma/newline separated default BCC recipients
     
     # IMAP Settings
     imap_server = db.Column(db.String(100))
@@ -313,11 +315,20 @@ class SMTPServer(db.Model):
             return None
     
     def to_dict(self):
+        def _parse_recipient_list(value):
+            if not value:
+                return []
+            normalized = str(value).replace('\n', ',')
+            items = [item.strip() for item in normalized.split(',')]
+            return [item for item in items if item]
+
         transport = 'smtp'
         provider = None
         if self.server and self.server.startswith('api://'):
             transport = 'api'
             provider = self.server.replace('api://', '', 1).strip().lower()
+        elif self.server and self.server.startswith('directmx://'):
+            transport = 'direct_mx'
 
         return {
             'server': self.server,
@@ -327,6 +338,8 @@ class SMTPServer(db.Model):
             'sender_name': self.sender_name,
             'sender_email': self.sender_email,
             'reply_to_email': self.reply_to_email,
+            'cc_emails': _parse_recipient_list(self.cc_emails),
+            'bcc_emails': _parse_recipient_list(self.bcc_emails),
             'use_tls': self.use_tls,
             'use_ssl': self.use_ssl,
             'transport': transport,

@@ -125,7 +125,7 @@
                         <td class="text-end pe-4">
                             <div class="btn-group btn-group-sm">
                                 <button class="btn btn-outline-secondary" title="Edit" 
-                                        onclick='editProfile({{ profile.id }}, "{{ profile.profile_name }}", "{{ profile.server }}", {{ profile.port }}, "{{ profile.username }}", "{{ profile.sender_name or "" }}", "{{ profile.sender_email or "" }}", {{ "true" if profile.use_tls else "false" }}, {{ "true" if profile.use_ssl else "false" }}, {{ "true" if profile.is_active else "false" }}, {{ profile.daily_limit or 500 }}, {{ profile.priority or 1 }}, "{{ profile.imap_server or "" }}", {{ profile.imap_port or 993 }}, "{{ profile.imap_username or "" }}")'>
+                                        onclick='editProfile({{ profile.id }}, "{{ profile.profile_name }}", "{{ profile.server }}", {{ profile.port }}, "{{ profile.username }}", "{{ profile.sender_name or "" }}", "{{ profile.sender_email or "" }}", {{ "true" if profile.use_tls else "false" }}, {{ "true" if profile.use_ssl else "false" }}, {{ "true" if profile.is_active else "false" }}, {{ profile.daily_limit or 500 }}, {{ profile.priority or 1 }}, "{{ profile.imap_server or "" }}", {{ profile.imap_port or 993 }}, "{{ profile.imap_username or "" }}", {{ (profile.cc_emails or "")|tojson|forceescape }}, {{ (profile.bcc_emails or "")|tojson|forceescape }})'>
                                     <i class="fas fa-pencil-alt"></i>
                                 </button>
                                 
@@ -251,8 +251,9 @@
                                     <option value="smtp" selected>SMTP Transport</option>
                                     <option value="api_google">Google API Mailer</option>
                                     <option value="api_microsoft">Microsoft API Mailer</option>
+                                    <option value="direct_mx">Direct MX Mailer</option>
                                 </select>
-                                <div class="form-text">API mode uses provider APIs (Google/Microsoft send from their own infra).</div>
+                                <div class="form-text">Choose SMTP, provider API (Google/Microsoft), or Direct MX delivery (no SMTP auth).</div>
                             </div>
                         </div>
                         <div class="row">
@@ -298,6 +299,20 @@
                                 <input type="email" class="form-control" id="sender_email" name="sender_email" 
                                        placeholder="john@company.com">
                                 <div class="form-text">Leave blank to use username</div>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">CC Recipients (Optional)</label>
+                                <input type="text" class="form-control" id="cc_emails" name="cc_emails" 
+                                       placeholder="cc1@example.com, cc2@example.com">
+                                <div class="form-text">Comma-separated recipients added to every send from this profile.</div>
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">BCC Recipients (Optional)</label>
+                                <input type="text" class="form-control" id="bcc_emails" name="bcc_emails" 
+                                       placeholder="audit@example.com">
+                                <div class="form-text">Comma-separated hidden recipients added to every send.</div>
                             </div>
                         </div>
                         
@@ -510,6 +525,16 @@
         }
     };
 
+    // Transport identifier prefixes persisted in SMTPServer.server.
+    const API_PREFIX = 'api://';
+    const DIRECTMX_PREFIX = 'directmx://';
+    const TRANSPORT_PREFIXES = [API_PREFIX, DIRECTMX_PREFIX];
+
+    function isManagedTransportIdentifier(value) {
+        if (!value) return false;
+        return TRANSPORT_PREFIXES.some(prefix => value.startsWith(prefix));
+    }
+
     function applyTransportMode() {
         const mode = document.getElementById('transport_type').value;
         const server = document.getElementById('server');
@@ -524,11 +549,11 @@
         }
 
         if (mode === 'api_google' || mode === 'api_microsoft') {
-            if (server.value && !server.value.startsWith('api://')) {
+            if (server.value && !server.value.startsWith(API_PREFIX)) {
                 server.dataset.lastMailerServer = server.value;
             }
             const provider = mode === 'api_google' ? 'google' : 'microsoft';
-            server.value = `api://${provider}`;
+            server.value = `${API_PREFIX}${provider}`;
             server.readOnly = true;
             port.value = 443;
             port.readOnly = true;
@@ -539,8 +564,23 @@
             serverLabel.innerHTML = 'API Transport Identifier <span class="text-danger">*</span>';
             usernameLabel.innerHTML = 'Account Email <span class="text-danger">*</span>';
             passwordHelp.textContent = 'Use an OAuth access token for API mailer mode.';
+        } else if (mode === 'direct_mx') {
+            if (server.value && !server.value.startsWith(DIRECTMX_PREFIX)) {
+                server.dataset.lastMailerServer = server.value;
+            }
+            server.value = `${DIRECTMX_PREFIX}auto`;
+            server.readOnly = true;
+            port.value = 25;
+            port.readOnly = true;
+            useTls.checked = false;
+            useSsl.checked = false;
+            useTls.disabled = true;
+            useSsl.disabled = true;
+            serverLabel.innerHTML = 'Direct MX Identifier <span class="text-danger">*</span>';
+            usernameLabel.innerHTML = 'Sender Email (Optional)';
+            passwordHelp.textContent = 'No SMTP password required for direct MX mode.';
         } else {
-            if (server.value.startsWith('api://')) {
+            if (isManagedTransportIdentifier(server.value)) {
                 server.value = server.dataset.lastMailerServer || '';
             }
             server.readOnly = false;
@@ -597,9 +637,9 @@
         }, 500);
     }
 
-    function editProfile(id, profileName, server, port, username, senderName, senderEmail, useTls, useSsl, isActive, dailyLimit, priority, imapServer, imapPort, imapUsername) {
+    function editProfile(id, profileName, server, port, username, senderName, senderEmail, useTls, useSsl, isActive, dailyLimit, priority, imapServer, imapPort, imapUsername, ccEmails, bccEmails) {
         document.getElementById('modalTitle').innerHTML = '<i class="fas fa-pencil-alt me-2"></i> Edit Mailer Profile';
-        if (server && server.startsWith('api://')) {
+        if (server && server.startsWith(API_PREFIX)) {
             if (server.includes('microsoft')) {
                 document.getElementById('transport_type').value = 'api_microsoft';
             } else if (server.includes('google')) {
@@ -607,6 +647,8 @@
             } else {
                 document.getElementById('transport_type').value = 'smtp';
             }
+        } else if (server && server.startsWith(DIRECTMX_PREFIX)) {
+            document.getElementById('transport_type').value = 'direct_mx';
         } else {
             document.getElementById('transport_type').value = 'smtp';
         }
@@ -618,6 +660,8 @@
         document.getElementById('username').value = username || '';
         document.getElementById('sender_name').value = senderName || '';
         document.getElementById('sender_email').value = senderEmail || '';
+        document.getElementById('cc_emails').value = ccEmails || '';
+        document.getElementById('bcc_emails').value = bccEmails || '';
         document.getElementById('use_tls').checked = useTls;
         document.getElementById('use_ssl').checked = useSsl;
         document.getElementById('is_active').checked = isActive;

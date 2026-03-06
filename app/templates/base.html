@@ -309,6 +309,10 @@
         <div id="activity-log-header" onclick="toggleLog()">
             <span><i class="fas fa-terminal me-2 text-primary"></i> LIVE ACTIVITY LOG</span>
             <div>
+                <button type="button" class="btn btn-sm btn-outline-danger me-2 py-0 px-2"
+                        onclick="clearLegacyLogs(event)" title="Clear pre-Phase 1 to 10 logs">
+                    <i class="fas fa-eraser"></i>
+                </button>
                 <span id="log-status" class="text-success me-3" style="font-size: 0.7rem;">● ONLINE</span>
                 <i class="fas fa-chevron-down" id="log-toggle-icon"></i>
             </div>
@@ -339,6 +343,39 @@
                 document.getElementById('log-toggle-icon').className = "fas fa-chevron-up";
             }
             isCollapsed = !isCollapsed;
+        }
+
+        function clearLegacyLogs(event) {
+            event.stopPropagation();
+            fetch("{{ url_for('main.api_clear_legacy_logs') }}", {
+                method: "POST",
+                headers: {
+                    "X-CSRFToken": "{{ csrf_token() }}"
+                }
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (!data.success) {
+                    const div = document.createElement('div');
+                    div.className = "log-entry";
+                    div.innerHTML = `<span class="log-time">[${new Date().toLocaleTimeString()}]</span><span class="log-error">❌ Failed to clear legacy logs</span>`;
+                    logContent.appendChild(div);
+                    logContent.scrollTop = logContent.scrollHeight;
+                    return;
+                }
+                logContent.innerHTML = '';
+                const div = document.createElement('div');
+                div.className = "log-entry";
+                div.innerHTML = `<span class="log-time">[${new Date().toLocaleTimeString()}]</span><span class="log-info">🧹 Legacy logs cleared before ${data.cutoff}</span>`;
+                logContent.appendChild(div);
+            })
+            .catch(() => {
+                const div = document.createElement('div');
+                div.className = "log-entry";
+                div.innerHTML = `<span class="log-time">[${new Date().toLocaleTimeString()}]</span><span class="log-error">❌ Network error while clearing legacy logs</span>`;
+                logContent.appendChild(div);
+                logContent.scrollTop = logContent.scrollHeight;
+            });
         }
 
         // Setup Socket.IO

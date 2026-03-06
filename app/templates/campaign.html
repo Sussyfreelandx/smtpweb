@@ -218,6 +218,21 @@
         </div>
     </div>
 
+    <!-- Live Sent Log -->
+    <div class="card mb-4 shadow-sm">
+        <div class="card-header bg-white d-flex justify-content-between align-items-center">
+            <span class="fw-bold"><i class="fas fa-stream me-2"></i> Live Sent Log</span>
+            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="refreshSentLog()">
+                <i class="fas fa-sync-alt me-1"></i> Refresh
+            </button>
+        </div>
+        <div class="card-body">
+            <div id="sent-log-container" class="small" style="max-height: 220px; overflow-y: auto;">
+                <div class="text-muted">Loading log entries...</div>
+            </div>
+        </div>
+    </div>
+
     <!-- Recipients List -->
     <div class="card mb-4 shadow-sm">
         <div class="card-header bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
@@ -353,6 +368,53 @@
 
 {% block scripts %}
 <script>
+function escapeHtml(value) {
+    return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function refreshSentLog() {
+    const container = document.getElementById('sent-log-container');
+    if (!container) return;
+    container.innerHTML = '<div class="text-muted"><span class="spinner-border spinner-border-sm me-2"></span>Loading...</div>';
+
+    fetch("{{ url_for('main.campaign_sent_log', campaign_id=campaign.id) }}?limit=250")
+        .then(r => r.json())
+        .then(data => {
+            if (!data.success) {
+                container.innerHTML = `<div class="alert alert-danger py-2">${escapeHtml(data.error || 'Failed to load log')}</div>`;
+                return;
+            }
+            const entries = data.entries || [];
+            if (!entries.length) {
+                container.innerHTML = '<div class="text-muted">No sending log entries yet.</div>';
+                return;
+            }
+            let html = '<ul class="list-group list-group-flush">';
+            entries.slice().reverse().forEach(entry => {
+                const sevClass = entry.severity === 'ERROR' ? 'text-danger' : (entry.severity === 'SUCCESS' ? 'text-success' : 'text-muted');
+                html += `<li class="list-group-item px-0 py-1 border-0">
+                    <code>${escapeHtml(entry.timestamp)}</code>
+                    <span class="ms-1 ${sevClass} fw-bold">${escapeHtml(entry.severity)}</span>
+                    <span class="ms-2">${escapeHtml(entry.email || '')}</span>
+                    <span class="ms-2 badge bg-light text-dark">${escapeHtml(entry.status || '')}</span>
+                    <span class="ms-2 text-muted">${escapeHtml(entry.message || '')}</span>
+                </li>`;
+            });
+            html += '</ul>';
+            container.innerHTML = html;
+        })
+        .catch(err => {
+            container.innerHTML = `<div class="alert alert-danger py-2">Request failed: ${escapeHtml(err && err.message ? err.message : String(err))}</div>`;
+        });
+}
+
+refreshSentLog();
+
 document.getElementById('addRecipientForm').addEventListener('submit', function(e) {
     e.preventDefault();
     const emailInput = document.getElementById('newRecipientEmail');
@@ -421,6 +483,7 @@ let refreshInterval = setInterval(function() {
                 clearInterval(refreshInterval);
                 location.reload();
             }
+            refreshSentLog();
         })
         .catch(err => console.log('Status check failed:', err));
 }, 3000);

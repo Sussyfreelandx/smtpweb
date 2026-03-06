@@ -8,7 +8,8 @@ ensuring they use the correct configuration and app context.
 import time
 import logging
 import traceback
-from datetime import datetime
+from datetime import datetime, timezone
+from email.utils import make_msgid
 
 # Import the celery instance defined in celery_app.py
 from celery_app import celery
@@ -17,6 +18,52 @@ from app.utils import log_activity
 
 # Logger for tasks
 logger = logging.getLogger(__name__)
+STATUS_MESSAGE_MAX_LENGTH = 255
+REPLY_DETECTED_SUFFIX = " | Reply detected"
+
+
+def _truncate_utf8(text, max_bytes):
+    raw = (text or "").encode('utf-8')
+    return raw[:max_bytes].decode('utf-8', errors='ignore')
+
+
+def _apply_seed_spam_pause(campaigns, spam_rate, pause_message):
+    paused = 0
+    if spam_rate < 50.0:
+        return paused
+    for campaign in campaigns:
+        if campaign.status == 'Sending':
+            campaign.status = 'Paused'
+            campaign.status_message = pause_message
+            paused += 1
+    return paused
+
+
+def _check_profile_send_allowed(profile):
+    if not profile:
+        return False, "No mailer profile configured"
+    if profile.can_send():
+        return True, None
+
+    if getattr(profile, 'warmup_enabled', False):
+        limit = profile.get_warmup_limit()
+        return False, f"Warmup limit reached ({profile.sent_today}/{limit})"
+    if getattr(profile, 'daily_limit', 0) and profile.sent_today >= profile.daily_limit:
+        return False, f"Daily limit reached ({profile.sent_today}/{profile.daily_limit})"
+    if getattr(profile, 'hourly_limit', 0) and profile.sent_this_hour >= profile.hourly_limit:
+        return False, f"Hourly limit reached ({profile.sent_this_hour}/{profile.hourly_limit})"
+    return False, "Profile sending limits reached"
+
+
+def _record_profile_send_success(profile):
+    if profile:
+        profile.increment_sent_count()
+
+
+def _build_outbound_message_id(profile, recipient_email):
+    sender = getattr(profile, 'sender_email', None) or recipient_email or 'local@localhost'
+    domain = sender.split('@')[-1] if sender and '@' in sender else 'localhost'
+    return make_msgid(domain=domain)
 
 
 def _safe_import_models():
@@ -105,10 +152,21 @@ def send_campaign_task(self, campaign_id):
 
             log_activity(f"--- Batch #{batch_num}: Processing {len(recipients)} recipients ---")
 
+            allowed, deny_msg = _check_profile_send_allowed(smtp_profile)
+            if not allowed:
+                limit_reached_message = deny_msg or "Profile sending limit reached"
+                campaign.status = 'Paused'
+                campaign.status_message = f"Auto-paused: {limit_reached_message}"
+                db.session.commit()
+                log_activity(f"⏸️ Campaign paused: {limit_reached_message}", "WARNING")
+                break
+
             for recipient in recipients:
                 try:
                     recipient.status = 'Sending'
                     recipient.attempts = (recipient.attempts or 0) + 1
+                    outbound_message_id = _build_outbound_message_id(smtp_profile, recipient.email)
+                    recipient.message_id = outbound_message_id
                     db.session.commit()
 
                     personalizer = PersonalizationEngine(campaign, recipient)
@@ -120,13 +178,15 @@ def send_campaign_task(self, campaign_id):
                         subject=subject,
                         html_content=body_html,
                         plain_content=body_plain,
-                        attachments=attachments
+                        attachments=attachments,
+                        custom_headers={'Message-ID': outbound_message_id},
                     )
 
                     if success:
                         recipient.status = 'Sent'
                         recipient.sent_at = datetime.utcnow()
                         recipient.status_message = 'OK'
+                        _record_profile_send_success(smtp_profile)
                         campaign.sent_count = (campaign.sent_count or 0) + 1
                         total_sent_in_task += 1
                         log_activity(f"✅ Sent: {recipient.email}")
@@ -151,7 +211,6 @@ def send_campaign_task(self, campaign_id):
                     except Exception:
                         db.session.rollback()
                     total_failed_in_task += 1
-
             log_activity(f"Batch #{batch_num} done. Sent: {total_sent_in_task}, Failed: {total_failed_in_task}")
 
             remaining = campaign.recipients.filter_by(status='Queued').count()
@@ -213,8 +272,14 @@ def send_single_email_task(self, recipient_id, campaign_id):
         if not valid:
             return {"status": "error", "message": validation_msg}
 
+        allowed, deny_msg = _check_profile_send_allowed(smtp_profile)
+        if not allowed:
+            return {"status": "error", "message": deny_msg}
+
         recipient.status = 'Sending'
         recipient.attempts = (recipient.attempts or 0) + 1
+        outbound_message_id = _build_outbound_message_id(smtp_profile, recipient.email)
+        recipient.message_id = outbound_message_id
         db.session.commit()
 
         try:
@@ -229,13 +294,15 @@ def send_single_email_task(self, recipient_id, campaign_id):
             to_email=recipient.email,
             subject=subject,
             html_content=body_html,
-            plain_content=body_plain
+            plain_content=body_plain,
+            custom_headers={'Message-ID': outbound_message_id},
         )
 
         if success:
             recipient.status = 'Sent'
             recipient.sent_at = datetime.utcnow()
             recipient.status_message = 'OK'
+            _record_profile_send_success(smtp_profile)
         else:
             recipient.status = 'Failed'
             recipient.status_message = str(message)[:250]
@@ -314,12 +381,125 @@ def process_sequence_automation():
 
 @celery.task(name='app.tasks.check_imap_replies')
 def check_imap_replies():
-    return {"status": "checked"}
+    Campaign, Recipient, SMTPServer = _safe_import_models()
+    from app.core_logic.desktop_imap_compat import fetch_recent_imap_reply_signals
+
+    log_activity("Running check_imap_replies")
+    checked_profiles = 0
+    updated_replies = 0
+
+    try:
+        profiles = SMTPServer.query.filter(
+            SMTPServer.is_active,
+            SMTPServer.imap_server.isnot(None),
+            SMTPServer.imap_username.isnot(None),
+        ).all()
+
+        for profile in profiles:
+            imap_password = profile.get_imap_password()
+            if not profile.imap_server or not profile.imap_username or not imap_password:
+                continue
+
+            checked_profiles += 1
+            try:
+                signals = fetch_recent_imap_reply_signals(
+                    host=profile.imap_server,
+                    port=int(profile.imap_port or 993),
+                    username=profile.imap_username,
+                    password=imap_password,
+                    limit=300,
+                )
+            except Exception as e:
+                log_activity(f"IMAP check failed for profile {profile.id}: {e}", "WARNING")
+                continue
+
+            sender_emails = signals.get('sender_emails', set())
+            reply_message_ids = signals.get('reply_message_ids', set())
+            if not sender_emails and not reply_message_ids:
+                continue
+            normalized_sender_emails = {addr.strip().lower() for addr in sender_emails if addr}
+
+            recipients = Recipient.query.join(Campaign, Recipient.campaign_id == Campaign.id).filter(
+                Campaign.smtp_profile_id == profile.id,
+                Recipient.status == 'Sent',
+                Recipient.replied_at.is_(None),
+            ).all()
+
+            for recipient in recipients:
+                recipient_email_norm = (recipient.email or '').strip().lower()
+                msg_id = (recipient.message_id or '').strip()
+                matched_thread = bool(msg_id and msg_id in reply_message_ids)
+                if recipient_email_norm in normalized_sender_emails or matched_thread:
+                    recipient.replied_at = datetime.now(timezone.utc)
+                    suffix = REPLY_DETECTED_SUFFIX
+                    base_msg = recipient.status_message or 'OK'
+                    suffix_len_bytes = len(suffix.encode('utf-8'))
+                    max_base_len = max(0, STATUS_MESSAGE_MAX_LENGTH - suffix_len_bytes)
+                    recipient.status_message = _truncate_utf8(base_msg, max_base_len) + suffix
+                    try:
+                        recipient.calculate_engagement_score()
+                    except Exception as score_err:
+                        log_activity(f"Engagement score update failed for recipient {recipient.id}: {score_err}", "WARNING")
+                    updated_replies += 1
+
+        db.session.commit()
+        return {"status": "checked", "profiles": checked_profiles, "replies_marked": updated_replies}
+    except Exception as e:
+        db.session.rollback()
+        log_activity(f"Error in check_imap_replies: {e}", "ERROR")
+        return {"status": "error", "message": str(e)}
 
 
 @celery.task(name='app.tasks.cleanup_old_data')
 def cleanup_old_data():
     return {"status": "cleaned"}
+
+
+@celery.task(name='app.tasks.verify_seed_inbox_placement')
+def verify_seed_inbox_placement(profile_id, seed_list_text):
+    """Verify seed inbox placement via IMAP and auto-pause campaigns on high spam rate."""
+    Campaign, Recipient, SMTPServer = _safe_import_models()
+    from app.core_logic.desktop_seed_inbox_compat import parse_seed_emails, check_seed_inbox_placement_imap
+
+    profile = SMTPServer.query.get(profile_id)
+    if not profile:
+        return {"status": "error", "message": "Profile not found"}
+
+    seeds = parse_seed_emails(seed_list_text)
+    if not seeds:
+        return {"status": "error", "message": "No valid seed emails provided"}
+
+    imap_password = profile.get_imap_password()
+    if not imap_password:
+        return {"status": "error", "message": "IMAP password is not configured for profile"}
+    result = check_seed_inbox_placement_imap(
+        host=profile.imap_server,
+        port=int(profile.imap_port or 993),
+        username=profile.imap_username,
+        password=imap_password,
+        seed_emails=seeds,
+    )
+
+    if not result.get("ok"):
+        return {"status": "error", "message": result.get("error", "Seed check failed")}
+
+    spam_rate = float(result.get("spam_rate", 0.0))
+    campaigns = Campaign.query.filter(Campaign.smtp_profile_id == profile.id).all()
+    paused_campaigns = _apply_seed_spam_pause(
+        campaigns,
+        spam_rate=spam_rate,
+        pause_message="Auto-paused: high seed spam rate detected",
+    )
+    if paused_campaigns:
+        db.session.commit()
+
+    return {
+        "status": "ok",
+        "profile_id": profile.id,
+        "spam_rate": spam_rate,
+        "paused_campaigns": paused_campaigns,
+        "result": result,
+    }
 
 
 @celery.task(name='app.tasks.generate_campaign_report')

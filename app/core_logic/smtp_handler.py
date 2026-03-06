@@ -8,7 +8,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
-from email.utils import formataddr, formatdate, make_msgid
+from email.utils import formataddr, formatdate, make_msgid, getaddresses
 from email.header import Header
 from datetime import datetime, timedelta
 from collections import deque
@@ -137,6 +137,15 @@ class SMTPHandler:
 
         return context
 
+    def _normalize_recipients(self, value):
+        if not value:
+            return []
+        if isinstance(value, (list, tuple, set)):
+            items = value
+        else:
+            items = str(value).replace('\n', ',').split(',')
+        return [str(item).strip() for item in items if str(item).strip()]
+
     def _html_to_text(self, html):
         if not html:
             return "Plain text content not available."
@@ -149,12 +158,15 @@ class SMTPHandler:
             return "HTML-only email.  Please use a compatible client."
 
     def _create_mime_message(self, to_email, subject, html_content, plain_content=None,
-                             unsubscribe_url=None, attachments=None, custom_headers=None):
+                             unsubscribe_url=None, attachments=None, custom_headers=None,
+                             cc_emails=None):
         msg_root = MIMEMultipart('related')
 
         msg_root['Subject'] = Header(subject, 'utf-8').encode()
         msg_root['From'] = formataddr((Header(self.sender_name, 'utf-8').encode(), self.sender_email))
         msg_root['To'] = to_email
+        if cc_emails:
+            msg_root['Cc'] = ', '.join(cc_emails)
         msg_root['Date'] = formatdate(localtime=True)
         
         # Safe domain extraction
@@ -195,6 +207,21 @@ class SMTPHandler:
                         log.error(f"Could not attach {filepath}: {e}")
 
         return msg_root
+
+    def create_mime_message(self, to_email, subject, html_content, plain_content=None,
+                            unsubscribe_url=None, attachments=None, custom_headers=None,
+                            cc_emails=None):
+        """Public wrapper for MIME construction used by transport abstractions."""
+        return self._create_mime_message(
+            to_email=to_email,
+            subject=subject,
+            html_content=html_content,
+            plain_content=plain_content,
+            unsubscribe_url=unsubscribe_url,
+            attachments=attachments,
+            custom_headers=custom_headers,
+            cc_emails=cc_emails,
+        )
 
     def connect(self):
         """Establish connection to SMTP server using Custom Proxy Classes."""
@@ -269,7 +296,8 @@ class SMTPHandler:
         return success, msg
 
     def send_email(self, to_email, subject, html_content, plain_content=None,
-                   unsubscribe_url=None, attachments=None, custom_headers=None):
+                   unsubscribe_url=None, attachments=None, custom_headers=None,
+                   cc_emails=None, bcc_emails=None):
         """
         Send a single email.  This is the main method called by the Celery task.
         Wraps send_email_sync for compatibility.
@@ -281,11 +309,14 @@ class SMTPHandler:
             plain_content=plain_content,
             unsubscribe_url=unsubscribe_url,
             attachments=attachments,
-            custom_headers=custom_headers
+            custom_headers=custom_headers,
+            cc_emails=cc_emails,
+            bcc_emails=bcc_emails,
         )
 
     def send_email_sync(self, to_email, subject, html_content, plain_content=None,
-                        unsubscribe_url=None, attachments=None, custom_headers=None):
+                        unsubscribe_url=None, attachments=None, custom_headers=None,
+                        cc_emails=None, bcc_emails=None):
         """
         Send a single email synchronously.
         Uses the scoped ProxySMTP classes to ensure safe proxying.
@@ -325,10 +356,13 @@ class SMTPHandler:
 
                 mime_message = self._create_mime_message(
                     to_email, subject, html_content, plain_content,
-                    unsubscribe_url, attachments, custom_headers
+                    unsubscribe_url, attachments, custom_headers, cc_emails
                 )
 
-                server.send_message(mime_message)
+                to_fields = (mime_message.get_all('To', []) or []) + (mime_message.get_all('Cc', []) or [])
+                recipients = [addr for _, addr in getaddresses(to_fields) if addr]
+                recipients.extend(self._normalize_recipients(bcc_emails))
+                server.send_message(mime_message, to_addrs=recipients or None)
 
             self._recent_sends.append(datetime.utcnow())
             return True, "Sent"
@@ -354,7 +388,9 @@ class SMTPHandler:
                 task.get('plain_content'),
                 task.get('unsubscribe_url'),
                 task.get('attachments'),
-                task.get('custom_headers')
+                task.get('custom_headers'),
+                task.get('cc_emails'),
+                task.get('bcc_emails'),
             )
             return {
                 'email': task['to_email'],

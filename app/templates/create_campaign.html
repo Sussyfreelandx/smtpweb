@@ -49,6 +49,12 @@
                                 <button type="button" class="btn btn-outline-dark" onclick="inlineCSS()">
                                     <i class="fas fa-paint-brush me-1"></i> Inline CSS
                                 </button>
+                                <button type="button" class="btn btn-outline-warning" onclick="validateTemplateContent()">
+                                    <i class="fas fa-check-circle me-1"></i> Validate Template
+                                </button>
+                                <button type="button" class="btn btn-outline-info" onclick="openContextPreviewModal()">
+                                    <i class="fas fa-user-check me-1"></i> Context Preview
+                                </button>
                             </div>
                             <textarea class="form-control font-monospace" id="body_html" name="body_html" rows="14" required></textarea>
                             <div class="invalid-feedback">Please provide email content.</div>
@@ -74,6 +80,7 @@
                                 </div>
                                 <strong class="text-dark">Spintax:</strong> Use <code>{Hi|Hello|Hey}</code> for random variations.
                             </div>
+                            <div id="templateValidationResult" class="alert alert-light border mt-2 small mb-0" style="display:none;"></div>
                         </div>
                     </div>
 
@@ -271,10 +278,42 @@ jane@company.org,Jane,Tech Corp</pre>
         </div>
     </div>
 </form>
+
+<!-- Context Preview Modal -->
+<div class="modal fade" id="contextPreviewModal" tabindex="-1" aria-labelledby="contextPreviewModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="contextPreviewModalLabel">Recipient Context Preview</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <label for="contextPreviewEmail" class="form-label">Sample recipient email</label>
+                <input type="email" id="contextPreviewEmail" class="form-control" placeholder="john.doe@example.com" aria-label="Sample recipient email" aria-describedby="contextPreviewHelp" required>
+                <div id="contextPreviewEmailError" class="invalid-feedback" role="alert">Please enter a valid sample recipient email.</div>
+                <div id="contextPreviewHelp" class="form-text">Used to preview &#123;&#123;firstname&#125;&#125;, &#123;&#123;company&#125;&#125;, &#123;&#123;email&#125;&#125;, and &#123;&#123;domain&#125;&#125; substitutions.</div>
+                <div id="contextPreviewLive" class="visually-hidden" aria-live="polite"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="previewRecipientContext()">Preview</button>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
 <script>
+    function escapeHtml(value) {
+        return String(value || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
     // Toggle A/B Testing visibility
     document.getElementById('ab_testing_toggle').addEventListener('change', function() {
         document.getElementById('version_b_container').style.display = this.checked ? 'block' : 'none';
@@ -481,6 +520,123 @@ jane@company.org,Jane,Tech Corp</pre>
             btn.innerHTML = originalText;
             btn.disabled = false;
             alert("Request failed: " + e);
+        });
+    }
+
+    function validateTemplateContent() {
+        const subject = document.getElementById('subject').value || '';
+        const bodyHtml = document.getElementById('body_html').value || '';
+        const resultBox = document.getElementById('templateValidationResult');
+        resultBox.style.display = 'block';
+        resultBox.className = 'alert alert-light border mt-2 small mb-0';
+        resultBox.innerHTML = "<i class='fas fa-spinner fa-spin me-1'></i> Validating...";
+
+        fetch("{{ url_for('main.validate_campaign_template') }}", {
+            method: "POST",
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': '{{ csrf_token() }}'
+            },
+            body: JSON.stringify({subject: subject, body_html: bodyHtml})
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (!data.success) {
+                resultBox.className = 'alert alert-danger mt-2 small mb-0';
+                resultBox.textContent = data.error || 'Validation failed.';
+                return;
+            }
+            const res = data.result || {};
+            const errors = res.errors || [];
+            const warnings = res.warnings || [];
+            const vars = res.jinja_vars || [];
+            const statusClass = errors.length ? 'danger' : (warnings.length ? 'warning' : 'success');
+            resultBox.className = `alert alert-${statusClass} mt-2 small mb-0`;
+            const statusText = errors.length ? 'Error: issues detected' : (warnings.length ? 'Warning: check warnings' : 'Valid template');
+            const safeErrors = errors.map(escapeHtml).join('; ');
+            const safeWarnings = warnings.map(escapeHtml).join('; ');
+            const safeVars = vars.map(escapeHtml).join(', ');
+            resultBox.innerHTML = `
+                <div><strong>Template Check:</strong> ${escapeHtml(statusText)}</div>
+                ${errors.length ? `<div class="mt-1"><strong>Errors:</strong> ${safeErrors}</div>` : ''}
+                ${warnings.length ? `<div class="mt-1"><strong>Warnings:</strong> ${safeWarnings}</div>` : ''}
+                <div class="mt-1"><strong>Jinja Variables:</strong> ${safeVars || 'none'}</div>
+            `;
+        })
+        .catch(e => {
+            resultBox.className = 'alert alert-danger mt-2 small mb-0';
+            resultBox.textContent = `Validation request failed: ${e}`;
+        });
+    }
+
+    let contextPreviewModal = null;
+
+    function openContextPreviewModal() {
+        if (!contextPreviewModal) {
+            contextPreviewModal = new bootstrap.Modal(document.getElementById('contextPreviewModal'));
+        }
+        const input = document.getElementById('contextPreviewEmail');
+        const live = document.getElementById('contextPreviewLive');
+        input.value = input.value || 'john.doe@example.com';
+        input.classList.remove('is-invalid');
+        input.setAttribute('aria-invalid', 'false');
+        input.removeAttribute('aria-errormessage');
+        if (live) live.textContent = '';
+        contextPreviewModal.show();
+    }
+
+    function previewRecipientContext() {
+        const emailInput = document.getElementById('contextPreviewEmail');
+        const live = document.getElementById('contextPreviewLive');
+        const sample = (emailInput.value || '').trim();
+        if (!emailInput.checkValidity()) {
+            emailInput.classList.add('is-invalid');
+            emailInput.setAttribute('aria-invalid', 'true');
+            emailInput.setAttribute('aria-errormessage', 'contextPreviewEmailError');
+            if (live) live.textContent = 'Please enter a valid sample recipient email.';
+            return;
+        }
+        emailInput.classList.remove('is-invalid');
+        emailInput.setAttribute('aria-invalid', 'false');
+        emailInput.removeAttribute('aria-errormessage');
+        if (live) live.textContent = '';
+
+        const resultBox = document.getElementById('templateValidationResult');
+        resultBox.style.display = 'block';
+        resultBox.className = 'alert alert-light border mt-2 small mb-0';
+        resultBox.innerHTML = "<i class='fas fa-spinner fa-spin me-1'></i> Building preview...";
+
+        fetch("{{ url_for('main.preview_campaign_context') }}", {
+            method: "POST",
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': '{{ csrf_token() }}'
+            },
+            body: JSON.stringify({email: sample})
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (!data.success) {
+                resultBox.className = 'alert alert-danger mt-2 small mb-0';
+                resultBox.textContent = data.error || 'Context preview failed.';
+                return;
+            }
+            if (contextPreviewModal) {
+                contextPreviewModal.hide();
+            }
+            const c = data.result || {};
+            resultBox.className = 'alert alert-info mt-2 small mb-0';
+            resultBox.innerHTML = `
+                <div><strong>Context Preview</strong></div>
+                <div class="mt-1"><code>&#123;&#123;firstname&#125;&#125;</code> → ${escapeHtml(c.firstname)}</div>
+                <div><code>&#123;&#123;company&#125;&#125;</code> → ${escapeHtml(c.company)}</div>
+                <div><code>&#123;&#123;email&#125;&#125;</code> → ${escapeHtml(c.email)}</div>
+                <div><code>&#123;&#123;domain&#125;&#125;</code> → ${escapeHtml(c.domain)}</div>
+            `;
+        })
+        .catch(e => {
+            resultBox.className = 'alert alert-danger mt-2 small mb-0';
+            resultBox.textContent = `Context preview request failed: ${e}`;
         });
     }
 
