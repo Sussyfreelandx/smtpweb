@@ -13,6 +13,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_wtf.csrf import CSRFProtect
 from celery import Celery
+from sqlalchemy import inspect, text
 from config import config, ProductionConfig # <-- Import config objects
 
 # Create extension instances
@@ -56,6 +57,65 @@ def make_celery(app: Flask, celery_obj: Celery):
 
     celery_obj.Task = ContextTask
     return celery_obj
+
+
+def _build_missing_smtp_column_statements(existing_columns, dialect_name):
+    """Return ALTER TABLE SQL statements for missing smtp_server compatibility columns.
+
+    Args:
+        existing_columns: Iterable/set of current smtp_server column names.
+        dialect_name: SQLAlchemy dialect name (e.g. 'postgresql', 'sqlite').
+
+    Returns:
+        list[str]: SQL statements needed to add missing compatibility columns.
+    """
+    required_columns = {
+        "cc_emails": "TEXT",
+        "bcc_emails": "TEXT",
+    }
+    missing = [name for name in required_columns if name not in existing_columns]
+    statements = []
+    for column_name in missing:
+        column_type = required_columns[column_name]
+        if dialect_name == "postgresql":
+            statements.append(
+                f"ALTER TABLE smtp_server ADD COLUMN IF NOT EXISTS {column_name} {column_type}"
+            )
+        else:
+            statements.append(
+                f"ALTER TABLE smtp_server ADD COLUMN {column_name} {column_type}"
+            )
+    return statements
+
+
+def ensure_runtime_schema_compat(app: Flask):
+    """Apply a runtime schema compatibility patch for older deployed databases.
+
+    Args:
+        app: Flask application used for context and structured logging.
+
+    Returns:
+        None. The function logs warnings when a patch is applied or skipped.
+    """
+    with app.app_context():
+        engine = db.engine
+        inspector = inspect(engine)
+        if "smtp_server" not in inspector.get_table_names():
+            return
+        existing_columns = {col["name"] for col in inspector.get_columns("smtp_server")}
+        statements = _build_missing_smtp_column_statements(existing_columns, engine.dialect.name)
+        if not statements:
+            return
+        try:
+            with engine.begin() as conn:
+                for stmt in statements:
+                    conn.execute(text(stmt))
+            app.logger.warning(
+                "Applied runtime smtp_server schema compatibility patch: %s",
+                ", ".join(statements),
+            )
+        except Exception as exc:
+            app.logger.warning("Runtime schema compatibility patch skipped: %s", exc)
 
 def create_app(config_name=None):
     """Application factory."""
@@ -102,6 +162,9 @@ def create_app(config_name=None):
 
     # Configure Celery
     make_celery(app, celery)
+
+    # Compatibility patch for previously deployed databases missing newer columns.
+    ensure_runtime_schema_compat(app)
 
     # Register Blueprints
     with app.app_context():
