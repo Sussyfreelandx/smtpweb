@@ -328,6 +328,66 @@ def index():
         'clicks_week': int(recent_stats.clicks) if recent_stats and getattr(recent_stats, 'clicks', None) is not None else 0
     }
 
+    active_profiles = SMTPServer.query.filter(
+        SMTPServer.user_id == current_user.id,
+        SMTPServer.is_active,
+    ).all()
+    smtp_profile_count = 0
+    api_profile_count = 0
+    direct_mx_profile_count = 0
+    imap_ready_count = 0
+    cc_bcc_ready_count = 0
+    warmup_profile_count = 0
+
+    for profile in active_profiles:
+        server = (profile.server or '').lower()
+        if server.startswith('api://'):
+            api_profile_count += 1
+        elif server.startswith('directmx://'):
+            direct_mx_profile_count += 1
+        else:
+            smtp_profile_count += 1
+
+        if profile.imap_server and profile.imap_username and profile.imap_password_encrypted:
+            imap_ready_count += 1
+        if profile.cc_emails or profile.bcc_emails:
+            cc_bcc_ready_count += 1
+        if profile.warmup_enabled:
+            warmup_profile_count += 1
+
+    replied_recipient_count = db.session.query(func.count(Recipient.id)).join(
+        Campaign, Recipient.campaign_id == Campaign.id
+    ).filter(
+        Campaign.user_id == current_user.id,
+        Recipient.replied_at.isnot(None),
+    ).scalar() or 0
+
+    sent_campaign_count = db.session.query(func.count(func.distinct(Recipient.campaign_id))).join(
+        Campaign, Recipient.campaign_id == Campaign.id
+    ).filter(
+        Campaign.user_id == current_user.id,
+        Recipient.status == 'Sent',
+    ).scalar() or 0
+
+    seed_paused_count = all_campaigns.filter(
+        Campaign.status == 'Paused',
+        Campaign.status_message.ilike('Auto-paused: high seed spam rate%')
+    ).count()
+
+    phase_overview = {
+        'active_profiles': len(active_profiles),
+        'smtp_profiles': smtp_profile_count,
+        'api_profiles': api_profile_count,
+        'direct_mx_profiles': direct_mx_profile_count,
+        'total_transports': smtp_profile_count + api_profile_count + direct_mx_profile_count,
+        'imap_ready_profiles': imap_ready_count,
+        'cc_bcc_ready_profiles': cc_bcc_ready_count,
+        'warmup_profiles': warmup_profile_count,
+        'replies_detected': int(replied_recipient_count),
+        'campaigns_with_sent_log': int(sent_campaign_count),
+        'seed_paused_campaigns': int(seed_paused_count),
+    }
+
     notifications = Notification.query.filter_by(
         user_id=current_user.id,
         read=False
@@ -338,6 +398,7 @@ def index():
                            campaigns=all_campaigns,
                            recent_campaigns=recent_campaigns,
                            stats=stats,
+                           phase_overview=phase_overview,
                            notifications=notifications)
 
 

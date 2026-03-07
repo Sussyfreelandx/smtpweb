@@ -6,7 +6,7 @@
     <div class="col-lg-3 mb-4">
         <div class="card h-100 shadow-sm border-0">
             <div class="card-header bg-white border-bottom-0 pt-4 pb-0">
-                <h5 class="fw-bold text-dark"><i class="fas fa-rocket text-primary me-2"></i> Quick Actions</h5>
+                <h5 class="fw-bold text-dark"><i class="fas fa-rocket text-primary me-2"></i> Webmail Control</h5>
             </div>
             <div class="card-body">
                 <div class="d-grid gap-3">
@@ -20,7 +20,7 @@
                         <i class="fas fa-shield-alt me-2"></i> Deliverability
                     </a>
                     <a href="{{ url_for('main.smtp_profiles') }}" class="btn btn-outline-secondary">
-                        <i class="fas fa-server me-2"></i> Mailer Settings
+                        <i class="fas fa-server me-2"></i> Mailer Profiles
                     </a>
                     <a href="{{ url_for('main.suppression_list') }}" class="btn btn-outline-danger">
                         <i class="fas fa-ban me-2"></i> Suppression List
@@ -29,35 +29,39 @@
                 
                 <hr class="my-4 text-muted opacity-25">
                 
-                <h6 class="text-uppercase text-muted fw-bold small mb-3 ls-1">System Status</h6>
+                <h6 class="text-uppercase text-muted fw-bold small mb-3 ls-1">Phase 1-10 Integration</h6>
                 <ul class="list-group list-group-flush small">
                     <li class="list-group-item d-flex justify-content-between align-items-center px-0 border-0 py-1">
-                        <span><i class="fas fa-circle text-success me-2" style="font-size: 8px;"></i> Web Server</span>
-                        <span class="badge bg-success bg-opacity-10 text-success rounded-pill">Running</span>
+                        <span><i class="fas fa-circle text-success me-2" style="font-size: 8px;"></i> Active Profiles</span>
+                        <span class="badge bg-success bg-opacity-10 text-success rounded-pill">{{ phase_overview.active_profiles }}</span>
                     </li>
                     <li class="list-group-item d-flex justify-content-between align-items-center px-0 border-0 py-1">
-                        <span><i class="fas fa-circle text-success me-2" style="font-size: 8px;"></i> Database</span>
-                        <span class="badge bg-success bg-opacity-10 text-success rounded-pill">Connected</span>
+                        <span><i class="fas fa-circle text-info me-2" style="font-size: 8px;"></i> API Mailers</span>
+                        <span class="badge bg-info bg-opacity-10 text-info rounded-pill">{{ phase_overview.api_profiles }}</span>
                     </li>
                     <li class="list-group-item d-flex justify-content-between align-items-center px-0 border-0 py-1">
-                        <span><i class="fas fa-circle text-info me-2" style="font-size: 8px;"></i> Mailer Profiles</span>
-                        <span class="badge bg-info bg-opacity-10 text-info rounded-pill">{{ smtp_count if smtp_count is defined else '?' }}</span>
+                        <span><i class="fas fa-circle text-primary me-2" style="font-size: 8px;"></i> Direct MX</span>
+                        <span class="badge bg-primary bg-opacity-10 text-primary rounded-pill">{{ phase_overview.direct_mx_profiles }}</span>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between align-items-center px-0 border-0 py-1">
+                        <span><i class="fas fa-circle text-warning me-2" style="font-size: 8px;"></i> IMAP Ready</span>
+                        <span class="badge bg-warning bg-opacity-10 text-warning rounded-pill">{{ phase_overview.imap_ready_profiles }}</span>
                     </li>
                 </ul>
                 
                 <div class="mt-4 p-3 bg-light rounded-3">
-                    <h6 class="text-uppercase text-muted fw-bold small mb-3">Today's Activity</h6>
+                    <h6 class="text-uppercase text-muted fw-bold small mb-3">Runtime Signals</h6>
                     <div class="row text-center g-2">
                         <div class="col-6">
                             <div class="bg-white p-2 rounded border">
-                                <div class="h4 mb-0 text-primary fw-bold">{{ today_sent if today_sent is defined else 0 }}</div>
-                                <small class="text-muted" style="font-size: 0.7rem;">SENT</small>
+                                <div class="h4 mb-0 text-primary fw-bold">{{ phase_overview.replies_detected }}</div>
+                                <small class="text-muted" style="font-size: 0.7rem;">REPLIES</small>
                             </div>
                         </div>
                         <div class="col-6">
                             <div class="bg-white p-2 rounded border">
-                                <div class="h4 mb-0 text-success fw-bold">{{ today_opened if today_opened is defined else 0 }}</div>
-                                <small class="text-muted" style="font-size: 0.7rem;">OPENED</small>
+                                <div class="h4 mb-0 text-success fw-bold">{{ phase_overview.campaigns_with_sent_log }}</div>
+                                <small class="text-muted" style="font-size: 0.7rem;">SENT LOGS</small>
                             </div>
                         </div>
                     </div>
@@ -68,47 +72,76 @@
 
     <!-- Main Campaign List -->
     <div class="col-lg-9">
-        <!-- Stats Overview -->
-        {% if campaigns.count() > 0 %}
+        <!-- Phase Overview -->
         <div class="row mb-4 g-3">
             <div class="col-md-3 col-6">
                 <div class="card border-0 shadow-sm h-100">
                     <div class="card-body text-center">
                         <div class="text-primary mb-1"><i class="fas fa-folder fa-2x"></i></div>
-                        <div class="h3 fw-bold mb-0">{{ campaigns.count() }}</div>
-                        <div class="small text-muted text-uppercase fw-bold">Total Campaigns</div>
+                        <div class="h3 fw-bold mb-0">{{ stats.total_campaigns }}</div>
+                        <div class="small text-muted text-uppercase fw-bold">Campaigns</div>
                     </div>
                 </div>
             </div>
             <div class="col-md-3 col-6">
                 <div class="card border-0 shadow-sm h-100">
                     <div class="card-body text-center">
-                        <div class="text-success mb-1"><i class="fas fa-check-double fa-2x"></i></div>
-                        <div class="h3 fw-bold mb-0">{{ campaigns.filter_by(status='Completed').count() }}</div>
-                        <div class="small text-muted text-uppercase fw-bold">Completed</div>
+                        <div class="text-success mb-1"><i class="fas fa-network-wired fa-2x"></i></div>
+                        <div class="h3 fw-bold mb-0">{{ phase_overview.total_transports }}</div>
+                        <div class="small text-muted text-uppercase fw-bold">Transports</div>
                     </div>
                 </div>
             </div>
             <div class="col-md-3 col-6">
                 <div class="card border-0 shadow-sm h-100">
                     <div class="card-body text-center">
-                        <div class="text-warning mb-1"><i class="fas fa-paper-plane fa-2x"></i></div>
-                        <div class="h3 fw-bold mb-0">{{ campaigns.filter_by(status='Sending').count() }}</div>
-                        <div class="small text-muted text-uppercase fw-bold">Sending</div>
+                        <div class="text-warning mb-1"><i class="fas fa-inbox fa-2x"></i></div>
+                        <div class="h3 fw-bold mb-0">{{ phase_overview.imap_ready_profiles }}</div>
+                        <div class="small text-muted text-uppercase fw-bold">IMAP Ready</div>
                     </div>
                 </div>
             </div>
             <div class="col-md-3 col-6">
                 <div class="card border-0 shadow-sm h-100">
                     <div class="card-body text-center">
-                        <div class="text-info mb-1"><i class="fas fa-pencil-alt fa-2x"></i></div>
-                        <div class="h3 fw-bold mb-0">{{ campaigns.filter_by(status='Draft').count() }}</div>
-                        <div class="small text-muted text-uppercase fw-bold">Drafts</div>
+                        <div class="text-info mb-1"><i class="fas fa-shield-alt fa-2x"></i></div>
+                        <div class="h3 fw-bold mb-0">{{ phase_overview.seed_paused_campaigns }}</div>
+                        <div class="small text-muted text-uppercase fw-bold">Seed Pauses</div>
                     </div>
                 </div>
             </div>
         </div>
-        {% endif %}
+
+        <div class="card shadow-sm border-0 mb-4">
+            <div class="card-header bg-white border-bottom py-3">
+                <h6 class="mb-0 fw-bold"><i class="fas fa-diagram-project text-primary me-2"></i>Feature Modules</h6>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <div class="border rounded p-3 h-100">
+                            <div class="fw-bold mb-1">Campaign Composer</div>
+                            <div class="small text-muted mb-2">Template validation, context preview, sent-log compatible flow.</div>
+                            <a href="{{ url_for('main.new_campaign') }}" class="btn btn-sm btn-outline-primary">Open Composer</a>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="border rounded p-3 h-100">
+                            <div class="fw-bold mb-1">Mailer Profiles</div>
+                            <div class="small text-muted mb-2">SMTP, API (Google/Microsoft), Direct MX, CC/BCC defaults, warmup limits.</div>
+                            <a href="{{ url_for('main.smtp_profiles') }}" class="btn btn-sm btn-outline-primary">Manage Profiles</a>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="border rounded p-3 h-100">
+                            <div class="fw-bold mb-1">Deliverability Tools</div>
+                            <div class="small text-muted mb-2">Domain checks, seed inbox checks, spam-rate auto pause insights.</div>
+                            <a href="{{ url_for('main.deliverability_tools') }}" class="btn btn-sm btn-outline-primary">Open Tools</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
         
         <!-- Active Campaigns Alert -->
         {% set sending_campaigns = campaigns.filter_by(status='Sending').all() %}
@@ -248,8 +281,8 @@
                 <div class="row g-4">
                     <div class="col-md-4">
                         <div class="bg-white p-3 rounded h-100 shadow-sm">
-                            <h6 class="fw-bold">1. SMTP Setup</h6>
-                            <p class="small text-muted mb-2">Configure your sending server to ensure delivery.</p>
+                            <h6 class="fw-bold">1. Mailer Profiles</h6>
+                            <p class="small text-muted mb-2">Configure SMTP, API (Google/Microsoft), or Direct MX transport.</p>
                             <a href="{{ url_for('main.smtp_profiles') }}" class="small text-primary fw-bold">Configure <i class="fas fa-arrow-right"></i></a>
                         </div>
                     </div>
@@ -262,8 +295,8 @@
                     </div>
                     <div class="col-md-4">
                         <div class="bg-white p-3 rounded h-100 shadow-sm">
-                            <h6 class="fw-bold">3. Launch</h6>
-                            <p class="small text-muted mb-2">Create your campaign content and press send.</p>
+                            <h6 class="fw-bold">3. Launch + Monitor</h6>
+                            <p class="small text-muted mb-2">Send campaigns and monitor reply detection + deliverability tools.</p>
                             <a href="{{ url_for('main.new_campaign') }}" class="small text-primary fw-bold">Create <i class="fas fa-arrow-right"></i></a>
                         </div>
                     </div>
