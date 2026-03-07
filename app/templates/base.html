@@ -32,7 +32,7 @@
         
         body { 
             background-color: var(--bg-color); 
-            padding-bottom: 200px; 
+            padding-bottom: 24px; 
             font-family: 'Inter', sans-serif;
             color: #1e293b;
             -webkit-font-smoothing: antialiased;
@@ -133,53 +133,6 @@
             letter-spacing: 0.05em;
         }
         
-        /* Activity Log */
-        #activity-log-container {
-            position: fixed;
-            bottom: 0;
-            left: 0;
-            width: 100%;
-            height: 180px;
-            background-color: #0f172a;
-            color: #e2e8f0;
-            font-family: 'Consolas', 'Monaco', monospace;
-            font-size: 0.85rem;
-            z-index: 1030;
-            border-top: 3px solid var(--primary-color);
-            display: flex;
-            flex-direction: column;
-            box-shadow: 0 -4px 6px -1px rgba(0, 0, 0, 0.1);
-            transition: height 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        }
-        
-        #activity-log-header {
-            background-color: #1e293b;
-            padding: 10px 20px;
-            font-weight: 600;
-            font-size: 0.8rem;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-bottom: 1px solid #334155;
-            cursor: pointer;
-            user-select: none;
-        }
-        
-        #activity-log-content {
-            overflow-y: auto;
-            padding: 12px 20px;
-            flex-grow: 1;
-            scrollbar-width: thin;
-            scrollbar-color: #475569 #0f172a;
-        }
-
-        .log-entry { margin-bottom: 6px; border-bottom: 1px solid #1e293b; padding-bottom: 6px; }
-        .log-time { color: #60a5fa; margin-right: 12px; font-weight: 600; }
-        .log-success { color: #4ade80; }
-        .log-error { color: #f87171; }
-        .log-warning { color: #fbbf24; }
-        .log-info { color: #e2e8f0; }
-        
         .status-badge {
             padding: 0.35em 0.8em;
             border-radius: 9999px;
@@ -223,6 +176,9 @@
                     <i class="fas fa-paper-plane fa-sm"></i>
                 </div>
                 PARIS SENDER
+                {% if current_user.is_authenticated %}
+                <span class="badge bg-success ms-2">{{ config.get('WEBMAIL_BADGE_TEXT', 'WEBMAIL LIVE') }}</span>
+                {% endif %}
             </a>
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
                 <span class="navbar-toggler-icon"></span>
@@ -303,116 +259,8 @@
 
         {% block content %}{% endblock %}
     </div>
-
-    {% if current_user.is_authenticated %}
-    <div id="activity-log-container">
-        <div id="activity-log-header" onclick="toggleLog()">
-            <span><i class="fas fa-terminal me-2 text-primary"></i> LIVE ACTIVITY LOG</span>
-            <div>
-                <button type="button" class="btn btn-sm btn-outline-danger me-2 py-0 px-2"
-                        onclick="clearLegacyLogs(event)" title="Clear pre-Phase 1 to 10 logs">
-                    <i class="fas fa-eraser"></i>
-                </button>
-                <span id="log-status" class="text-success me-3" style="font-size: 0.7rem;">● ONLINE</span>
-                <i class="fas fa-chevron-down" id="log-toggle-icon"></i>
-            </div>
-        </div>
-        <div id="activity-log-content">
-            <div class="log-entry text-muted">System initialized. Listening for events...</div>
-        </div>
-    </div>
-    {% endif %}
-
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/socket.io-client@4/dist/socket.io.min.js"></script>
     
     {% block scripts %}{% endblock %}
-    
-    <script>
-        {% if current_user.is_authenticated %}
-        const logContainer = document.getElementById('activity-log-container');
-        const logContent = document.getElementById('activity-log-content');
-        let isCollapsed = false;
-
-        function toggleLog() {
-            if (isCollapsed) {
-                logContainer.style.height = "180px";
-                document.getElementById('log-toggle-icon').className = "fas fa-chevron-down";
-            } else {
-                logContainer.style.height = "40px";
-                document.getElementById('log-toggle-icon').className = "fas fa-chevron-up";
-            }
-            isCollapsed = !isCollapsed;
-        }
-
-        function clearLegacyLogs(event) {
-            event.stopPropagation();
-            fetch("{{ url_for('main.api_clear_legacy_logs') }}", {
-                method: "POST",
-                headers: {
-                    "X-CSRFToken": "{{ csrf_token() }}"
-                }
-            })
-            .then(res => res.json())
-            .then(data => {
-                if (!data.success) {
-                    const div = document.createElement('div');
-                    div.className = "log-entry";
-                    div.innerHTML = `<span class="log-time">[${new Date().toLocaleTimeString()}]</span><span class="log-error">❌ Failed to clear legacy logs</span>`;
-                    logContent.appendChild(div);
-                    logContent.scrollTop = logContent.scrollHeight;
-                    return;
-                }
-                logContent.innerHTML = '';
-                const div = document.createElement('div');
-                div.className = "log-entry";
-                div.innerHTML = `<span class="log-time">[${new Date().toLocaleTimeString()}]</span><span class="log-info">🧹 Legacy logs cleared before ${data.cutoff}</span>`;
-                logContent.appendChild(div);
-            })
-            .catch(() => {
-                const div = document.createElement('div');
-                div.className = "log-entry";
-                div.innerHTML = `<span class="log-time">[${new Date().toLocaleTimeString()}]</span><span class="log-error">❌ Network error while clearing legacy logs</span>`;
-                logContent.appendChild(div);
-                logContent.scrollTop = logContent.scrollHeight;
-            });
-        }
-
-        // Setup Socket.IO
-        (function setupSocketIO() {
-            try {
-                // Determine socket path and options
-                const socket = io({ 
-                    path: '/socket.io', 
-                    transports: ['websocket', 'polling'],
-                    reconnectionAttempts: 5
-                });
-                
-                socket.on('connect', () => {
-                    // Connection successful
-                });
-
-                // Logs Namespace
-                const logsSocket = io('/logs');
-                logsSocket.on('log_entry', (data) => {
-                    const div = document.createElement('div');
-                    div.className = "log-entry";
-                    let colorClass = "log-info";
-                    let icon = "ℹ️";
-                    
-                    if (data.level === "ERROR") { colorClass = "log-error"; icon = "❌"; }
-                    else if (data.level === "SUCCESS") { colorClass = "log-success"; icon = "✅"; }
-                    else if (data.level === "WARNING") { colorClass = "log-warning"; icon = "⚠️"; }
-
-                    div.innerHTML = `<span class="log-time">[${data.timestamp}]</span><span class="${colorClass}">${icon} ${data.message}</span>`;
-                    logContent.appendChild(div);
-                    logContent.scrollTop = logContent.scrollHeight;
-                });
-            } catch (e) {
-                console.warn("Socket.IO error:", e);
-            }
-        })();
-        {% endif %}
-    </script>
 </body>
 </html>
