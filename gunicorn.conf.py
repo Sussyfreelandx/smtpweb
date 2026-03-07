@@ -4,8 +4,8 @@ import os
 #   GUNICORN CONFIGURATION
 # ==========================================
 
-# Bind to port 10000 (Render's default)
-bind = "0.0.0.0:10000"
+# Bind to Render-provided port (fallback to 10000 for local/dev parity)
+bind = f"0.0.0.0:{os.environ.get('PORT', '10000')}"
 
 # Worker configuration - use eventlet for SocketIO support
 worker_class = 'eventlet'
